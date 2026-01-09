@@ -43,12 +43,13 @@
 
 pub mod error;
 pub mod stats;
-// pub mod visitor;  // TODO: Add after adapting from warloc
+pub mod visitor;
 // pub mod workspace; // TODO: Add workspace support
 // pub mod filter;    // TODO: Add glob filtering
 
 pub use error::RustlocError;
-pub use stats::{LocStats, Locs};
+pub use stats::{CrateStats, FileStats, LocStats, Locs};
+pub use visitor::{parse_file, parse_string, VisitorContext};
 
 /// Result type for rustloclib operations
 pub type Result<T> = std::result::Result<T, RustlocError>;
