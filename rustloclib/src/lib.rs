@@ -32,24 +32,34 @@
 //! ## Example
 //!
 //! ```rust,ignore
-//! use rustloclib::{count_file, count_workspace, LocStats};
+//! use rustloclib::{count_file, count_workspace, CountOptions, FilterConfig};
 //!
 //! // Count a single file
 //! let stats = count_file("src/main.rs")?;
 //!
-//! // Count an entire workspace with filters
-//! let stats = count_workspace(".", Some(&["my-crate"]), None)?;
+//! // Count an entire workspace
+//! let result = count_workspace(".", CountOptions::new())?;
+//!
+//! // Count specific crates with filtering
+//! let filter = FilterConfig::new().exclude("**/generated/**")?;
+//! let result = count_workspace(".", CountOptions::new()
+//!     .crates(vec!["my-lib".to_string()])
+//!     .filter(filter))?;
 //! ```
 
+pub mod counter;
 pub mod error;
+pub mod filter;
 pub mod stats;
 pub mod visitor;
-// pub mod workspace; // TODO: Add workspace support
-// pub mod filter;    // TODO: Add glob filtering
+pub mod workspace;
 
+pub use counter::{count_directory, count_file, count_workspace, CountOptions, CountResult};
 pub use error::RustlocError;
+pub use filter::FilterConfig;
 pub use stats::{CrateStats, FileStats, LocStats, Locs};
 pub use visitor::{parse_file, parse_string, VisitorContext};
+pub use workspace::{CrateInfo, WorkspaceInfo};
 
 /// Result type for rustloclib operations
 pub type Result<T> = std::result::Result<T, RustlocError>;
