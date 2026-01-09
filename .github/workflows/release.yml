@@ -120,20 +120,38 @@ jobs:
     name: Publish to crates.io
     needs: create-release
     runs-on: ubuntu-latest
+    env:
+      CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
     steps:
+      - name: Check if token is available
+        id: check_token
+        run: |
+          if [ -z "$CRATES_IO_TOKEN" ]; then
+            echo "available=false" >> $GITHUB_OUTPUT
+            echo "CRATES_IO_TOKEN is not set, skipping publish"
+          else
+            echo "available=true" >> $GITHUB_OUTPUT
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.check_token.outputs.available == 'true'
 
       - name: Install Rust
+        if: steps.check_token.outputs.available == 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
+        if: steps.check_token.outputs.available == 'true'
         uses: Swatinem/rust-cache@v2
 
       - name: Publish rustloclib
-        run: cargo publish -p rustloclib --token ${{ secrets.CRATES_IO_TOKEN }}
+        if: steps.check_token.outputs.available == 'true'
+        run: cargo publish -p rustloclib --token $CRATES_IO_TOKEN
 
       - name: Wait for crates.io to index
+        if: steps.check_token.outputs.available == 'true'
         run: sleep 30
 
       - name: Publish rustloc
-        run: cargo publish -p rustloc --token ${{ secrets.CRATES_IO_TOKEN }}
+        if: steps.check_token.outputs.available == 'true'
+        run: cargo publish -p rustloc --token $CRATES_IO_TOKEN
