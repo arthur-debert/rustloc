@@ -1,0 +1,25 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2025-01-09
+
+### Added
+
+- Initial release
+- Rust-aware LOC counting that separates code, tests, examples, comments, and blanks
+- Recognition of `#[test]` and `#[cfg(test)]` attributes to identify test code
+- Context detection from file paths (`tests/`, `examples/` directories)
+- Cargo workspace support with crate filtering
+- Glob-based file filtering (include/exclude patterns)
+- Multiple output formats: table, JSON, CSV
+- Per-crate and per-file breakdown options
+- `rustloclib` library for programmatic use
+- `rustloc` CLI tool
+
+### Acknowledgments
+
+- Parsing logic adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc) by Maxim Gritsenko
