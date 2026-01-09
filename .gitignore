@@ -1,0 +1,34 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Build artifacts
+*.so
+*.dylib
+*.dll
+
+# Debug
+*.pdb
+
+# Coverage
+*.profraw
+*.profdata
+coverage/
+lcov.info

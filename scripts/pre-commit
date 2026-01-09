@@ -1,0 +1,21 @@
+#!/bin/bash
+# Pre-commit hook for rustloc
+# Run: scripts/pre-commit from project root, or install as .git/hooks/pre-commit
+
+set -e
+
+echo "Running pre-commit checks..."
+
+# Format check
+echo "Checking formatting..."
+cargo fmt --all -- --check
+
+# Clippy
+echo "Running clippy..."
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Tests
+echo "Running tests..."
+cargo test --all
+
+echo "All pre-commit checks passed!"

@@ -1,0 +1,17 @@
+[package]
+name = "rustloc"
+description = "CLI tool for counting lines of code in Rust projects with test/code separation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "rustloc"
+path = "src/main.rs"
+
+[dependencies]
+rustloclib.workspace = true
+clap.workspace = true
+serde_json.workspace = true
