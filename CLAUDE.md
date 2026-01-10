@@ -26,7 +26,7 @@ When adding a feature, ask: "Where does the logic live?"
 **Correct**: The library computes and filters data, CLI displays it.
 ```rust
 // Library: takes Contexts, returns filtered data
-let options = CountOptions::new().contexts(Contexts::main_only());
+let options = CountOptions::new().contexts(Contexts::code_only());
 let result = count_workspace(path, options)?;  // Returns pre-filtered data
 
 // CLI: just displays what it receives
@@ -45,14 +45,14 @@ let filtered = result.filter(my_cli_filter);  // Should be done in library
 ### `rustloclib/src/options.rs`
 Input configuration types that control what the library returns:
 
-- `Contexts` - which code contexts to include (main, tests, examples)
+- `Contexts` - which code contexts to include (code, tests, examples)
 - `Aggregation` - result granularity (Total, ByCrate, ByModule, ByFile)
 
 ### `rustloclib/src/stats.rs`
 Output data types returned by the library:
 
-- `Locs` - counts for a single context (blank, code, docs, comments)
-- `LocStats` - aggregated stats separating main/tests/examples
+- `Locs` - counts for a single context (blank, logic, docs, comments)
+- `LocStats` - aggregated stats separating code/tests/examples
 - `FileStats`, `ModuleStats`, `CrateStats` - breakdown types
 - All types implement `filter(&self, contexts: Contexts) -> Self`
 

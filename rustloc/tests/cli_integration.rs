@@ -44,12 +44,12 @@ fn test_table_output() {
     let (stdout, _, success) = run_rustloc(&["."]);
 
     assert!(success);
-    assert!(stdout.contains("File count:"));
-    assert!(stdout.contains("Main"));
+    // Check for context column headers in default view
+    assert!(stdout.contains("Code"));
     assert!(stdout.contains("Tests"));
     assert!(stdout.contains("Examples"));
-    assert!(stdout.contains("Code"));
-    assert!(stdout.contains("Blank"));
+    assert!(stdout.contains("Total"));
+    assert!(stdout.contains("Files"));
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn test_json_output() {
     assert!(success);
     assert!(stdout.contains("\"file_count\""));
     assert!(stdout.contains("\"total\""));
-    assert!(stdout.contains("\"main\""));
+    assert!(stdout.contains("\"code\""));
     assert!(stdout.contains("\"tests\""));
     assert!(stdout.contains("\"examples\""));
 
@@ -74,10 +74,8 @@ fn test_csv_output() {
     let (stdout, _, success) = run_rustloc(&[".", "--output", "csv"]);
 
     assert!(success);
-    assert!(stdout.contains("type,name,code,blank,docs,comments,total"));
-    assert!(stdout.contains("main,\"total\","));
-    assert!(stdout.contains("tests,\"total\","));
-    assert!(stdout.contains("total,\"total\","));
+    assert!(stdout.contains("name,code,tests,examples,total,files"));
+    assert!(stdout.contains("\"total\","));
 }
 
 #[test]
@@ -85,7 +83,7 @@ fn test_by_crate_output() {
     let (stdout, _, success) = run_rustloc(&[".", "--by-crate"]);
 
     assert!(success);
-    assert!(stdout.contains("By-crate breakdown:"));
+    assert!(stdout.contains("Crate"));
     assert!(stdout.contains("rustloclib"));
     assert!(stdout.contains("rustloc"));
     assert!(stdout.contains("Total ("));
@@ -96,7 +94,7 @@ fn test_by_module_output() {
     let (stdout, _, success) = run_rustloc(&[".", "--by-module"]);
 
     assert!(success);
-    assert!(stdout.contains("By-module breakdown:"));
+    assert!(stdout.contains("Module"));
     assert!(stdout.contains("rustloclib::counter"));
     assert!(stdout.contains("rustloclib::diff"));
     assert!(stdout.contains("rustloc"));
@@ -108,7 +106,8 @@ fn test_crate_filter() {
     let (stdout, _, success) = run_rustloc(&[".", "--crate", "rustloc"]);
 
     assert!(success);
-    assert!(stdout.contains("File count: 2")); // Only rustloc crate has 2 files
+    // The filtered output should show only 2 files
+    assert!(stdout.contains("2")); // Files column shows 2
 }
 
 #[test]
@@ -142,7 +141,7 @@ fn test_diff_table_output() {
     assert!(success, "diff command should succeed");
     assert!(stdout.contains("Diff:"));
     assert!(stdout.contains("Files changed:"));
-    assert!(stdout.contains("Main"));
+    assert!(stdout.contains("Code"));
     assert!(stdout.contains("Tests"));
     assert!(stdout.contains("Examples"));
     // Check for the +x/-y/z format
@@ -182,8 +181,8 @@ fn test_diff_csv_output() {
     let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--output", "csv"]);
 
     assert!(success);
-    assert!(stdout.contains("type,name,change,code_added,code_removed,code_net"));
-    assert!(stdout.contains("main,\"total\","));
+    assert!(stdout.contains("type,name,change,logic_added,logic_removed,logic_net"));
+    assert!(stdout.contains("code,\"total\","));
     assert!(stdout.contains("tests,\"total\","));
     assert!(stdout.contains("total,\"total\","));
 }

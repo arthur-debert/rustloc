@@ -47,7 +47,7 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use rustloclib::{
     count_workspace, diff_commits, Aggregation, Contexts, CountOptions, CountResult, DiffOptions,
-    DiffResult, FilterConfig, LocStats, LocStatsDiff, Locs, LocsDiff,
+    DiffResult, FilterConfig, LocStats, LocStatsDiff, LocsDiff,
 };
 
 /// Rust-aware lines of code counter with test/code separation
@@ -148,8 +148,8 @@ struct CommonArgs {
 /// Code context types that can be filtered
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum ContextType {
-    /// Main/production code
-    Main,
+    /// Production code
+    Code,
     /// Test code
     Tests,
     /// Example code
@@ -162,7 +162,7 @@ fn to_contexts(types: &[ContextType]) -> Contexts {
         Contexts::all()
     } else {
         Contexts::none()
-            .with_main(types.contains(&ContextType::Main))
+            .with_code(types.contains(&ContextType::Code))
             .with_tests(types.contains(&ContextType::Tests))
             .with_examples(types.contains(&ContextType::Examples))
     }
@@ -334,129 +334,124 @@ fn print_count_table(
     ctx: &Contexts,
     base_path: &Path,
 ) {
-    if by_module && !result.modules.is_empty() {
-        println!("By-module breakdown:");
-        print!(
-            "{:<40} {:>6} {:>8} {:>8} {:>8} {:>8} {:>8}",
-            "Module", "Files", "Code", "Blank", "Docs", "Comments", "Total"
-        );
-        println!();
-        println!("{}", "-".repeat(94));
+    // Determine column header based on aggregation level
+    let (name_header, name_width) = if by_file {
+        ("File", 60)
+    } else if by_module {
+        ("Module", 40)
+    } else if by_crate {
+        ("Crate", 40)
+    } else {
+        ("", 0) // No name column for total-only view
+    };
 
+    // Build dynamic header based on which contexts are enabled
+    let mut header_parts = Vec::new();
+    if ctx.code {
+        header_parts.push("Code");
+    }
+    if ctx.tests {
+        header_parts.push("Tests");
+    }
+    if ctx.examples {
+        header_parts.push("Examples");
+    }
+    header_parts.push("Total");
+
+    // Print header
+    if name_width > 0 {
+        print!("{:<width$}", name_header, width = name_width);
+        for part in &header_parts {
+            print!(" {:>10}", part);
+        }
+        println!();
+        println!("{}", "-".repeat(name_width + 11 * header_parts.len()));
+    }
+
+    // Helper to print a stats row
+    let print_row = |name: &str, stats: &LocStats| {
+        print!("{:<width$}", name, width = name_width);
+        if ctx.code {
+            print!(" {:>10}", stats.code.total());
+        }
+        if ctx.tests {
+            print!(" {:>10}", stats.tests.total());
+        }
+        if ctx.examples {
+            print!(" {:>10}", stats.examples.total());
+        }
+        println!(" {:>10}", stats.total());
+    };
+
+    // Print rows based on aggregation level (skip rows with 0 total)
+    if by_file && !result.files.is_empty() {
+        for file in &result.files {
+            let s = &file.stats;
+            if s.total() == 0 {
+                continue;
+            }
+            let path_str = make_relative(&file.path, base_path);
+            let truncated = truncate_name(&path_str, name_width - 2);
+            print_row(&truncated, s);
+        }
+    } else if by_module && !result.modules.is_empty() {
         for module in &result.modules {
+            let s = &module.stats;
+            if s.total() == 0 {
+                continue;
+            }
             let name = if module.name.is_empty() {
                 "(root)"
             } else {
                 &module.name
             };
-            let truncated = if name.len() > 38 {
-                format!("..{}", &name[name.len() - 36..])
-            } else {
-                name.to_string()
-            };
-            let s = &module.stats;
-            println!(
-                "{:<40} {:>6} {:>8} {:>8} {:>8} {:>8} {:>8}",
-                truncated,
-                module.files.len(),
-                s.code(),
-                s.blank(),
-                s.docs(),
-                s.comments(),
-                s.total()
-            );
+            let truncated = truncate_name(name, name_width - 2);
+            print_row(&truncated, s);
         }
-        println!();
-    }
-
-    if by_file && !result.files.is_empty() {
-        println!("By-file breakdown:");
-        println!(
-            "{:<60} {:>8} {:>8} {:>8} {:>8} {:>8}",
-            "File", "Code", "Blank", "Docs", "Comments", "Total"
-        );
-        println!("{}", "-".repeat(105));
-
-        for file in &result.files {
-            let path_str = make_relative(&file.path, base_path);
-            let truncated = if path_str.len() > 58 {
-                format!("..{}", &path_str[path_str.len() - 56..])
-            } else {
-                path_str
-            };
-            let s = &file.stats;
-            println!(
-                "{:<60} {:>8} {:>8} {:>8} {:>8} {:>8}",
-                truncated,
-                s.code(),
-                s.blank(),
-                s.docs(),
-                s.comments(),
-                s.total()
-            );
-        }
-        println!();
-    }
-
-    if by_crate && !result.crates.is_empty() {
-        println!("By-crate breakdown:");
+    } else if by_crate && !result.crates.is_empty() {
         for crate_stats in &result.crates {
-            println!(
-                "\n{} ({} files):",
-                crate_stats.name, crate_stats.stats.file_count
-            );
-            print_stats_table(&crate_stats.stats, ctx);
+            let s = &crate_stats.stats;
+            if s.total() == 0 {
+                continue;
+            }
+            let truncated = truncate_name(&crate_stats.name, name_width - 2);
+            print_row(&truncated, s);
         }
-        println!();
     }
 
-    if by_crate || by_file || by_module {
-        println!("Total ({} files):", result.total.file_count);
+    // Print totals
+    let s = &result.total;
+    if name_width > 0 {
+        println!("{}", "-".repeat(name_width + 11 * header_parts.len()));
+        print_row(&format!("Total ({} files)", s.file_count), s);
     } else {
-        println!("File count: {}", result.total.file_count);
+        // Total-only view (no breakdown)
+        for part in &header_parts {
+            print!("{:>12}", part);
+        }
+        println!("{:>10}", "Files");
+        println!("{}", "-".repeat(12 * header_parts.len() + 10));
+        if ctx.code {
+            print!("{:>12}", s.code.total());
+        }
+        if ctx.tests {
+            print!("{:>12}", s.tests.total());
+        }
+        if ctx.examples {
+            print!("{:>12}", s.examples.total());
+        }
+        print!("{:>12}", s.total());
+        println!("{:>10}", s.file_count);
     }
-    print_stats_table(&result.total, ctx);
 }
 
-fn print_stats_table(stats: &LocStats, ctx: &Contexts) {
-    println!(
-        "{:<12} | {:>12} | {:>12} | {:>12} | {:>12} | {:>12}",
-        "Context", "Code", "Blank", "Docs", "Comments", "Total"
-    );
-    println!("{}", "-".repeat(87));
-
-    if ctx.main {
-        print_locs_row("Main", &stats.main);
+/// Truncate a name to fit within max_len, adding ".." prefix if needed
+fn truncate_name(name: &str, max_len: usize) -> String {
+    if name.len() > max_len {
+        format!("..{}", &name[name.len() - max_len + 2..])
+    } else {
+        name.to_string()
     }
-    if ctx.tests {
-        print_locs_row("Tests", &stats.tests);
-    }
-    if ctx.examples {
-        print_locs_row("Examples", &stats.examples);
-    }
-
-    println!("{}", "-".repeat(87));
-    println!(
-        "{:<12} | {:>12} | {:>12} | {:>12} | {:>12} | {:>12}",
-        "",
-        stats.code(),
-        stats.blank(),
-        stats.docs(),
-        stats.comments(),
-        stats.total()
-    );
-}
-
-fn print_locs_row(name: &str, locs: &Locs) {
-    println!(
-        "{:<12} | {:>12} | {:>12} | {:>12} | {:>12} | {:>12}",
-        name,
-        locs.code,
-        locs.blank,
-        locs.docs,
-        locs.comments,
-        locs.total()
-    );
 }
 
 fn print_count_json(result: &CountResult) -> Result<(), serde_json::Error> {
@@ -472,72 +467,66 @@ fn print_count_csv(
     ctx: &Contexts,
     base_path: &Path,
 ) {
-    println!("type,name,code,blank,docs,comments,total");
+    // Build dynamic header based on which contexts are enabled
+    let mut header = String::from("name");
+    if ctx.code {
+        header.push_str(",code");
+    }
+    if ctx.tests {
+        header.push_str(",tests");
+    }
+    if ctx.examples {
+        header.push_str(",examples");
+    }
+    header.push_str(",total,files");
+    println!("{}", header);
 
-    let format_locs = |type_name: &str, name: &str, locs: &Locs| {
-        format!(
-            "{},\"{}\",{},{},{},{},{}",
-            type_name,
-            name,
-            locs.code,
-            locs.blank,
-            locs.docs,
-            locs.comments,
-            locs.total()
-        )
+    let format_stats = |name: &str, stats: &LocStats| {
+        let mut row = format!("\"{}\"", name);
+        if ctx.code {
+            row.push_str(&format!(",{}", stats.code.total()));
+        }
+        if ctx.tests {
+            row.push_str(&format!(",{}", stats.tests.total()));
+        }
+        if ctx.examples {
+            row.push_str(&format!(",{}", stats.examples.total()));
+        }
+        row.push_str(&format!(",{},{}", stats.total(), stats.file_count));
+        row
     };
 
-    let format_stats = |type_name: &str, name: &str, stats: &LocStats| {
-        format!(
-            "{},\"{}\",{},{},{},{},{}",
-            type_name,
-            name,
-            stats.code(),
-            stats.blank(),
-            stats.docs(),
-            stats.comments(),
-            stats.total()
-        )
-    };
-
-    if by_module {
+    if by_file {
+        for file in &result.files {
+            if file.stats.total() == 0 {
+                continue;
+            }
+            let path_str = make_relative(&file.path, base_path);
+            println!("{}", format_stats(&path_str, &file.stats));
+        }
+    } else if by_module {
         for module in &result.modules {
+            if module.stats.total() == 0 {
+                continue;
+            }
             let name = if module.name.is_empty() {
                 "(root)"
             } else {
                 &module.name
             };
-            println!("{}", format_stats("module", name, &module.stats));
+            println!("{}", format_stats(name, &module.stats));
         }
-    }
-
-    if by_file {
-        for file in &result.files {
-            let path_str = make_relative(&file.path, base_path);
-            println!("{}", format_stats("file", &path_str, &file.stats));
-        }
-    }
-
-    if by_crate {
+    } else if by_crate {
         for crate_stats in &result.crates {
-            println!(
-                "{}",
-                format_stats("crate", &crate_stats.name, &crate_stats.stats)
-            );
+            if crate_stats.stats.total() == 0 {
+                continue;
+            }
+            println!("{}", format_stats(&crate_stats.name, &crate_stats.stats));
         }
     }
 
-    let stats = &result.total;
-    if ctx.main {
-        println!("{}", format_locs("main", "total", &stats.main));
-    }
-    if ctx.tests {
-        println!("{}", format_locs("tests", "total", &stats.tests));
-    }
-    if ctx.examples {
-        println!("{}", format_locs("examples", "total", &stats.examples));
-    }
-    println!("{}", format_stats("total", "total", stats));
+    // Always print total
+    println!("{}", format_stats("total", &result.total));
 }
 
 // ============================================================================
@@ -581,7 +570,7 @@ fn print_diff_table(
                 "{:<50} {:>6} {:>16} {:>16}",
                 truncated,
                 change_type,
-                format_diff_cell(total_diff.added.code, total_diff.removed.code),
+                format_diff_cell(total_diff.added.logic, total_diff.removed.logic),
                 format_diff_cell(total_diff.added.total(), total_diff.removed.total())
             );
         }
@@ -611,12 +600,12 @@ fn print_diff_table(
 fn print_diff_stats_table(diff: &LocStatsDiff, ctx: &Contexts) {
     println!(
         "{:<12} | {:>16} | {:>16} | {:>16} | {:>16} | {:>16}",
-        "Context", "Code", "Blank", "Docs", "Comments", "Total"
+        "Context", "Logic", "Blank", "Docs", "Comments", "Total"
     );
     println!("{}", "-".repeat(104));
 
-    if ctx.main {
-        print_diff_locs_row("Main", &diff.main);
+    if ctx.code {
+        print_diff_locs_row("Code", &diff.code);
     }
     if ctx.tests {
         print_diff_locs_row("Tests", &diff.tests);
@@ -632,7 +621,7 @@ fn print_diff_stats_table(diff: &LocStatsDiff, ctx: &Contexts) {
     println!(
         "{:<12} | {:>16} | {:>16} | {:>16} | {:>16} | {:>16}",
         "",
-        format_diff_cell(total_added.code, total_removed.code),
+        format_diff_cell(total_added.logic, total_removed.logic),
         format_diff_cell(total_added.blank, total_removed.blank),
         format_diff_cell(total_added.docs, total_removed.docs),
         format_diff_cell(total_added.comments, total_removed.comments),
@@ -644,7 +633,7 @@ fn print_diff_locs_row(name: &str, diff: &LocsDiff) {
     println!(
         "{:<12} | {:>16} | {:>16} | {:>16} | {:>16} | {:>16}",
         name,
-        format_diff_cell(diff.added.code, diff.removed.code),
+        format_diff_cell(diff.added.logic, diff.removed.logic),
         format_diff_cell(diff.added.blank, diff.removed.blank),
         format_diff_cell(diff.added.docs, diff.removed.docs),
         format_diff_cell(diff.added.comments, diff.removed.comments),
@@ -672,20 +661,20 @@ fn print_diff_csv(
     base_path: &Path,
 ) {
     println!(
-        "type,name,change,code_added,code_removed,code_net,total_added,total_removed,total_net"
+        "type,name,change,logic_added,logic_removed,logic_net,total_added,total_removed,total_net"
     );
 
     let format_diff = |type_name: &str, name: &str, change: &str, diff: &LocsDiff| {
-        let net_code = diff.added.code as i64 - diff.removed.code as i64;
+        let net_logic = diff.added.logic as i64 - diff.removed.logic as i64;
         let net_total = diff.added.total() as i64 - diff.removed.total() as i64;
         format!(
             "{},\"{}\",{},{},{},{},{},{},{}",
             type_name,
             name,
             change,
-            diff.added.code,
-            diff.removed.code,
-            net_code,
+            diff.added.logic,
+            diff.removed.logic,
+            net_logic,
             diff.added.total(),
             diff.removed.total(),
             net_total
@@ -719,8 +708,8 @@ fn print_diff_csv(
     }
 
     let d = &result.total;
-    if ctx.main {
-        println!("{}", format_diff("main", "total", "-", &d.main));
+    if ctx.code {
+        println!("{}", format_diff("code", "total", "-", &d.code));
     }
     if ctx.tests {
         println!("{}", format_diff("tests", "total", "-", &d.tests));
