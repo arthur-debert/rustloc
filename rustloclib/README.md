@@ -1,6 +1,6 @@
 # rustloclib
 
-A Rust-aware lines of code counter library that separates code, tests, comments, and blanks.
+A Rust-aware lines of code counter library that separates code, tests, comments, and blank lines.
 
 [![Crates.io](https://img.shields.io/crates/v/rustloclib.svg)](https://crates.io/crates/rustloclib)
 [![Documentation](https://docs.rs/rustloclib/badge.svg)](https://docs.rs/rustloclib)
@@ -10,12 +10,12 @@ A Rust-aware lines of code counter library that separates code, tests, comments,
 
 Unlike generic LOC counters, this library understands Rust's unique structure where tests live alongside production code. It uses syntax-aware parsing to distinguish:
 
-- **Code**: Production code lines
+- **Main**: Production code lines
 - **Tests**: Code within `#[test]` or `#[cfg(test)]` blocks, or in `tests/` directories
 - **Examples**: Code in `examples/` directories
+- **Docs**: Documentation comments (`///`, `//!`, `/** */`, `/*! */`)
 - **Comments**: Regular comments (`//`, `/* */`)
-- **Doc comments**: Documentation comments (`///`, `//!`, `/** */`, `/*! */`)
-- **Blanks**: Whitespace-only lines
+- **Blank**: Whitespace-only lines
 
 ## Features
 
@@ -120,7 +120,7 @@ Line counts for a single context:
 
 ```rust
 pub struct Locs {
-    pub blanks: u64,    // Whitespace-only lines
+    pub blank: u64,     // Whitespace-only lines
     pub code: u64,      // Code lines
     pub docs: u64,      // Doc comment lines
     pub comments: u64,  // Regular comment lines

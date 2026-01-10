@@ -9,14 +9,14 @@ fn main() {
     let result = count_workspace(&path, CountOptions::new()).expect("Failed to count workspace");
 
     println!("File count: {}", result.total.file_count);
-    println!("Type         | Code         | Blank        | Doc comments | Comments     | Total");
+    println!("Context      | Code         | Blank        | Docs         | Comments     | Total");
     println!(
         "-------------|--------------|--------------|--------------|--------------|-------------"
     );
     println!(
         "Main         | {:12} | {:12} | {:12} | {:12} | {:12}",
         result.total.main.code,
-        result.total.main.blanks,
+        result.total.main.blank,
         result.total.main.docs,
         result.total.main.comments,
         result.total.main.total()
@@ -24,7 +24,7 @@ fn main() {
     println!(
         "Tests        | {:12} | {:12} | {:12} | {:12} | {:12}",
         result.total.tests.code,
-        result.total.tests.blanks,
+        result.total.tests.blank,
         result.total.tests.docs,
         result.total.tests.comments,
         result.total.tests.total()
@@ -32,7 +32,7 @@ fn main() {
     println!(
         "Examples     | {:12} | {:12} | {:12} | {:12} | {:12}",
         result.total.examples.code,
-        result.total.examples.blanks,
+        result.total.examples.blank,
         result.total.examples.docs,
         result.total.examples.comments,
         result.total.examples.total()
@@ -43,7 +43,7 @@ fn main() {
     println!(
         "             | {:12} | {:12} | {:12} | {:12} | {:12}",
         result.total.code(),
-        result.total.blanks(),
+        result.total.blank(),
         result.total.docs(),
         result.total.comments(),
         result.total.total()

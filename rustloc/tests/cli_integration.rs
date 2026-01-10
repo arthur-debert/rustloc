@@ -74,7 +74,7 @@ fn test_csv_output() {
     let (stdout, _, success) = run_rustloc(&[".", "--output", "csv"]);
 
     assert!(success);
-    assert!(stdout.contains("type,name,code,blanks,docs,comments,total"));
+    assert!(stdout.contains("type,name,code,blank,docs,comments,total"));
     assert!(stdout.contains("main,\"total\","));
     assert!(stdout.contains("tests,\"total\","));
     assert!(stdout.contains("total,\"total\","));

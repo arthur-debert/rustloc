@@ -9,7 +9,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Locs {
     /// Blank lines (whitespace only)
-    pub blanks: u64,
+    pub blank: u64,
     /// Code lines
     pub code: u64,
     /// Documentation comment lines (`///`, `//!`, `/** */`, `/*! */`)
@@ -26,7 +26,7 @@ impl Locs {
 
     /// Total lines in this context
     pub fn total(&self) -> u64 {
-        self.blanks + self.code + self.docs + self.comments
+        self.blank + self.code + self.docs + self.comments
     }
 }
 
@@ -35,7 +35,7 @@ impl Add for Locs {
 
     fn add(self, other: Self) -> Self {
         Self {
-            blanks: self.blanks + other.blanks,
+            blank: self.blank + other.blank,
             code: self.code + other.code,
             docs: self.docs + other.docs,
             comments: self.comments + other.comments,
@@ -45,7 +45,7 @@ impl Add for Locs {
 
 impl AddAssign for Locs {
     fn add_assign(&mut self, other: Self) {
-        self.blanks += other.blanks;
+        self.blank += other.blank;
         self.code += other.code;
         self.docs += other.docs;
         self.comments += other.comments;
@@ -57,7 +57,7 @@ impl Sub for Locs {
 
     fn sub(self, other: Self) -> Self {
         Self {
-            blanks: self.blanks.saturating_sub(other.blanks),
+            blank: self.blank.saturating_sub(other.blank),
             code: self.code.saturating_sub(other.code),
             docs: self.docs.saturating_sub(other.docs),
             comments: self.comments.saturating_sub(other.comments),
@@ -67,7 +67,7 @@ impl Sub for Locs {
 
 impl SubAssign for Locs {
     fn sub_assign(&mut self, other: Self) {
-        self.blanks = self.blanks.saturating_sub(other.blanks);
+        self.blank = self.blank.saturating_sub(other.blank);
         self.code = self.code.saturating_sub(other.code);
         self.docs = self.docs.saturating_sub(other.docs);
         self.comments = self.comments.saturating_sub(other.comments);
@@ -94,8 +94,8 @@ impl LocStats {
     }
 
     /// Total blank lines across all contexts
-    pub fn blanks(&self) -> u64 {
-        self.main.blanks + self.tests.blanks + self.examples.blanks
+    pub fn blank(&self) -> u64 {
+        self.main.blank + self.tests.blank + self.examples.blank
     }
 
     /// Total code lines across all contexts
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn test_locs_default() {
         let locs = Locs::new();
-        assert_eq!(locs.blanks, 0);
+        assert_eq!(locs.blank, 0);
         assert_eq!(locs.code, 0);
         assert_eq!(locs.docs, 0);
         assert_eq!(locs.comments, 0);
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn test_locs_total() {
         let locs = Locs {
-            blanks: 10,
+            blank: 10,
             code: 100,
             docs: 20,
             comments: 5,
@@ -320,19 +320,19 @@ mod tests {
     #[test]
     fn test_locs_add() {
         let a = Locs {
-            blanks: 10,
+            blank: 10,
             code: 100,
             docs: 20,
             comments: 5,
         };
         let b = Locs {
-            blanks: 5,
+            blank: 5,
             code: 50,
             docs: 10,
             comments: 2,
         };
         let sum = a + b;
-        assert_eq!(sum.blanks, 15);
+        assert_eq!(sum.blank, 15);
         assert_eq!(sum.code, 150);
         assert_eq!(sum.docs, 30);
         assert_eq!(sum.comments, 7);
@@ -343,26 +343,26 @@ mod tests {
         let stats = LocStats {
             file_count: 3,
             main: Locs {
-                blanks: 10,
+                blank: 10,
                 code: 100,
                 docs: 20,
                 comments: 5,
             },
             tests: Locs {
-                blanks: 5,
+                blank: 5,
                 code: 50,
                 docs: 2,
                 comments: 3,
             },
             examples: Locs {
-                blanks: 2,
+                blank: 2,
                 code: 20,
                 docs: 5,
                 comments: 1,
             },
         };
 
-        assert_eq!(stats.blanks(), 17);
+        assert_eq!(stats.blank(), 17);
         assert_eq!(stats.code(), 170);
         assert_eq!(stats.docs(), 27);
         assert_eq!(stats.comments(), 9);
@@ -374,7 +374,7 @@ mod tests {
         let a = LocStats {
             file_count: 2,
             main: Locs {
-                blanks: 10,
+                blank: 10,
                 code: 100,
                 docs: 20,
                 comments: 5,
@@ -385,7 +385,7 @@ mod tests {
         let b = LocStats {
             file_count: 1,
             main: Locs {
-                blanks: 5,
+                blank: 5,
                 code: 50,
                 docs: 10,
                 comments: 2,

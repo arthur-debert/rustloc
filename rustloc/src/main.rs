@@ -10,7 +10,7 @@
 //!
 //! ## Features
 //!
-//! - **Rust-aware**: Distinguishes code, tests, examples, comments, and blanks
+//! - **Rust-aware**: Distinguishes code, tests, examples, comments, and blank lines
 //! - **Cargo workspace support**: Filter by crate with `--crate` or `-c`
 //! - **Glob filtering**: Include/exclude files with glob patterns
 //! - **Multiple output formats**: Table (default), JSON, CSV
@@ -139,8 +139,8 @@ struct CommonArgs {
     #[arg(short = 'o', long, value_enum, default_value = "table")]
     output: OutputFormat,
 
-    /// Filter which code contexts to show (comma-separated: code,tests,examples)
-    /// "code" means main/production code. If not specified, all are shown.
+    /// Filter which code contexts to show (comma-separated: main,tests,examples)
+    /// If not specified, all contexts are shown.
     #[arg(short = 't', long = "type", value_delimiter = ',')]
     types: Vec<ContextType>,
 }
@@ -149,7 +149,7 @@ struct CommonArgs {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum ContextType {
     /// Main/production code
-    Code,
+    Main,
     /// Test code
     Tests,
     /// Example code
@@ -162,7 +162,7 @@ fn to_contexts(types: &[ContextType]) -> Contexts {
         Contexts::all()
     } else {
         Contexts::none()
-            .with_main(types.contains(&ContextType::Code))
+            .with_main(types.contains(&ContextType::Main))
             .with_tests(types.contains(&ContextType::Tests))
             .with_examples(types.contains(&ContextType::Examples))
     }
@@ -360,7 +360,7 @@ fn print_count_table(
                 truncated,
                 module.files.len(),
                 s.code(),
-                s.blanks(),
+                s.blank(),
                 s.docs(),
                 s.comments(),
                 s.total()
@@ -389,7 +389,7 @@ fn print_count_table(
                 "{:<60} {:>8} {:>8} {:>8} {:>8} {:>8}",
                 truncated,
                 s.code(),
-                s.blanks(),
+                s.blank(),
                 s.docs(),
                 s.comments(),
                 s.total()
@@ -421,7 +421,7 @@ fn print_count_table(
 fn print_stats_table(stats: &LocStats, ctx: &Contexts) {
     println!(
         "{:<12} | {:>12} | {:>12} | {:>12} | {:>12} | {:>12}",
-        "Type", "Code", "Blank", "Docs", "Comments", "Total"
+        "Context", "Code", "Blank", "Docs", "Comments", "Total"
     );
     println!("{}", "-".repeat(87));
 
@@ -440,7 +440,7 @@ fn print_stats_table(stats: &LocStats, ctx: &Contexts) {
         "{:<12} | {:>12} | {:>12} | {:>12} | {:>12} | {:>12}",
         "",
         stats.code(),
-        stats.blanks(),
+        stats.blank(),
         stats.docs(),
         stats.comments(),
         stats.total()
@@ -452,7 +452,7 @@ fn print_locs_row(name: &str, locs: &Locs) {
         "{:<12} | {:>12} | {:>12} | {:>12} | {:>12} | {:>12}",
         name,
         locs.code,
-        locs.blanks,
+        locs.blank,
         locs.docs,
         locs.comments,
         locs.total()
@@ -472,7 +472,7 @@ fn print_count_csv(
     ctx: &Contexts,
     base_path: &Path,
 ) {
-    println!("type,name,code,blanks,docs,comments,total");
+    println!("type,name,code,blank,docs,comments,total");
 
     let format_locs = |type_name: &str, name: &str, locs: &Locs| {
         format!(
@@ -480,7 +480,7 @@ fn print_count_csv(
             type_name,
             name,
             locs.code,
-            locs.blanks,
+            locs.blank,
             locs.docs,
             locs.comments,
             locs.total()
@@ -493,7 +493,7 @@ fn print_count_csv(
             type_name,
             name,
             stats.code(),
-            stats.blanks(),
+            stats.blank(),
             stats.docs(),
             stats.comments(),
             stats.total()
@@ -611,7 +611,7 @@ fn print_diff_table(
 fn print_diff_stats_table(diff: &LocStatsDiff, ctx: &Contexts) {
     println!(
         "{:<12} | {:>16} | {:>16} | {:>16} | {:>16} | {:>16}",
-        "Type", "Code", "Blank", "Docs", "Comments", "Total"
+        "Context", "Code", "Blank", "Docs", "Comments", "Total"
     );
     println!("{}", "-".repeat(104));
 
@@ -633,7 +633,7 @@ fn print_diff_stats_table(diff: &LocStatsDiff, ctx: &Contexts) {
         "{:<12} | {:>16} | {:>16} | {:>16} | {:>16} | {:>16}",
         "",
         format_diff_cell(total_added.code, total_removed.code),
-        format_diff_cell(total_added.blanks, total_removed.blanks),
+        format_diff_cell(total_added.blank, total_removed.blank),
         format_diff_cell(total_added.docs, total_removed.docs),
         format_diff_cell(total_added.comments, total_removed.comments),
         format_diff_cell(total_added.total(), total_removed.total())
@@ -645,7 +645,7 @@ fn print_diff_locs_row(name: &str, diff: &LocsDiff) {
         "{:<12} | {:>16} | {:>16} | {:>16} | {:>16} | {:>16}",
         name,
         format_diff_cell(diff.added.code, diff.removed.code),
-        format_diff_cell(diff.added.blanks, diff.removed.blanks),
+        format_diff_cell(diff.added.blank, diff.removed.blank),
         format_diff_cell(diff.added.docs, diff.removed.docs),
         format_diff_cell(diff.added.comments, diff.removed.comments),
         format_diff_cell(diff.added.total(), diff.removed.total())

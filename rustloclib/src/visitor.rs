@@ -14,7 +14,7 @@
 //!
 //! - Adapted to use rustloclib's `LocStats` and `Locs` types
 //! - Added `from_reader` constructor for testing without files
-//! - Changed from `whitespaces` to `blanks` field naming
+//! - Changed from `whitespaces` to `blank` field naming
 //! - Added proper error handling instead of panics
 
 use std::fs::File;
@@ -385,7 +385,7 @@ impl<T: Read> Visitor<T> {
                 eprint!("{line}: COMM: {curr}");
             }
         } else {
-            stats.blanks += 1;
+            stats.blank += 1;
             if self.debug {
                 eprint!("{line}: BLANK: {curr}");
             }
@@ -562,7 +562,7 @@ mod tests {
         let stats = stats(file);
 
         assert_eq!(stats.file_count, 1);
-        assert_eq!(stats.main.blanks, 1);
+        assert_eq!(stats.main.blank, 1);
         assert_eq!(stats.main.total(), 1);
     }
 
@@ -572,7 +572,7 @@ mod tests {
         let stats = stats(file);
 
         assert_eq!(stats.file_count, 1);
-        assert_eq!(stats.main.blanks, 1);
+        assert_eq!(stats.main.blank, 1);
         assert_eq!(stats.main.total(), 1);
     }
 
@@ -632,7 +632,7 @@ mod tests {
         let stats = stats(file);
 
         assert_eq!(stats.main.comments, 3);
-        assert_eq!(stats.main.blanks, 1);
+        assert_eq!(stats.main.blank, 1);
         assert_eq!(stats.main.total(), 4);
     }
 
@@ -656,7 +656,7 @@ mod tests {
         let stats = stats(file);
 
         assert_eq!(stats.main.docs, 3);
-        assert_eq!(stats.main.blanks, 1);
+        assert_eq!(stats.main.blank, 1);
         assert_eq!(stats.main.total(), 4);
     }
 
@@ -687,7 +687,7 @@ mod tests {
         let stats = stats(file);
 
         assert_eq!(stats.tests.code, 4);
-        assert_eq!(stats.tests.blanks, 2);
+        assert_eq!(stats.tests.blank, 2);
         assert_eq!(stats.tests.total(), 6);
     }
 
@@ -703,10 +703,10 @@ fn my_test() {
         let stats = stats(file);
 
         // First empty line is in main context before #[test]
-        assert_eq!(stats.main.blanks, 1);
+        assert_eq!(stats.main.blank, 1);
         // #[test], fn, assert, } are all test code
         assert_eq!(stats.tests.code, 4);
-        assert_eq!(stats.tests.blanks, 0);
+        assert_eq!(stats.tests.blank, 0);
     }
 
     #[test]
@@ -724,7 +724,7 @@ This is a string
         let stats = stats(file);
 
         assert_eq!(stats.main.code, 4);
-        assert_eq!(stats.main.blanks, 4);
+        assert_eq!(stats.main.blank, 4);
         assert_eq!(stats.main.total(), 8);
     }
 
@@ -749,7 +749,7 @@ mod tests {
         // Production code: fn + println + }
         assert_eq!(stats.main.code, 3);
         // Main blanks: first line + line after }
-        assert_eq!(stats.main.blanks, 2);
+        assert_eq!(stats.main.blank, 2);
 
         // Test code: #[cfg(test)] + mod tests { + #[test] + fn test + assert + } + }
         assert_eq!(stats.tests.code, 7);
@@ -827,6 +827,6 @@ fn foo() {
         let stats = stats(file);
 
         assert_eq!(stats.main.code, 3); // fn, let, }
-        assert_eq!(stats.main.blanks, 3); // empty line at start, two empty lines inside
+        assert_eq!(stats.main.blank, 3); // empty line at start, two empty lines inside
     }
 }

@@ -9,12 +9,12 @@
 //! unique structure where tests live alongside production code. It uses AST-aware
 //! parsing to distinguish:
 //!
-//! - **Code**: Production code lines
+//! - **Main**: Production code (main/src code)
 //! - **Tests**: Code within `#[test]` or `#[cfg(test)]` blocks, or in `tests/` directories
 //! - **Examples**: Code in `examples/` directories
 //! - **Comments**: Regular comments (`//`, `/* */`)
-//! - **Doc comments**: Documentation comments (`///`, `//!`, `/** */`, `/*! */`)
-//! - **Blanks**: Whitespace-only lines
+//! - **Docs**: Documentation comments (`///`, `//!`, `/** */`, `/*! */`)
+//! - **Blank**: Whitespace-only lines
 //!
 //! ## Features
 //!

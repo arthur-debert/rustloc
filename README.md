@@ -10,12 +10,12 @@ A Rust-aware lines of code counter that separates production code from tests.
 
 Unlike generic LOC counters (tokei, cloc, scc), rustloc understands Rust's unique structure where tests live alongside production code. It parses Rust syntax to accurately separate:
 
-- **Main code**: Production code lines
-- **Test code**: Code within `#[test]` or `#[cfg(test)]` blocks
-- **Example code**: Code in `examples/` directories
-- **Doc comments**: `///`, `//!`, `/** */`, `/*! */`
-- **Comments**: `//`, `/* */`
-- **Blanks**: Whitespace-only lines
+- **Main**: Production code lines
+- **Tests**: Code within `#[test]` or `#[cfg(test)]` blocks
+- **Examples**: Code in `examples/` directories
+- **Docs**: Documentation comments (`///`, `//!`, `/** */`, `/*! */`)
+- **Comments**: Regular comments (`//`, `/* */`)
+- **Blank**: Whitespace-only lines
 
 ## Installation
 
@@ -74,7 +74,7 @@ rustloc . --include "**/src/**"
 
 ```
 File count: 10
-Type         |         Code |        Blank | Doc comments |     Comments |        Total
+Context      |         Code |        Blank |         Docs |     Comments |        Total
 -------------------------------------------------------------------------------
 Main         |         1256 |          224 |          296 |           25 |         1801
 Tests        |          586 |          113 |           78 |           30 |          807
@@ -93,10 +93,9 @@ rustloc . --format json
 {
   "file_count": 10,
   "totals": {
-    "main": { "code": 1256, "blanks": 224, "docs": 296, "comments": 25 },
-    "tests": { "code": 586, "blanks": 113, "docs": 78, "comments": 30 },
-    "examples": { "code": 46, "blanks": 4, "docs": 1, "comments": 0 },
-    "total": { "code": 1888, "blanks": 341, "docs": 375, "comments": 55, "total": 2659 }
+    "main": { "code": 1256, "blank": 224, "docs": 296, "comments": 25 },
+    "tests": { "code": 586, "blank": 113, "docs": 78, "comments": 30 },
+    "examples": { "code": 46, "blank": 4, "docs": 1, "comments": 0 }
   }
 }
 ```
@@ -108,11 +107,11 @@ rustloc . --format csv
 ```
 
 ```csv
-type,name,code,blanks,docs,comments,total
-main,total,1256,224,296,25,1801
-tests,total,586,113,78,30,807
-examples,total,46,4,1,0,51
-total,total,1888,341,375,55,2659
+type,name,code,blank,docs,comments,total
+main,"total",1256,224,296,25,1801
+tests,"total",586,113,78,30,807
+examples,"total",46,4,1,0,51
+total,"total",1888,341,375,55,2659
 ```
 
 ## Library Usage

@@ -49,8 +49,8 @@ impl LocsDiff {
     }
 
     /// Net change (added - removed) for blank lines
-    pub fn net_blanks(&self) -> i64 {
-        self.added.blanks as i64 - self.removed.blanks as i64
+    pub fn net_blank(&self) -> i64 {
+        self.added.blank as i64 - self.removed.blank as i64
     }
 
     /// Net change (added - removed) for doc comment lines
@@ -641,13 +641,13 @@ fn compute_locs_diff(old: &Locs, new: &Locs) -> LocsDiff {
     LocsDiff {
         added: Locs {
             code: new.code.saturating_sub(old.code),
-            blanks: new.blanks.saturating_sub(old.blanks),
+            blank: new.blank.saturating_sub(old.blank),
             docs: new.docs.saturating_sub(old.docs),
             comments: new.comments.saturating_sub(old.comments),
         },
         removed: Locs {
             code: old.code.saturating_sub(new.code),
-            blanks: old.blanks.saturating_sub(new.blanks),
+            blank: old.blank.saturating_sub(new.blank),
             docs: old.docs.saturating_sub(new.docs),
             comments: old.comments.saturating_sub(new.comments),
         },
@@ -686,20 +686,20 @@ mod tests {
         let diff = LocsDiff {
             added: Locs {
                 code: 100,
-                blanks: 20,
+                blank: 20,
                 docs: 10,
                 comments: 5,
             },
             removed: Locs {
                 code: 30,
-                blanks: 5,
+                blank: 5,
                 docs: 2,
                 comments: 1,
             },
         };
 
         assert_eq!(diff.net_code(), 70);
-        assert_eq!(diff.net_blanks(), 15);
+        assert_eq!(diff.net_blank(), 15);
         assert_eq!(diff.net_docs(), 8);
         assert_eq!(diff.net_comments(), 4);
         assert_eq!(diff.net_total(), 97);
@@ -710,13 +710,13 @@ mod tests {
         let a = LocsDiff {
             added: Locs {
                 code: 10,
-                blanks: 2,
+                blank: 2,
                 docs: 1,
                 comments: 1,
             },
             removed: Locs {
                 code: 5,
-                blanks: 1,
+                blank: 1,
                 docs: 0,
                 comments: 0,
             },
@@ -724,13 +724,13 @@ mod tests {
         let b = LocsDiff {
             added: Locs {
                 code: 20,
-                blanks: 4,
+                blank: 4,
                 docs: 2,
                 comments: 2,
             },
             removed: Locs {
                 code: 10,
-                blanks: 2,
+                blank: 2,
                 docs: 1,
                 comments: 1,
             },
@@ -749,13 +749,13 @@ mod tests {
             main: LocsDiff {
                 added: Locs {
                     code: 100,
-                    blanks: 10,
+                    blank: 10,
                     docs: 20,
                     comments: 5,
                 },
                 removed: Locs {
                     code: 50,
-                    blanks: 5,
+                    blank: 5,
                     docs: 10,
                     comments: 2,
                 },
@@ -763,13 +763,13 @@ mod tests {
             tests: LocsDiff {
                 added: Locs {
                     code: 50,
-                    blanks: 5,
+                    blank: 5,
                     docs: 2,
                     comments: 1,
                 },
                 removed: Locs {
                     code: 20,
-                    blanks: 2,
+                    blank: 2,
                     docs: 1,
                     comments: 0,
                 },
@@ -799,7 +799,7 @@ mod tests {
             file_count: 1,
             main: Locs {
                 code: 100,
-                blanks: 20,
+                blank: 20,
                 docs: 10,
                 comments: 5,
             },
@@ -819,7 +819,7 @@ mod tests {
             main: Locs::new(),
             tests: Locs {
                 code: 50,
-                blanks: 10,
+                blank: 10,
                 docs: 5,
                 comments: 2,
             },
@@ -838,7 +838,7 @@ mod tests {
             file_count: 1,
             main: Locs {
                 code: 100,
-                blanks: 20,
+                blank: 20,
                 docs: 10,
                 comments: 5,
             },
@@ -849,7 +849,7 @@ mod tests {
             file_count: 1,
             main: Locs {
                 code: 120,
-                blanks: 25,
+                blank: 25,
                 docs: 8,
                 comments: 5,
             },
@@ -872,13 +872,13 @@ mod tests {
             file_count: 1,
             main: Locs {
                 code: 100,
-                blanks: 20,
+                blank: 20,
                 docs: 10,
                 comments: 5,
             },
             tests: Locs {
                 code: 50,
-                blanks: 10,
+                blank: 10,
                 docs: 0,
                 comments: 5,
             },
