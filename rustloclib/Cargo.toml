@@ -14,6 +14,7 @@ cargo_metadata.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 utf8-chars = "3.0.6"
+gix.workspace = true
 
 [dev-dependencies]
 tempfile = "3.10"

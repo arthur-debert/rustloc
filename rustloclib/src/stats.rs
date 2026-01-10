@@ -1,7 +1,7 @@
 //! Core data structures for LOC statistics
 
 use serde::{Deserialize, Serialize};
-use std::ops::{Add, AddAssign};
+use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::path::PathBuf;
 
 /// Lines of code counts for a single context (main, tests, or examples)
@@ -48,6 +48,28 @@ impl AddAssign for Locs {
         self.code += other.code;
         self.docs += other.docs;
         self.comments += other.comments;
+    }
+}
+
+impl Sub for Locs {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        Self {
+            blanks: self.blanks.saturating_sub(other.blanks),
+            code: self.code.saturating_sub(other.code),
+            docs: self.docs.saturating_sub(other.docs),
+            comments: self.comments.saturating_sub(other.comments),
+        }
+    }
+}
+
+impl SubAssign for Locs {
+    fn sub_assign(&mut self, other: Self) {
+        self.blanks = self.blanks.saturating_sub(other.blanks);
+        self.code = self.code.saturating_sub(other.code);
+        self.docs = self.docs.saturating_sub(other.docs);
+        self.comments = self.comments.saturating_sub(other.comments);
     }
 }
 
@@ -115,6 +137,28 @@ impl AddAssign for LocStats {
         self.main += other.main;
         self.tests += other.tests;
         self.examples += other.examples;
+    }
+}
+
+impl Sub for LocStats {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        Self {
+            file_count: self.file_count.saturating_sub(other.file_count),
+            main: self.main - other.main,
+            tests: self.tests - other.tests,
+            examples: self.examples - other.examples,
+        }
+    }
+}
+
+impl SubAssign for LocStats {
+    fn sub_assign(&mut self, other: Self) {
+        self.file_count = self.file_count.saturating_sub(other.file_count);
+        self.main -= other.main;
+        self.tests -= other.tests;
+        self.examples -= other.examples;
     }
 }
 

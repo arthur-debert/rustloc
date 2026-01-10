@@ -48,6 +48,7 @@
 //! ```
 
 pub mod counter;
+pub mod diff;
 pub mod error;
 pub mod filter;
 pub mod stats;
@@ -55,6 +56,10 @@ pub mod visitor;
 pub mod workspace;
 
 pub use counter::{count_directory, count_file, count_workspace, CountOptions, CountResult};
+pub use diff::{
+    diff_commits, CrateDiffStats, DiffOptions, DiffResult, FileChangeType, FileDiffStats,
+    LocStatsDiff, LocsDiff,
+};
 pub use error::RustlocError;
 pub use filter::FilterConfig;
 pub use stats::{CrateStats, FileStats, LocStats, Locs};
