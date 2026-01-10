@@ -92,6 +92,18 @@ fn test_by_crate_output() {
 }
 
 #[test]
+fn test_by_module_output() {
+    let (stdout, _, success) = run_rustloc(&[".", "--by-module"]);
+
+    assert!(success);
+    assert!(stdout.contains("By-module breakdown:"));
+    assert!(stdout.contains("rustloclib::counter"));
+    assert!(stdout.contains("rustloclib::diff"));
+    assert!(stdout.contains("rustloc"));
+    assert!(stdout.contains("Total ("));
+}
+
+#[test]
 fn test_crate_filter() {
     let (stdout, _, success) = run_rustloc(&[".", "--crate", "rustloc"]);
 

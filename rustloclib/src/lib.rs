@@ -62,7 +62,7 @@ pub use diff::{
 };
 pub use error::RustlocError;
 pub use filter::FilterConfig;
-pub use stats::{CrateStats, FileStats, LocStats, Locs};
+pub use stats::{CrateStats, FileStats, LocStats, Locs, ModuleStats};
 pub use visitor::{parse_file, parse_string, VisitorContext};
 pub use workspace::{CrateInfo, WorkspaceInfo};
 

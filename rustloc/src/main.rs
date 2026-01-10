@@ -87,6 +87,10 @@ struct CountArgs {
     /// Show breakdown by file
     #[arg(short = 'f', long)]
     by_file: bool,
+
+    /// Show breakdown by module (directory aggregate + sibling module file)
+    #[arg(short = 'm', long)]
+    by_module: bool,
 }
 
 /// Arguments for the diff command
@@ -181,12 +185,20 @@ fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
         options = options.with_file_stats();
     }
 
+    if args.by_module {
+        options = options.with_module_stats();
+    }
+
     let result = count_workspace(&args.path, options)?;
 
     match args.common.output {
-        OutputFormat::Table => print_count_table(&result, args.by_crate, args.by_file),
-        OutputFormat::Json => print_count_json(&result, args.by_crate, args.by_file)?,
-        OutputFormat::Csv => print_count_csv(&result, args.by_crate, args.by_file),
+        OutputFormat::Table => {
+            print_count_table(&result, args.by_crate, args.by_file, args.by_module)
+        }
+        OutputFormat::Json => {
+            print_count_json(&result, args.by_crate, args.by_file, args.by_module)?
+        }
+        OutputFormat::Csv => print_count_csv(&result, args.by_crate, args.by_file, args.by_module),
     }
 
     Ok(())
@@ -241,7 +253,41 @@ fn parse_commit_range(
 // Count output functions
 // ============================================================================
 
-fn print_count_table(result: &CountResult, by_crate: bool, by_file: bool) {
+fn print_count_table(result: &CountResult, by_crate: bool, by_file: bool, by_module: bool) {
+    if by_module && !result.modules.is_empty() {
+        println!("By-module breakdown:");
+        println!(
+            "{:<40} {:>6} {:>8} {:>8} {:>8} {:>8} {:>8}",
+            "Module", "Files", "Code", "Blank", "Docs", "Comments", "Total"
+        );
+        println!("{}", "-".repeat(86));
+
+        for module in &result.modules {
+            let name = if module.name.is_empty() {
+                "(root)"
+            } else {
+                &module.name
+            };
+            let truncated = if name.len() > 38 {
+                format!("..{}", &name[name.len() - 36..])
+            } else {
+                name.to_string()
+            };
+
+            println!(
+                "{:<40} {:>6} {:>8} {:>8} {:>8} {:>8} {:>8}",
+                truncated,
+                module.files.len(),
+                module.stats.code(),
+                module.stats.blanks(),
+                module.stats.docs(),
+                module.stats.comments(),
+                module.stats.total()
+            );
+        }
+        println!();
+    }
+
     if by_file && !result.files.is_empty() {
         println!("By-file breakdown:");
         println!(
@@ -284,7 +330,7 @@ fn print_count_table(result: &CountResult, by_crate: bool, by_file: bool) {
         println!();
     }
 
-    if by_crate || by_file {
+    if by_crate || by_file || by_module {
         println!("Total ({} files):", result.total.file_count);
     } else {
         println!("File count: {}", result.total.file_count);
@@ -331,6 +377,7 @@ fn print_count_json(
     result: &CountResult,
     by_crate: bool,
     by_file: bool,
+    by_module: bool,
 ) -> Result<(), serde_json::Error> {
     #[derive(serde::Serialize)]
     struct JsonOutput<'a> {
@@ -338,6 +385,8 @@ fn print_count_json(
         totals: JsonStats<'a>,
         #[serde(skip_serializing_if = "Option::is_none")]
         crates: Option<Vec<JsonCrate<'a>>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        modules: Option<Vec<JsonModule<'a>>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         files: Option<Vec<JsonFile<'a>>>,
     }
@@ -363,6 +412,13 @@ fn print_count_json(
     struct JsonCrate<'a> {
         name: &'a str,
         file_count: u64,
+        stats: JsonStats<'a>,
+    }
+
+    #[derive(serde::Serialize)]
+    struct JsonModule<'a> {
+        name: &'a str,
+        file_count: usize,
         stats: JsonStats<'a>,
     }
 
@@ -405,6 +461,21 @@ fn print_count_json(
         } else {
             None
         },
+        modules: if by_module {
+            Some(
+                result
+                    .modules
+                    .iter()
+                    .map(|m| JsonModule {
+                        name: if m.name.is_empty() { "(root)" } else { &m.name },
+                        file_count: m.files.len(),
+                        stats: make_json_stats(&m.stats),
+                    })
+                    .collect(),
+            )
+        } else {
+            None
+        },
         files: if by_file {
             Some(
                 result
@@ -425,8 +496,27 @@ fn print_count_json(
     Ok(())
 }
 
-fn print_count_csv(result: &CountResult, by_crate: bool, by_file: bool) {
+fn print_count_csv(result: &CountResult, by_crate: bool, by_file: bool, by_module: bool) {
     println!("type,name,code,blanks,docs,comments,total");
+
+    if by_module {
+        for module in &result.modules {
+            let name = if module.name.is_empty() {
+                "(root)"
+            } else {
+                &module.name
+            };
+            println!(
+                "module,\"{}\",{},{},{},{},{}",
+                name,
+                module.stats.code(),
+                module.stats.blanks(),
+                module.stats.docs(),
+                module.stats.comments(),
+                module.stats.total()
+            );
+        }
+    }
 
     if by_file {
         for file in &result.files {

@@ -3,11 +3,12 @@
 //! This module provides the main entry points for counting lines of code
 //! in Rust projects, with support for workspace filtering and glob patterns.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::error::RustlocError;
 use crate::filter::{discover_files, discover_files_in_dirs, FilterConfig};
-use crate::stats::{CrateStats, FileStats, LocStats};
+use crate::stats::{CrateStats, FileStats, LocStats, ModuleStats};
 use crate::visitor::parse_file;
 use crate::workspace::{CrateInfo, WorkspaceInfo};
 use crate::Result;
@@ -21,6 +22,8 @@ pub struct CountOptions {
     pub file_filter: FilterConfig,
     /// Whether to include per-file statistics
     pub per_file_stats: bool,
+    /// Whether to include per-module statistics
+    pub per_module_stats: bool,
 }
 
 impl CountOptions {
@@ -46,6 +49,12 @@ impl CountOptions {
         self.per_file_stats = true;
         self
     }
+
+    /// Include per-module statistics in results.
+    pub fn with_module_stats(mut self) -> Self {
+        self.per_module_stats = true;
+        self
+    }
 }
 
 /// Result of counting LOC in a workspace or directory.
@@ -57,6 +66,8 @@ pub struct CountResult {
     pub crates: Vec<CrateStats>,
     /// Per-file statistics (if requested)
     pub files: Vec<FileStats>,
+    /// Per-module statistics (if requested)
+    pub modules: Vec<ModuleStats>,
 }
 
 impl CountResult {
@@ -107,16 +118,110 @@ pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<
 
     let mut result = CountResult::new();
 
-    for crate_info in crates {
+    for crate_info in &crates {
         let crate_stats = count_crate(crate_info, &options)?;
         result.total += crate_stats.stats.clone();
+
         if options.per_file_stats {
             result.files.extend(crate_stats.files.clone());
         }
+
+        // Compute module stats per-crate if requested
+        if options.per_module_stats {
+            let crate_modules = aggregate_modules(&crate_stats.files, &crate_info.name, crate_info);
+            result.modules.extend(crate_modules);
+        }
+
         result.crates.push(crate_stats);
     }
 
+    // Sort modules by name for consistent output
+    if options.per_module_stats {
+        result.modules.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
     Ok(result)
+}
+
+/// Compute the module name for a file path relative to a source root.
+///
+/// Module naming rules:
+/// - `lib.rs`, `main.rs`, `mod.rs` in root → "" (root module)
+/// - `foo.rs` (with or without sibling `foo/` dir) → "foo"
+/// - `foo/mod.rs` → "foo"
+/// - `foo/bar.rs` → "foo::bar"
+/// - For new-style modules, `foo.rs` and `foo/` are combined under "foo"
+fn compute_module_name(file_path: &Path, src_root: &Path) -> String {
+    let relative = file_path.strip_prefix(src_root).unwrap_or(file_path);
+
+    let mut components: Vec<&str> = relative
+        .components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .collect();
+
+    if components.is_empty() {
+        return String::new();
+    }
+
+    // Get the filename
+    let filename = components.pop().unwrap_or("");
+    let stem = filename.strip_suffix(".rs").unwrap_or(filename);
+
+    // Special case: root module files
+    if components.is_empty() && (stem == "lib" || stem == "main" || stem == "mod") {
+        return String::new();
+    }
+
+    // mod.rs belongs to parent module
+    if stem == "mod" {
+        return components.join("::");
+    }
+
+    // For regular files, check if there's a sibling directory with the same name
+    // If so, this file is the module entry point for that directory
+    // Either way, the module name includes this file's stem
+    if !components.is_empty() {
+        components.push(stem);
+        components.join("::")
+    } else {
+        stem.to_string()
+    }
+}
+
+/// Aggregate file stats into modules for a specific crate.
+fn aggregate_modules(
+    files: &[FileStats],
+    crate_name: &str,
+    crate_info: &CrateInfo,
+) -> Vec<ModuleStats> {
+    let mut module_map: HashMap<String, ModuleStats> = HashMap::new();
+
+    for file in files {
+        // Find the appropriate src root for this file
+        let src_root = crate_info
+            .src_dirs
+            .iter()
+            .find(|dir| file.path.starts_with(dir))
+            .map(|p| p.as_path())
+            .unwrap_or(&crate_info.root);
+
+        let local_module = compute_module_name(&file.path, src_root);
+
+        // Prefix with crate name for multi-crate workspaces
+        let full_module_name = if local_module.is_empty() {
+            crate_name.to_string()
+        } else {
+            format!("{}::{}", crate_name, local_module)
+        };
+
+        let module = module_map
+            .entry(full_module_name.clone())
+            .or_insert_with(|| ModuleStats::new(full_module_name));
+
+        module.add_file(file.path.clone(), file.stats.clone());
+    }
+
+    module_map.into_values().collect()
 }
 
 /// Count LOC in a single crate.
