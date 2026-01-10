@@ -51,6 +51,7 @@ pub mod counter;
 pub mod diff;
 pub mod error;
 pub mod filter;
+pub mod options;
 pub mod stats;
 pub mod visitor;
 pub mod workspace;
@@ -62,6 +63,7 @@ pub use diff::{
 };
 pub use error::RustlocError;
 pub use filter::FilterConfig;
+pub use options::{Aggregation, LineTypes};
 pub use stats::{CrateStats, FileStats, LocStats, Locs, ModuleStats};
 pub use visitor::{parse_file, parse_string, VisitorContext};
 pub use workspace::{CrateInfo, WorkspaceInfo};

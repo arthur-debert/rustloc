@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::RustlocError;
 use crate::filter::FilterConfig;
+use crate::options::{Aggregation, LineTypes};
 use crate::stats::{LocStats, Locs};
 use crate::visitor::{parse_string, VisitorContext};
 use crate::workspace::WorkspaceInfo;
@@ -65,6 +66,14 @@ impl LocsDiff {
     /// Net change (added - removed) for total lines
     pub fn net_total(&self) -> i64 {
         self.added.total() as i64 - self.removed.total() as i64
+    }
+
+    /// Return a filtered copy with only the specified line types included.
+    pub fn filter(&self, types: LineTypes) -> Self {
+        Self {
+            added: self.added.filter(types),
+            removed: self.removed.filter(types),
+        }
     }
 }
 
@@ -124,6 +133,16 @@ impl LocStatsDiff {
     pub fn net_total(&self) -> i64 {
         self.main.net_total() + self.tests.net_total() + self.examples.net_total()
     }
+
+    /// Return a filtered copy with only the specified line types included.
+    pub fn filter(&self, types: LineTypes) -> Self {
+        Self {
+            file_count: self.file_count,
+            main: self.main.filter(types),
+            tests: self.tests.filter(types),
+            examples: self.examples.filter(types),
+        }
+    }
 }
 
 impl std::ops::Add for LocStatsDiff {
@@ -157,6 +176,17 @@ pub struct FileDiffStats {
     pub change_type: FileChangeType,
     /// LOC diff for this file
     pub diff: LocStatsDiff,
+}
+
+impl FileDiffStats {
+    /// Return a filtered copy with only the specified line types included.
+    pub fn filter(&self, types: LineTypes) -> Self {
+        Self {
+            path: self.path.clone(),
+            change_type: self.change_type,
+            diff: self.diff.filter(types),
+        }
+    }
 }
 
 /// Type of file change in the diff.
@@ -199,6 +229,16 @@ impl CrateDiffStats {
         self.diff += file_diff.diff.clone();
         self.files.push(file_diff);
     }
+
+    /// Return a filtered copy with only the specified line types included.
+    pub fn filter(&self, types: LineTypes) -> Self {
+        Self {
+            name: self.name.clone(),
+            path: self.path.clone(),
+            diff: self.diff.filter(types),
+            files: self.files.iter().map(|f| f.filter(types)).collect(),
+        }
+    }
 }
 
 /// Result of a diff operation between two commits.
@@ -216,6 +256,19 @@ pub struct DiffResult {
     pub files: Vec<FileDiffStats>,
 }
 
+impl DiffResult {
+    /// Return a filtered copy with only the specified line types included.
+    pub fn filter(&self, types: LineTypes) -> Self {
+        Self {
+            from_commit: self.from_commit.clone(),
+            to_commit: self.to_commit.clone(),
+            total: self.total.filter(types),
+            crates: self.crates.iter().map(|c| c.filter(types)).collect(),
+            files: self.files.iter().map(|f| f.filter(types)).collect(),
+        }
+    }
+}
+
 /// Options for diff computation.
 ///
 /// Uses the same filtering infrastructure as the regular LOC counter:
@@ -223,14 +276,27 @@ pub struct DiffResult {
 /// - `file_filter`: Filter by glob patterns (uses `FilterConfig::matches()`)
 ///
 /// This ensures consistent filtering behavior across all features.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct DiffOptions {
     /// Crate names to include (empty = all crates)
     pub crate_filter: Vec<String>,
     /// File filter configuration
     pub file_filter: FilterConfig,
-    /// Whether to include per-file stats
-    pub per_file_stats: bool,
+    /// Aggregation level for results
+    pub aggregation: Aggregation,
+    /// Which line types to include in results
+    pub line_types: LineTypes,
+}
+
+impl Default for DiffOptions {
+    fn default() -> Self {
+        Self {
+            crate_filter: Vec::new(),
+            file_filter: FilterConfig::new(),
+            aggregation: Aggregation::Total,
+            line_types: LineTypes::all(),
+        }
+    }
 }
 
 impl DiffOptions {
@@ -251,9 +317,15 @@ impl DiffOptions {
         self
     }
 
-    /// Enable per-file statistics
-    pub fn with_file_stats(mut self) -> Self {
-        self.per_file_stats = true;
+    /// Set aggregation level
+    pub fn aggregation(mut self, level: Aggregation) -> Self {
+        self.aggregation = level;
+        self
+    }
+
+    /// Set which line types to include
+    pub fn line_types(mut self, types: LineTypes) -> Self {
+        self.line_types = types;
         self
     }
 }
@@ -327,6 +399,13 @@ pub fn diff_commits(
     let mut files = Vec::new();
     let mut crate_stats: HashMap<String, CrateDiffStats> = HashMap::new();
 
+    // Determine what to include based on aggregation level
+    let include_files = matches!(options.aggregation, Aggregation::ByFile);
+    let include_crates = matches!(
+        options.aggregation,
+        Aggregation::ByCrate | Aggregation::ByFile
+    );
+
     for change in changes {
         let path = change.path.clone();
 
@@ -352,23 +431,25 @@ pub fn diff_commits(
         total += file_diff.diff.clone();
 
         // Aggregate into crate stats if applicable
-        if let Some(crate_info) = crate_info {
-            let crate_stats_entry =
-                crate_stats
-                    .entry(crate_info.name.clone())
-                    .or_insert_with(|| {
-                        CrateDiffStats::new(crate_info.name.clone(), crate_info.root.clone())
-                    });
+        if include_crates {
+            if let Some(crate_info) = crate_info {
+                let crate_stats_entry =
+                    crate_stats
+                        .entry(crate_info.name.clone())
+                        .or_insert_with(|| {
+                            CrateDiffStats::new(crate_info.name.clone(), crate_info.root.clone())
+                        });
 
-            if options.per_file_stats {
-                crate_stats_entry.add_file(file_diff.clone());
-            } else {
-                crate_stats_entry.diff += file_diff.diff.clone();
+                if include_files {
+                    crate_stats_entry.add_file(file_diff.clone());
+                } else {
+                    crate_stats_entry.diff += file_diff.diff.clone();
+                }
             }
         }
 
         // Collect file stats if requested
-        if options.per_file_stats {
+        if include_files {
             files.push(file_diff);
         }
     }
@@ -376,13 +457,16 @@ pub fn diff_commits(
     // Convert crate stats map to vec
     let crates: Vec<CrateDiffStats> = crate_stats.into_values().collect();
 
-    Ok(DiffResult {
+    // Build result and apply line type filter
+    let result = DiffResult {
         from_commit: from.to_string(),
         to_commit: to.to_string(),
         total,
         crates,
         files,
-    })
+    };
+
+    Ok(result.filter(options.line_types))
 }
 
 /// Internal representation of a file change
@@ -698,10 +782,10 @@ mod tests {
     fn test_diff_options_builder() {
         let options = DiffOptions::new()
             .crates(vec!["my-crate".to_string()])
-            .with_file_stats();
+            .aggregation(Aggregation::ByFile);
 
         assert_eq!(options.crate_filter, vec!["my-crate"]);
-        assert!(options.per_file_stats);
+        assert_eq!(options.aggregation, Aggregation::ByFile);
     }
 
     #[test]
@@ -833,13 +917,13 @@ mod tests {
 
     #[test]
     fn test_diff_commits_with_file_stats() {
-        let options = DiffOptions::new().with_file_stats();
+        let options = DiffOptions::new().aggregation(Aggregation::ByFile);
         let result = diff_commits(".", "e3b2667", "6917e2d", options);
 
         assert!(result.is_ok());
         let _diff = result.unwrap();
 
-        // With file stats enabled, we should have file details
+        // With file aggregation enabled, we should have file details
         // (may be empty if no .rs files changed between these commits)
         // The structure is correct if we got here without panic
     }
@@ -882,7 +966,9 @@ mod tests {
             .include("**/lib.rs")
             .expect("valid pattern");
 
-        let options = DiffOptions::new().filter(filter).with_file_stats();
+        let options = DiffOptions::new()
+            .filter(filter)
+            .aggregation(Aggregation::ByFile);
 
         let result = diff_commits(".", "e3b2667", "6917e2d", options);
         assert!(result.is_ok());
@@ -914,7 +1000,7 @@ mod tests {
         // Test with crate filter
         let options = DiffOptions::new()
             .crates(vec!["rustloclib".to_string()])
-            .with_file_stats();
+            .aggregation(Aggregation::ByFile);
 
         let result = diff_commits(".", "e3b2667", "6917e2d", options);
         assert!(result.is_ok());
@@ -938,7 +1024,9 @@ mod tests {
             .exclude("**/tests/**")
             .expect("valid pattern");
 
-        let options = DiffOptions::new().filter(filter).with_file_stats();
+        let options = DiffOptions::new()
+            .filter(filter)
+            .aggregation(Aggregation::ByFile);
 
         let result = diff_commits(".", "e3b2667", "6917e2d", options);
         assert!(result.is_ok());

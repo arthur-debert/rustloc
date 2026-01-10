@@ -1,5 +1,6 @@
 //! Core data structures for LOC statistics
 
+use crate::options::LineTypes;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::path::PathBuf;
@@ -26,6 +27,17 @@ impl Locs {
     /// Total lines in this context
     pub fn total(&self) -> u64 {
         self.blanks + self.code + self.docs + self.comments
+    }
+
+    /// Return a filtered copy with only the specified line types included.
+    /// Disabled types are set to zero.
+    pub fn filter(&self, types: LineTypes) -> Self {
+        Self {
+            code: if types.code { self.code } else { 0 },
+            blanks: if types.blank { self.blanks } else { 0 },
+            docs: if types.docs { self.docs } else { 0 },
+            comments: if types.comments { self.comments } else { 0 },
+        }
     }
 }
 
@@ -116,6 +128,16 @@ impl LocStats {
     pub fn total(&self) -> u64 {
         self.main.total() + self.tests.total() + self.examples.total()
     }
+
+    /// Return a filtered copy with only the specified line types included.
+    pub fn filter(&self, types: LineTypes) -> Self {
+        Self {
+            file_count: self.file_count,
+            main: self.main.filter(types),
+            tests: self.tests.filter(types),
+            examples: self.examples.filter(types),
+        }
+    }
 }
 
 impl Add for LocStats {
@@ -176,6 +198,14 @@ impl FileStats {
     pub fn new(path: PathBuf, stats: LocStats) -> Self {
         Self { path, stats }
     }
+
+    /// Return a filtered copy with only the specified line types included.
+    pub fn filter(&self, types: LineTypes) -> Self {
+        Self {
+            path: self.path.clone(),
+            stats: self.stats.filter(types),
+        }
+    }
 }
 
 /// Statistics for a Rust module.
@@ -209,6 +239,15 @@ impl ModuleStats {
         self.stats += stats;
         self.files.push(path);
     }
+
+    /// Return a filtered copy with only the specified line types included.
+    pub fn filter(&self, types: LineTypes) -> Self {
+        Self {
+            name: self.name.clone(),
+            stats: self.stats.filter(types),
+            files: self.files.clone(),
+        }
+    }
 }
 
 /// Statistics for a crate within a workspace
@@ -239,6 +278,16 @@ impl CrateStats {
     pub fn add_file(&mut self, file_stats: FileStats) {
         self.stats += file_stats.stats.clone();
         self.files.push(file_stats);
+    }
+
+    /// Return a filtered copy with only the specified line types included.
+    pub fn filter(&self, types: LineTypes) -> Self {
+        Self {
+            name: self.name.clone(),
+            path: self.path.clone(),
+            stats: self.stats.filter(types),
+            files: self.files.iter().map(|f| f.filter(types)).collect(),
+        }
     }
 }
 
