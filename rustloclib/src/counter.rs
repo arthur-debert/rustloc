@@ -8,7 +8,7 @@ use std::path::Path;
 
 use crate::error::RustlocError;
 use crate::filter::{discover_files, discover_files_in_dirs, FilterConfig};
-use crate::options::{Aggregation, LineTypes};
+use crate::options::{Aggregation, Contexts};
 use crate::stats::{CrateStats, FileStats, LocStats, ModuleStats};
 use crate::visitor::parse_file;
 use crate::workspace::{CrateInfo, WorkspaceInfo};
@@ -23,8 +23,8 @@ pub struct CountOptions {
     pub file_filter: FilterConfig,
     /// Aggregation level for results
     pub aggregation: Aggregation,
-    /// Which line types to include in results
-    pub line_types: LineTypes,
+    /// Which contexts to include in results (main, tests, examples)
+    pub contexts: Contexts,
 }
 
 impl Default for CountOptions {
@@ -33,7 +33,7 @@ impl Default for CountOptions {
             crate_filter: Vec::new(),
             file_filter: FilterConfig::new(),
             aggregation: Aggregation::Total,
-            line_types: LineTypes::all(),
+            contexts: Contexts::all(),
         }
     }
 }
@@ -62,9 +62,9 @@ impl CountOptions {
         self
     }
 
-    /// Set which line types to include.
-    pub fn line_types(mut self, types: LineTypes) -> Self {
-        self.line_types = types;
+    /// Set which contexts to include.
+    pub fn contexts(mut self, contexts: Contexts) -> Self {
+        self.contexts = contexts;
         self
     }
 }
@@ -88,13 +88,13 @@ impl CountResult {
         Self::default()
     }
 
-    /// Return a filtered copy with only the specified line types included.
-    pub fn filter(&self, types: LineTypes) -> Self {
+    /// Return a filtered copy with only the specified contexts included.
+    pub fn filter(&self, contexts: Contexts) -> Self {
         Self {
-            total: self.total.filter(types),
-            crates: self.crates.iter().map(|c| c.filter(types)).collect(),
-            files: self.files.iter().map(|f| f.filter(types)).collect(),
-            modules: self.modules.iter().map(|m| m.filter(types)).collect(),
+            total: self.total.filter(contexts),
+            crates: self.crates.iter().map(|c| c.filter(contexts)).collect(),
+            files: self.files.iter().map(|f| f.filter(contexts)).collect(),
+            modules: self.modules.iter().map(|m| m.filter(contexts)).collect(),
         }
     }
 }
@@ -172,8 +172,8 @@ pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<
         result.modules.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
-    // Apply line type filter
-    Ok(result.filter(options.line_types))
+    // Apply context filter
+    Ok(result.filter(options.contexts))
 }
 
 /// Compute the module name for a file path relative to a source root.

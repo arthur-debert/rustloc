@@ -5,80 +5,86 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Filter for which line types to include in results.
+/// Filter for which code contexts to include in results.
 ///
-/// When a line type is disabled, it will be zero in all returned stats,
-/// and totals will only sum the enabled types.
+/// When a context is disabled, it will be zeroed in returned stats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LineTypes {
-    /// Include code lines
-    pub code: bool,
-    /// Include blank lines
-    pub blank: bool,
-    /// Include doc comment lines
-    pub docs: bool,
-    /// Include regular comment lines
-    pub comments: bool,
+pub struct Contexts {
+    /// Include main/production code
+    pub main: bool,
+    /// Include test code
+    pub tests: bool,
+    /// Include example code
+    pub examples: bool,
 }
 
-impl Default for LineTypes {
+impl Default for Contexts {
     fn default() -> Self {
         Self::all()
     }
 }
 
-impl LineTypes {
-    /// Include all line types (default)
+impl Contexts {
+    /// Include all contexts (default)
     pub fn all() -> Self {
         Self {
-            code: true,
-            blank: true,
-            docs: true,
-            comments: true,
+            main: true,
+            tests: true,
+            examples: true,
         }
     }
 
-    /// Include no line types
+    /// Include no contexts
     pub fn none() -> Self {
         Self {
-            code: false,
-            blank: false,
-            docs: false,
-            comments: false,
+            main: false,
+            tests: false,
+            examples: false,
         }
     }
 
-    /// Include only code lines
-    pub fn code_only() -> Self {
+    /// Include only main/production code
+    pub fn main_only() -> Self {
         Self {
-            code: true,
-            blank: false,
-            docs: false,
-            comments: false,
+            main: true,
+            tests: false,
+            examples: false,
         }
     }
 
-    /// Builder: set code inclusion
-    pub fn with_code(mut self, include: bool) -> Self {
-        self.code = include;
+    /// Include only test code
+    pub fn tests_only() -> Self {
+        Self {
+            main: false,
+            tests: true,
+            examples: false,
+        }
+    }
+
+    /// Include only example code
+    pub fn examples_only() -> Self {
+        Self {
+            main: false,
+            tests: false,
+            examples: true,
+        }
+    }
+
+    /// Builder: set main inclusion
+    pub fn with_main(mut self, include: bool) -> Self {
+        self.main = include;
         self
     }
 
-    /// Builder: set blank inclusion
-    pub fn with_blank(mut self, include: bool) -> Self {
-        self.blank = include;
+    /// Builder: set tests inclusion
+    pub fn with_tests(mut self, include: bool) -> Self {
+        self.tests = include;
         self
     }
 
-    /// Builder: set docs inclusion
-    pub fn with_docs(mut self, include: bool) -> Self {
-        self.docs = include;
-        self
-    }
-
-    /// Builder: set comments inclusion
-    pub fn with_comments(mut self, include: bool) -> Self {
-        self.comments = include;
+    /// Builder: set examples inclusion
+    pub fn with_examples(mut self, include: bool) -> Self {
+        self.examples = include;
         self
     }
 }
@@ -104,29 +110,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_line_types_default() {
-        let lt = LineTypes::default();
-        assert!(lt.code);
-        assert!(lt.blank);
-        assert!(lt.docs);
-        assert!(lt.comments);
+    fn test_contexts_default() {
+        let ctx = Contexts::default();
+        assert!(ctx.main);
+        assert!(ctx.tests);
+        assert!(ctx.examples);
     }
 
     #[test]
-    fn test_line_types_none() {
-        let lt = LineTypes::none();
-        assert!(!lt.code);
-        assert!(!lt.blank);
-        assert!(!lt.docs);
-        assert!(!lt.comments);
+    fn test_contexts_none() {
+        let ctx = Contexts::none();
+        assert!(!ctx.main);
+        assert!(!ctx.tests);
+        assert!(!ctx.examples);
     }
 
     #[test]
-    fn test_line_types_builder() {
-        let lt = LineTypes::none().with_code(true).with_docs(true);
-        assert!(lt.code);
-        assert!(!lt.blank);
-        assert!(lt.docs);
-        assert!(!lt.comments);
+    fn test_contexts_builder() {
+        let ctx = Contexts::none().with_main(true).with_tests(true);
+        assert!(ctx.main);
+        assert!(ctx.tests);
+        assert!(!ctx.examples);
+    }
+
+    #[test]
+    fn test_contexts_main_only() {
+        let ctx = Contexts::main_only();
+        assert!(ctx.main);
+        assert!(!ctx.tests);
+        assert!(!ctx.examples);
     }
 }

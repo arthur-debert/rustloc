@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::RustlocError;
 use crate::filter::FilterConfig;
-use crate::options::{Aggregation, LineTypes};
+use crate::options::{Aggregation, Contexts};
 use crate::stats::{LocStats, Locs};
 use crate::visitor::{parse_string, VisitorContext};
 use crate::workspace::WorkspaceInfo;
@@ -66,14 +66,6 @@ impl LocsDiff {
     /// Net change (added - removed) for total lines
     pub fn net_total(&self) -> i64 {
         self.added.total() as i64 - self.removed.total() as i64
-    }
-
-    /// Return a filtered copy with only the specified line types included.
-    pub fn filter(&self, types: LineTypes) -> Self {
-        Self {
-            added: self.added.filter(types),
-            removed: self.removed.filter(types),
-        }
     }
 }
 
@@ -134,13 +126,25 @@ impl LocStatsDiff {
         self.main.net_total() + self.tests.net_total() + self.examples.net_total()
     }
 
-    /// Return a filtered copy with only the specified line types included.
-    pub fn filter(&self, types: LineTypes) -> Self {
+    /// Return a filtered copy with only the specified contexts included.
+    pub fn filter(&self, contexts: Contexts) -> Self {
         Self {
             file_count: self.file_count,
-            main: self.main.filter(types),
-            tests: self.tests.filter(types),
-            examples: self.examples.filter(types),
+            main: if contexts.main {
+                self.main
+            } else {
+                LocsDiff::default()
+            },
+            tests: if contexts.tests {
+                self.tests
+            } else {
+                LocsDiff::default()
+            },
+            examples: if contexts.examples {
+                self.examples
+            } else {
+                LocsDiff::default()
+            },
         }
     }
 }
@@ -179,12 +183,12 @@ pub struct FileDiffStats {
 }
 
 impl FileDiffStats {
-    /// Return a filtered copy with only the specified line types included.
-    pub fn filter(&self, types: LineTypes) -> Self {
+    /// Return a filtered copy with only the specified contexts included.
+    pub fn filter(&self, contexts: Contexts) -> Self {
         Self {
             path: self.path.clone(),
             change_type: self.change_type,
-            diff: self.diff.filter(types),
+            diff: self.diff.filter(contexts),
         }
     }
 }
@@ -230,13 +234,13 @@ impl CrateDiffStats {
         self.files.push(file_diff);
     }
 
-    /// Return a filtered copy with only the specified line types included.
-    pub fn filter(&self, types: LineTypes) -> Self {
+    /// Return a filtered copy with only the specified contexts included.
+    pub fn filter(&self, contexts: Contexts) -> Self {
         Self {
             name: self.name.clone(),
             path: self.path.clone(),
-            diff: self.diff.filter(types),
-            files: self.files.iter().map(|f| f.filter(types)).collect(),
+            diff: self.diff.filter(contexts),
+            files: self.files.iter().map(|f| f.filter(contexts)).collect(),
         }
     }
 }
@@ -257,14 +261,14 @@ pub struct DiffResult {
 }
 
 impl DiffResult {
-    /// Return a filtered copy with only the specified line types included.
-    pub fn filter(&self, types: LineTypes) -> Self {
+    /// Return a filtered copy with only the specified contexts included.
+    pub fn filter(&self, contexts: Contexts) -> Self {
         Self {
             from_commit: self.from_commit.clone(),
             to_commit: self.to_commit.clone(),
-            total: self.total.filter(types),
-            crates: self.crates.iter().map(|c| c.filter(types)).collect(),
-            files: self.files.iter().map(|f| f.filter(types)).collect(),
+            total: self.total.filter(contexts),
+            crates: self.crates.iter().map(|c| c.filter(contexts)).collect(),
+            files: self.files.iter().map(|f| f.filter(contexts)).collect(),
         }
     }
 }
@@ -284,8 +288,8 @@ pub struct DiffOptions {
     pub file_filter: FilterConfig,
     /// Aggregation level for results
     pub aggregation: Aggregation,
-    /// Which line types to include in results
-    pub line_types: LineTypes,
+    /// Which contexts to include in results (main, tests, examples)
+    pub contexts: Contexts,
 }
 
 impl Default for DiffOptions {
@@ -294,7 +298,7 @@ impl Default for DiffOptions {
             crate_filter: Vec::new(),
             file_filter: FilterConfig::new(),
             aggregation: Aggregation::Total,
-            line_types: LineTypes::all(),
+            contexts: Contexts::all(),
         }
     }
 }
@@ -323,9 +327,9 @@ impl DiffOptions {
         self
     }
 
-    /// Set which line types to include
-    pub fn line_types(mut self, types: LineTypes) -> Self {
-        self.line_types = types;
+    /// Set which contexts to include
+    pub fn contexts(mut self, contexts: Contexts) -> Self {
+        self.contexts = contexts;
         self
     }
 }
@@ -466,7 +470,7 @@ pub fn diff_commits(
         files,
     };
 
-    Ok(result.filter(options.line_types))
+    Ok(result.filter(options.contexts))
 }
 
 /// Internal representation of a file change
