@@ -499,7 +499,9 @@ fn compute_file_diff(
     change: &FileChange,
     path: &Path,
 ) -> Result<FileDiffStats> {
-    // Determine context from file path
+    // Determine initial context from file path
+    // Note: The parser will detect #[cfg(test)] and #[test] blocks internally,
+    // so a file in src/ can still have both main and tests stats populated
     let context = VisitorContext::from_file_path(path);
 
     let (old_stats, new_stats) = match change.change_type {
@@ -522,8 +524,9 @@ fn compute_file_diff(
         }
     };
 
-    // Compute the diff based on context
-    let diff = compute_stats_diff(&old_stats, &new_stats, context);
+    // Compute the diff across ALL contexts (main, tests, examples)
+    // A single file can have code in multiple contexts (e.g., src/lib.rs with #[cfg(test)])
+    let diff = compute_stats_diff(&old_stats, &new_stats);
 
     Ok(FileDiffStats {
         path: path.to_path_buf(),
@@ -532,42 +535,35 @@ fn compute_file_diff(
     })
 }
 
-/// Compute the diff between two LocStats for a specific context
-fn compute_stats_diff(old: &LocStats, new: &LocStats, context: VisitorContext) -> LocStatsDiff {
+/// Compute the diff between two LocStats across all contexts
+fn compute_stats_diff(old: &LocStats, new: &LocStats) -> LocStatsDiff {
     let mut diff = LocStatsDiff::new();
     diff.file_count = 1;
 
-    // Get the relevant Locs based on context
-    let (old_locs, new_locs) = match context {
-        VisitorContext::Main => (&old.main, &new.main),
-        VisitorContext::Tests => (&old.tests, &new.tests),
-        VisitorContext::Example => (&old.examples, &new.examples),
-    };
-
-    // Compute added and removed for each field
-    let locs_diff = LocsDiff {
-        added: Locs {
-            code: new_locs.code.saturating_sub(old_locs.code),
-            blanks: new_locs.blanks.saturating_sub(old_locs.blanks),
-            docs: new_locs.docs.saturating_sub(old_locs.docs),
-            comments: new_locs.comments.saturating_sub(old_locs.comments),
-        },
-        removed: Locs {
-            code: old_locs.code.saturating_sub(new_locs.code),
-            blanks: old_locs.blanks.saturating_sub(new_locs.blanks),
-            docs: old_locs.docs.saturating_sub(new_locs.docs),
-            comments: old_locs.comments.saturating_sub(new_locs.comments),
-        },
-    };
-
-    // Assign to the appropriate context
-    match context {
-        VisitorContext::Main => diff.main = locs_diff,
-        VisitorContext::Tests => diff.tests = locs_diff,
-        VisitorContext::Example => diff.examples = locs_diff,
-    }
+    // Compute diff for each context separately
+    diff.main = compute_locs_diff(&old.main, &new.main);
+    diff.tests = compute_locs_diff(&old.tests, &new.tests);
+    diff.examples = compute_locs_diff(&old.examples, &new.examples);
 
     diff
+}
+
+/// Compute the diff between two Locs
+fn compute_locs_diff(old: &Locs, new: &Locs) -> LocsDiff {
+    LocsDiff {
+        added: Locs {
+            code: new.code.saturating_sub(old.code),
+            blanks: new.blanks.saturating_sub(old.blanks),
+            docs: new.docs.saturating_sub(old.docs),
+            comments: new.comments.saturating_sub(old.comments),
+        },
+        removed: Locs {
+            code: old.code.saturating_sub(new.code),
+            blanks: old.blanks.saturating_sub(new.blanks),
+            docs: old.docs.saturating_sub(new.docs),
+            comments: old.comments.saturating_sub(new.comments),
+        },
+    }
 }
 
 /// Read a blob's content as a UTF-8 string
@@ -723,7 +719,7 @@ mod tests {
             examples: Locs::new(),
         };
 
-        let diff = compute_stats_diff(&old, &new, VisitorContext::Main);
+        let diff = compute_stats_diff(&old, &new);
         assert_eq!(diff.main.added.code, 100);
         assert_eq!(diff.main.removed.code, 0);
     }
@@ -743,7 +739,7 @@ mod tests {
         };
         let new = LocStats::new();
 
-        let diff = compute_stats_diff(&old, &new, VisitorContext::Tests);
+        let diff = compute_stats_diff(&old, &new);
         assert_eq!(diff.tests.added.code, 0);
         assert_eq!(diff.tests.removed.code, 50);
     }
@@ -773,11 +769,41 @@ mod tests {
             examples: Locs::new(),
         };
 
-        let diff = compute_stats_diff(&old, &new, VisitorContext::Main);
+        let diff = compute_stats_diff(&old, &new);
         assert_eq!(diff.main.added.code, 20); // 120 - 100
         assert_eq!(diff.main.removed.code, 0);
         assert_eq!(diff.main.added.docs, 0);
         assert_eq!(diff.main.removed.docs, 2); // 10 - 8
+    }
+
+    #[test]
+    fn test_compute_stats_diff_mixed_contexts() {
+        // Test that a file with both main and test code is properly diffed
+        let old = LocStats::new();
+        let new = LocStats {
+            file_count: 1,
+            main: Locs {
+                code: 100,
+                blanks: 20,
+                docs: 10,
+                comments: 5,
+            },
+            tests: Locs {
+                code: 50,
+                blanks: 10,
+                docs: 0,
+                comments: 5,
+            },
+            examples: Locs::new(),
+        };
+
+        let diff = compute_stats_diff(&old, &new);
+        // Main code should be tracked
+        assert_eq!(diff.main.added.code, 100);
+        // Test code should also be tracked
+        assert_eq!(diff.tests.added.code, 50);
+        // Total should include both
+        assert_eq!(diff.total_added().code, 150);
     }
 
     // Integration tests that use a real git repository
