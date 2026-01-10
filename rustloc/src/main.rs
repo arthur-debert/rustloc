@@ -26,7 +26,7 @@
 //! rustloc . --crate my-lib --crate my-cli
 //!
 //! # Output as JSON
-//! rustloc . --format json
+//! rustloc . --output json
 //!
 //! # Filter files with glob patterns
 //! rustloc . --include "src/**/*.rs" --exclude "**/generated/**"
@@ -80,13 +80,13 @@ struct CountArgs {
     #[command(flatten)]
     common: CommonArgs,
 
-    /// Show per-crate breakdown
+    /// Show breakdown by crate
     #[arg(long)]
-    per_crate: bool,
+    by_crate: bool,
 
-    /// Show per-file breakdown
-    #[arg(long)]
-    per_file: bool,
+    /// Show breakdown by file
+    #[arg(short = 'f', long)]
+    by_file: bool,
 }
 
 /// Arguments for the diff command
@@ -106,13 +106,13 @@ struct DiffArgs {
     #[command(flatten)]
     common: CommonArgs,
 
-    /// Show per-crate breakdown
+    /// Show breakdown by crate
     #[arg(long)]
-    per_crate: bool,
+    by_crate: bool,
 
-    /// Show per-file breakdown
-    #[arg(long)]
-    per_file: bool,
+    /// Show breakdown by file
+    #[arg(short = 'f', long)]
+    by_file: bool,
 }
 
 /// Common arguments shared between count and diff commands
@@ -131,8 +131,8 @@ struct CommonArgs {
     exclude: Vec<String>,
 
     /// Output format
-    #[arg(short, long, value_enum, default_value = "table")]
-    format: OutputFormat,
+    #[arg(short = 'o', long, value_enum, default_value = "table")]
+    output: OutputFormat,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -177,16 +177,16 @@ fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
         .crates(args.common.crates.clone())
         .filter(filter);
 
-    if args.per_file {
+    if args.by_file {
         options = options.with_file_stats();
     }
 
     let result = count_workspace(&args.path, options)?;
 
-    match args.common.format {
-        OutputFormat::Table => print_count_table(&result, args.per_crate, args.per_file),
-        OutputFormat::Json => print_count_json(&result, args.per_crate, args.per_file)?,
-        OutputFormat::Csv => print_count_csv(&result, args.per_crate, args.per_file),
+    match args.common.output {
+        OutputFormat::Table => print_count_table(&result, args.by_crate, args.by_file),
+        OutputFormat::Json => print_count_json(&result, args.by_crate, args.by_file)?,
+        OutputFormat::Csv => print_count_csv(&result, args.by_crate, args.by_file),
     }
 
     Ok(())
@@ -202,16 +202,16 @@ fn run_diff(args: DiffArgs) -> Result<(), Box<dyn std::error::Error>> {
         .crates(args.common.crates.clone())
         .filter(filter);
 
-    if args.per_file {
+    if args.by_file {
         options = options.with_file_stats();
     }
 
     let result = diff_commits(&args.path, &from, &to, options)?;
 
-    match args.common.format {
-        OutputFormat::Table => print_diff_table(&result, args.per_crate, args.per_file),
-        OutputFormat::Json => print_diff_json(&result, args.per_crate, args.per_file)?,
-        OutputFormat::Csv => print_diff_csv(&result, args.per_crate, args.per_file),
+    match args.common.output {
+        OutputFormat::Table => print_diff_table(&result, args.by_crate, args.by_file),
+        OutputFormat::Json => print_diff_json(&result, args.by_crate, args.by_file)?,
+        OutputFormat::Csv => print_diff_csv(&result, args.by_crate, args.by_file),
     }
 
     Ok(())
@@ -241,9 +241,9 @@ fn parse_commit_range(
 // Count output functions
 // ============================================================================
 
-fn print_count_table(result: &CountResult, per_crate: bool, per_file: bool) {
-    if per_file && !result.files.is_empty() {
-        println!("Per-file breakdown:");
+fn print_count_table(result: &CountResult, by_crate: bool, by_file: bool) {
+    if by_file && !result.files.is_empty() {
+        println!("By-file breakdown:");
         println!(
             "{:<60} {:>8} {:>8} {:>8} {:>8} {:>8}",
             "File", "Code", "Blank", "Docs", "Comments", "Total"
@@ -272,8 +272,8 @@ fn print_count_table(result: &CountResult, per_crate: bool, per_file: bool) {
         println!();
     }
 
-    if per_crate && !result.crates.is_empty() {
-        println!("Per-crate breakdown:");
+    if by_crate && !result.crates.is_empty() {
+        println!("By-crate breakdown:");
         for crate_stats in &result.crates {
             println!(
                 "\n{} ({} files):",
@@ -284,7 +284,7 @@ fn print_count_table(result: &CountResult, per_crate: bool, per_file: bool) {
         println!();
     }
 
-    if per_crate || per_file {
+    if by_crate || by_file {
         println!("Total ({} files):", result.total.file_count);
     } else {
         println!("File count: {}", result.total.file_count);
@@ -329,8 +329,8 @@ fn print_locs_row(name: &str, locs: &Locs) {
 
 fn print_count_json(
     result: &CountResult,
-    per_crate: bool,
-    per_file: bool,
+    by_crate: bool,
+    by_file: bool,
 ) -> Result<(), serde_json::Error> {
     #[derive(serde::Serialize)]
     struct JsonOutput<'a> {
@@ -390,7 +390,7 @@ fn print_count_json(
     let output = JsonOutput {
         file_count: result.total.file_count,
         totals: make_json_stats(&result.total),
-        crates: if per_crate {
+        crates: if by_crate {
             Some(
                 result
                     .crates
@@ -405,7 +405,7 @@ fn print_count_json(
         } else {
             None
         },
-        files: if per_file {
+        files: if by_file {
             Some(
                 result
                     .files
@@ -425,10 +425,10 @@ fn print_count_json(
     Ok(())
 }
 
-fn print_count_csv(result: &CountResult, per_crate: bool, per_file: bool) {
+fn print_count_csv(result: &CountResult, by_crate: bool, by_file: bool) {
     println!("type,name,code,blanks,docs,comments,total");
 
-    if per_file {
+    if by_file {
         for file in &result.files {
             let stats = &file.stats;
             println!(
@@ -443,7 +443,7 @@ fn print_count_csv(result: &CountResult, per_crate: bool, per_file: bool) {
         }
     }
 
-    if per_crate {
+    if by_crate {
         for crate_stats in &result.crates {
             println!(
                 "crate,\"{}\",{},{},{},{},{}",
@@ -496,12 +496,12 @@ fn print_count_csv(result: &CountResult, per_crate: bool, per_file: bool) {
 // Diff output functions
 // ============================================================================
 
-fn print_diff_table(result: &DiffResult, per_crate: bool, per_file: bool) {
+fn print_diff_table(result: &DiffResult, by_crate: bool, by_file: bool) {
     println!("Diff: {} → {}", result.from_commit, result.to_commit);
     println!();
 
-    if per_file && !result.files.is_empty() {
-        println!("Per-file breakdown:");
+    if by_file && !result.files.is_empty() {
+        println!("By-file breakdown:");
         println!(
             "{:<50} {:>6} {:>14} {:>14} {:>14} {:>14} {:>14}",
             "File", "Change", "Code", "Blank", "Docs", "Comments", "Total"
@@ -539,8 +539,8 @@ fn print_diff_table(result: &DiffResult, per_crate: bool, per_file: bool) {
         println!();
     }
 
-    if per_crate && !result.crates.is_empty() {
-        println!("Per-crate breakdown:");
+    if by_crate && !result.crates.is_empty() {
+        println!("By-crate breakdown:");
         for crate_stats in &result.crates {
             println!(
                 "\n{} ({} files changed):",
@@ -551,7 +551,7 @@ fn print_diff_table(result: &DiffResult, per_crate: bool, per_file: bool) {
         println!();
     }
 
-    if per_crate || per_file {
+    if by_crate || by_file {
         println!("Total ({} files changed):", result.total.file_count);
     } else {
         println!("Files changed: {}", result.total.file_count);
@@ -615,8 +615,8 @@ fn sum_diff_contexts(diff: &LocStatsDiff) -> LocsDiff {
 
 fn print_diff_json(
     result: &DiffResult,
-    per_crate: bool,
-    per_file: bool,
+    by_crate: bool,
+    by_file: bool,
 ) -> Result<(), serde_json::Error> {
     #[derive(serde::Serialize)]
     struct JsonDiffOutput<'a> {
@@ -721,7 +721,7 @@ fn print_diff_json(
         to_commit: &result.to_commit,
         files_changed: result.total.file_count,
         totals: make_json_diff_stats(&result.total),
-        crates: if per_crate {
+        crates: if by_crate {
             Some(
                 result
                     .crates
@@ -736,7 +736,7 @@ fn print_diff_json(
         } else {
             None
         },
-        files: if per_file {
+        files: if by_file {
             Some(
                 result
                     .files
@@ -761,10 +761,10 @@ fn print_diff_json(
     Ok(())
 }
 
-fn print_diff_csv(result: &DiffResult, per_crate: bool, per_file: bool) {
+fn print_diff_csv(result: &DiffResult, by_crate: bool, by_file: bool) {
     println!("type,name,change,code_added,code_removed,code_net,blanks_added,blanks_removed,blanks_net,docs_added,docs_removed,docs_net,comments_added,comments_removed,comments_net,total_added,total_removed,total_net");
 
-    if per_file {
+    if by_file {
         for file in &result.files {
             let total_diff = sum_diff_contexts(&file.diff);
             let change_type_str = match file.change_type {
@@ -795,7 +795,7 @@ fn print_diff_csv(result: &DiffResult, per_crate: bool, per_file: bool) {
         }
     }
 
-    if per_crate {
+    if by_crate {
         for crate_stats in &result.crates {
             let d = &crate_stats.diff;
             let total_added = d.total_added();
