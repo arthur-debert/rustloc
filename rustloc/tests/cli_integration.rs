@@ -58,15 +58,15 @@ fn test_json_output() {
 
     assert!(success);
     assert!(stdout.contains("\"file_count\""));
-    assert!(stdout.contains("\"totals\""));
+    assert!(stdout.contains("\"total\""));
     assert!(stdout.contains("\"main\""));
     assert!(stdout.contains("\"tests\""));
     assert!(stdout.contains("\"examples\""));
 
     // Verify it's valid JSON
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON output");
-    assert!(parsed.get("file_count").is_some());
-    assert!(parsed.get("totals").is_some());
+    assert!(parsed.get("total").is_some());
+    assert!(parsed["total"].get("file_count").is_some());
 }
 
 #[test]
@@ -75,9 +75,9 @@ fn test_csv_output() {
 
     assert!(success);
     assert!(stdout.contains("type,name,code,blanks,docs,comments,total"));
-    assert!(stdout.contains("main,total,"));
-    assert!(stdout.contains("tests,total,"));
-    assert!(stdout.contains("total,total,"));
+    assert!(stdout.contains("main,\"total\","));
+    assert!(stdout.contains("tests,\"total\","));
+    assert!(stdout.contains("total,\"total\","));
 }
 
 #[test]
@@ -166,17 +166,15 @@ fn test_diff_json_output() {
     assert!(success);
     assert!(stdout.contains("\"from_commit\""));
     assert!(stdout.contains("\"to_commit\""));
-    assert!(stdout.contains("\"files_changed\""));
-    assert!(stdout.contains("\"totals\""));
+    assert!(stdout.contains("\"total\""));
     assert!(stdout.contains("\"added\""));
     assert!(stdout.contains("\"removed\""));
-    assert!(stdout.contains("\"net\""));
 
     // Verify it's valid JSON
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON output");
     assert!(parsed.get("from_commit").is_some());
     assert!(parsed.get("to_commit").is_some());
-    assert!(parsed.get("files_changed").is_some());
+    assert!(parsed["total"].get("file_count").is_some());
 }
 
 #[test]
@@ -185,9 +183,9 @@ fn test_diff_csv_output() {
 
     assert!(success);
     assert!(stdout.contains("type,name,change,code_added,code_removed,code_net"));
-    assert!(stdout.contains("main,total,"));
-    assert!(stdout.contains("tests,total,"));
-    assert!(stdout.contains("total,total,"));
+    assert!(stdout.contains("main,\"total\","));
+    assert!(stdout.contains("tests,\"total\","));
+    assert!(stdout.contains("total,\"total\","));
 }
 
 #[test]

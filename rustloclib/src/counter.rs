@@ -58,7 +58,7 @@ impl CountOptions {
 }
 
 /// Result of counting LOC in a workspace or directory.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct CountResult {
     /// Aggregated statistics across all files
     pub total: LocStats,
