@@ -41,6 +41,7 @@
 //! The parsing logic is adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc)
 //! by Maxim Gritsenko. This CLI wraps rustloclib to provide a user-friendly interface.
 
+use std::path::Path;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -173,6 +174,14 @@ fn format_diff_cell(added: u64, removed: u64) -> String {
     format!("+{}/-{}/{}", added, removed, net)
 }
 
+/// Convert a path to a relative path from the base directory.
+/// Falls back to the original path if it can't be made relative.
+fn make_relative(path: &Path, base: &Path) -> String {
+    path.strip_prefix(base)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.to_string_lossy().to_string())
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutputFormat {
     Table,
@@ -211,6 +220,7 @@ fn build_filter(common: &CommonArgs) -> Result<FilterConfig, Box<dyn std::error:
 fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
     let filter = build_filter(&args.common)?;
     let contexts = to_contexts(&args.common.types);
+    let base_path = std::fs::canonicalize(&args.path)?;
 
     // Determine aggregation level from flags
     let aggregation = if args.by_file {
@@ -238,6 +248,7 @@ fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
             args.by_file,
             args.by_module,
             &contexts,
+            &base_path,
         ),
         OutputFormat::Json => print_count_json(&result)?,
         OutputFormat::Csv => print_count_csv(
@@ -246,6 +257,7 @@ fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
             args.by_file,
             args.by_module,
             &contexts,
+            &base_path,
         ),
     }
 
@@ -258,6 +270,7 @@ fn run_diff(args: DiffArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     let filter = build_filter(&args.common)?;
     let contexts = to_contexts(&args.common.types);
+    let base_path = std::fs::canonicalize(&args.path)?;
 
     // Determine aggregation level from flags
     let aggregation = if args.by_file {
@@ -277,9 +290,13 @@ fn run_diff(args: DiffArgs) -> Result<(), Box<dyn std::error::Error>> {
     let result = diff_commits(&args.path, &from, &to, options)?;
 
     match args.common.output {
-        OutputFormat::Table => print_diff_table(&result, args.by_crate, args.by_file, &contexts),
+        OutputFormat::Table => {
+            print_diff_table(&result, args.by_crate, args.by_file, &contexts, &base_path)
+        }
         OutputFormat::Json => print_diff_json(&result)?,
-        OutputFormat::Csv => print_diff_csv(&result, args.by_crate, args.by_file, &contexts),
+        OutputFormat::Csv => {
+            print_diff_csv(&result, args.by_crate, args.by_file, &contexts, &base_path)
+        }
     }
 
     Ok(())
@@ -315,6 +332,7 @@ fn print_count_table(
     by_file: bool,
     by_module: bool,
     ctx: &Contexts,
+    base_path: &Path,
 ) {
     if by_module && !result.modules.is_empty() {
         println!("By-module breakdown:");
@@ -360,11 +378,11 @@ fn print_count_table(
         println!("{}", "-".repeat(105));
 
         for file in &result.files {
-            let path_str = file.path.to_string_lossy();
+            let path_str = make_relative(&file.path, base_path);
             let truncated = if path_str.len() > 58 {
                 format!("..{}", &path_str[path_str.len() - 56..])
             } else {
-                path_str.to_string()
+                path_str
             };
             let s = &file.stats;
             println!(
@@ -452,6 +470,7 @@ fn print_count_csv(
     by_file: bool,
     by_module: bool,
     ctx: &Contexts,
+    base_path: &Path,
 ) {
     println!("type,name,code,blanks,docs,comments,total");
 
@@ -494,10 +513,8 @@ fn print_count_csv(
 
     if by_file {
         for file in &result.files {
-            println!(
-                "{}",
-                format_stats("file", &file.path.to_string_lossy(), &file.stats)
-            );
+            let path_str = make_relative(&file.path, base_path);
+            println!("{}", format_stats("file", &path_str, &file.stats));
         }
     }
 
@@ -527,7 +544,13 @@ fn print_count_csv(
 // Diff output functions
 // ============================================================================
 
-fn print_diff_table(result: &DiffResult, by_crate: bool, by_file: bool, ctx: &Contexts) {
+fn print_diff_table(
+    result: &DiffResult,
+    by_crate: bool,
+    by_file: bool,
+    ctx: &Contexts,
+    base_path: &Path,
+) {
     println!("Diff: {} → {}", result.from_commit, result.to_commit);
     println!();
 
@@ -540,11 +563,11 @@ fn print_diff_table(result: &DiffResult, by_crate: bool, by_file: bool, ctx: &Co
         println!("{}", "-".repeat(92));
 
         for file in &result.files {
-            let path_str = file.path.to_string_lossy();
+            let path_str = make_relative(&file.path, base_path);
             let truncated = if path_str.len() > 48 {
                 format!("..{}", &path_str[path_str.len() - 46..])
             } else {
-                path_str.to_string()
+                path_str
             };
 
             let change_type = match file.change_type {
@@ -641,7 +664,13 @@ fn print_diff_json(result: &DiffResult) -> Result<(), serde_json::Error> {
     Ok(())
 }
 
-fn print_diff_csv(result: &DiffResult, by_crate: bool, by_file: bool, ctx: &Contexts) {
+fn print_diff_csv(
+    result: &DiffResult,
+    by_crate: bool,
+    by_file: bool,
+    ctx: &Contexts,
+    base_path: &Path,
+) {
     println!(
         "type,name,change,code_added,code_removed,code_net,total_added,total_removed,total_net"
     );
@@ -671,10 +700,8 @@ fn print_diff_csv(result: &DiffResult, by_crate: bool, by_file: bool, ctx: &Cont
                 rustloclib::FileChangeType::Deleted => "deleted",
                 rustloclib::FileChangeType::Modified => "modified",
             };
-            println!(
-                "{}",
-                format_diff("file", &file.path.to_string_lossy(), change, &total_diff)
-            );
+            let path_str = make_relative(&file.path, base_path);
+            println!("{}", format_diff("file", &path_str, change, &total_diff));
         }
     }
 
