@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed for diff tests
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -45,6 +47,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed for diff tests
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
