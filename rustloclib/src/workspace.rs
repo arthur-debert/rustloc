@@ -83,6 +83,27 @@ impl CrateInfo {
 
         dirs
     }
+
+    /// Check if a file path belongs to this crate.
+    ///
+    /// This is used to map arbitrary file paths (e.g., from git diffs) to their
+    /// owning crate, enabling centralized filtering. Rather than re-implementing
+    /// crate filtering logic in multiple places, callers should:
+    ///
+    /// 1. Use this method to find which crate a file belongs to
+    /// 2. Apply crate-level filters using `WorkspaceInfo::filter_by_names()`
+    ///
+    /// This design keeps filtering logic centralized in the workspace module.
+    ///
+    /// The path can be absolute or relative to the workspace root.
+    pub fn contains_path(&self, path: &Path, workspace_root: &Path) -> bool {
+        let absolute_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            workspace_root.join(path)
+        };
+        absolute_path.starts_with(&self.root)
+    }
 }
 
 /// Workspace information containing all discovered crates.
@@ -165,6 +186,27 @@ impl WorkspaceInfo {
     /// Get all crate names.
     pub fn crate_names(&self) -> Vec<&str> {
         self.crates.iter().map(|c| c.name.as_str()).collect()
+    }
+
+    /// Find which crate a file path belongs to.
+    ///
+    /// This enables centralized crate-level filtering for any source of file paths
+    /// (filesystem discovery, git diffs, etc.). The design principle is:
+    ///
+    /// **All filtering (glob patterns, crate names) should be done centrally
+    /// using `FilterConfig` and `WorkspaceInfo`, not re-implemented per feature.**
+    ///
+    /// For example, when computing git diffs:
+    /// 1. Get changed file paths from git
+    /// 2. Use `FilterConfig::matches()` for glob filtering
+    /// 3. Use this method to map files to crates
+    /// 4. Apply crate filter via `filter_by_names()` check
+    ///
+    /// The path can be absolute or relative to the workspace root.
+    pub fn crate_for_path(&self, path: &Path) -> Option<&CrateInfo> {
+        self.crates
+            .iter()
+            .find(|c| c.contains_path(path, &self.root))
     }
 }
 
@@ -283,5 +325,79 @@ mod tests {
         // Now it's a cargo project
         assert!(is_cargo_project(temp_path));
         assert!(is_cargo_project(temp_path.join("Cargo.toml")));
+    }
+
+    #[test]
+    fn test_crate_info_contains_path() {
+        let crate_info = CrateInfo {
+            name: "my-crate".to_string(),
+            root: PathBuf::from("/workspace/my-crate"),
+            src_dirs: vec![PathBuf::from("/workspace/my-crate/src")],
+            tests_dir: Some(PathBuf::from("/workspace/my-crate/tests")),
+            examples_dir: None,
+            benches_dir: None,
+        };
+
+        let workspace_root = PathBuf::from("/workspace");
+
+        // Absolute paths
+        assert!(
+            crate_info.contains_path(Path::new("/workspace/my-crate/src/lib.rs"), &workspace_root)
+        );
+        assert!(crate_info.contains_path(
+            Path::new("/workspace/my-crate/tests/test.rs"),
+            &workspace_root
+        ));
+        assert!(!crate_info.contains_path(
+            Path::new("/workspace/other-crate/src/lib.rs"),
+            &workspace_root
+        ));
+
+        // Relative paths
+        assert!(crate_info.contains_path(Path::new("my-crate/src/lib.rs"), &workspace_root));
+        assert!(!crate_info.contains_path(Path::new("other-crate/src/lib.rs"), &workspace_root));
+    }
+
+    #[test]
+    fn test_workspace_crate_for_path() {
+        let workspace = WorkspaceInfo {
+            root: PathBuf::from("/workspace"),
+            crates: vec![
+                CrateInfo {
+                    name: "crate-a".to_string(),
+                    root: PathBuf::from("/workspace/crate-a"),
+                    src_dirs: vec![PathBuf::from("/workspace/crate-a/src")],
+                    tests_dir: None,
+                    examples_dir: None,
+                    benches_dir: None,
+                },
+                CrateInfo {
+                    name: "crate-b".to_string(),
+                    root: PathBuf::from("/workspace/crate-b"),
+                    src_dirs: vec![PathBuf::from("/workspace/crate-b/src")],
+                    tests_dir: None,
+                    examples_dir: None,
+                    benches_dir: None,
+                },
+            ],
+        };
+
+        // Find crate by absolute path
+        let crate_a = workspace.crate_for_path(Path::new("/workspace/crate-a/src/lib.rs"));
+        assert!(crate_a.is_some());
+        assert_eq!(crate_a.unwrap().name, "crate-a");
+
+        let crate_b = workspace.crate_for_path(Path::new("/workspace/crate-b/src/main.rs"));
+        assert!(crate_b.is_some());
+        assert_eq!(crate_b.unwrap().name, "crate-b");
+
+        // Non-existent crate
+        let none = workspace.crate_for_path(Path::new("/workspace/crate-c/src/lib.rs"));
+        assert!(none.is_none());
+
+        // Relative paths
+        let crate_a_rel = workspace.crate_for_path(Path::new("crate-a/src/lib.rs"));
+        assert!(crate_a_rel.is_some());
+        assert_eq!(crate_a_rel.unwrap().name, "crate-a");
     }
 }

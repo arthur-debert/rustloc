@@ -32,4 +32,8 @@ pub enum RustlocError {
     /// IO error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// Git operation error
+    #[error("git error: {0}")]
+    GitError(String),
 }
