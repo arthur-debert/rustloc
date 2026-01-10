@@ -19,6 +19,9 @@ Cargo.lock
 .Spotlight-V100
 .Trashes
 
+# Padz
+.padz
+
 # Build artifacts
 *.so
 *.dylib
