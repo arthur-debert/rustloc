@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Initial release
-- Rust-aware LOC counting that separates code, tests, examples, comments, and blanks
+- Rust-aware LOC counting that separates main, tests, examples, docs, comments, and blank lines
 - Recognition of `#[test]` and `#[cfg(test)]` attributes to identify test code
 - Context detection from file paths (`tests/`, `examples/` directories)
 - Cargo workspace support with crate filtering

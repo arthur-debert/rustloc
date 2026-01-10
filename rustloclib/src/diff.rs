@@ -43,14 +43,14 @@ impl LocsDiff {
         Self::default()
     }
 
-    /// Net change (added - removed) for code lines
-    pub fn net_code(&self) -> i64 {
-        self.added.code as i64 - self.removed.code as i64
+    /// Net change (added - removed) for logic/executable lines
+    pub fn net_logic(&self) -> i64 {
+        self.added.logic as i64 - self.removed.logic as i64
     }
 
     /// Net change (added - removed) for blank lines
-    pub fn net_blanks(&self) -> i64 {
-        self.added.blanks as i64 - self.removed.blanks as i64
+    pub fn net_blank(&self) -> i64 {
+        self.added.blank as i64 - self.removed.blank as i64
     }
 
     /// Net change (added - removed) for doc comment lines
@@ -87,13 +87,13 @@ impl std::ops::AddAssign for LocsDiff {
     }
 }
 
-/// Aggregated LOC diff separating main code, tests, and examples.
+/// Aggregated LOC diff separating production code, tests, and examples.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocStatsDiff {
     /// Number of files changed
     pub file_count: u64,
-    /// Main/production code diff
-    pub main: LocsDiff,
+    /// Production code diff
+    pub code: LocsDiff,
     /// Test code diff
     pub tests: LocsDiff,
     /// Example code diff
@@ -108,30 +108,30 @@ impl LocStatsDiff {
 
     /// Total added lines across all contexts
     pub fn total_added(&self) -> Locs {
-        self.main.added + self.tests.added + self.examples.added
+        self.code.added + self.tests.added + self.examples.added
     }
 
     /// Total removed lines across all contexts
     pub fn total_removed(&self) -> Locs {
-        self.main.removed + self.tests.removed + self.examples.removed
+        self.code.removed + self.tests.removed + self.examples.removed
     }
 
-    /// Net code change across all contexts
-    pub fn net_code(&self) -> i64 {
-        self.main.net_code() + self.tests.net_code() + self.examples.net_code()
+    /// Net logic change across all contexts
+    pub fn net_logic(&self) -> i64 {
+        self.code.net_logic() + self.tests.net_logic() + self.examples.net_logic()
     }
 
     /// Net total change across all contexts
     pub fn net_total(&self) -> i64 {
-        self.main.net_total() + self.tests.net_total() + self.examples.net_total()
+        self.code.net_total() + self.tests.net_total() + self.examples.net_total()
     }
 
     /// Return a filtered copy with only the specified contexts included.
     pub fn filter(&self, contexts: Contexts) -> Self {
         Self {
             file_count: self.file_count,
-            main: if contexts.main {
-                self.main
+            code: if contexts.code {
+                self.code
             } else {
                 LocsDiff::default()
             },
@@ -155,7 +155,7 @@ impl std::ops::Add for LocStatsDiff {
     fn add(self, other: Self) -> Self {
         Self {
             file_count: self.file_count + other.file_count,
-            main: self.main + other.main,
+            code: self.code + other.code,
             tests: self.tests + other.tests,
             examples: self.examples + other.examples,
         }
@@ -165,7 +165,7 @@ impl std::ops::Add for LocStatsDiff {
 impl std::ops::AddAssign for LocStatsDiff {
     fn add_assign(&mut self, other: Self) {
         self.file_count += other.file_count;
-        self.main += other.main;
+        self.code += other.code;
         self.tests += other.tests;
         self.examples += other.examples;
     }
@@ -629,7 +629,7 @@ fn compute_stats_diff(old: &LocStats, new: &LocStats) -> LocStatsDiff {
     diff.file_count = 1;
 
     // Compute diff for each context separately
-    diff.main = compute_locs_diff(&old.main, &new.main);
+    diff.code = compute_locs_diff(&old.code, &new.code);
     diff.tests = compute_locs_diff(&old.tests, &new.tests);
     diff.examples = compute_locs_diff(&old.examples, &new.examples);
 
@@ -640,14 +640,14 @@ fn compute_stats_diff(old: &LocStats, new: &LocStats) -> LocStatsDiff {
 fn compute_locs_diff(old: &Locs, new: &Locs) -> LocsDiff {
     LocsDiff {
         added: Locs {
-            code: new.code.saturating_sub(old.code),
-            blanks: new.blanks.saturating_sub(old.blanks),
+            logic: new.logic.saturating_sub(old.logic),
+            blank: new.blank.saturating_sub(old.blank),
             docs: new.docs.saturating_sub(old.docs),
             comments: new.comments.saturating_sub(old.comments),
         },
         removed: Locs {
-            code: old.code.saturating_sub(new.code),
-            blanks: old.blanks.saturating_sub(new.blanks),
+            logic: old.logic.saturating_sub(new.logic),
+            blank: old.blank.saturating_sub(new.blank),
             docs: old.docs.saturating_sub(new.docs),
             comments: old.comments.saturating_sub(new.comments),
         },
@@ -676,30 +676,30 @@ mod tests {
     #[test]
     fn test_locs_diff_default() {
         let diff = LocsDiff::new();
-        assert_eq!(diff.added.code, 0);
-        assert_eq!(diff.removed.code, 0);
-        assert_eq!(diff.net_code(), 0);
+        assert_eq!(diff.added.logic, 0);
+        assert_eq!(diff.removed.logic, 0);
+        assert_eq!(diff.net_logic(), 0);
     }
 
     #[test]
     fn test_locs_diff_net() {
         let diff = LocsDiff {
             added: Locs {
-                code: 100,
-                blanks: 20,
+                logic: 100,
+                blank: 20,
                 docs: 10,
                 comments: 5,
             },
             removed: Locs {
-                code: 30,
-                blanks: 5,
+                logic: 30,
+                blank: 5,
                 docs: 2,
                 comments: 1,
             },
         };
 
-        assert_eq!(diff.net_code(), 70);
-        assert_eq!(diff.net_blanks(), 15);
+        assert_eq!(diff.net_logic(), 70);
+        assert_eq!(diff.net_blank(), 15);
         assert_eq!(diff.net_docs(), 8);
         assert_eq!(diff.net_comments(), 4);
         assert_eq!(diff.net_total(), 97);
@@ -709,67 +709,67 @@ mod tests {
     fn test_locs_diff_add() {
         let a = LocsDiff {
             added: Locs {
-                code: 10,
-                blanks: 2,
+                logic: 10,
+                blank: 2,
                 docs: 1,
                 comments: 1,
             },
             removed: Locs {
-                code: 5,
-                blanks: 1,
+                logic: 5,
+                blank: 1,
                 docs: 0,
                 comments: 0,
             },
         };
         let b = LocsDiff {
             added: Locs {
-                code: 20,
-                blanks: 4,
+                logic: 20,
+                blank: 4,
                 docs: 2,
                 comments: 2,
             },
             removed: Locs {
-                code: 10,
-                blanks: 2,
+                logic: 10,
+                blank: 2,
                 docs: 1,
                 comments: 1,
             },
         };
 
         let sum = a + b;
-        assert_eq!(sum.added.code, 30);
-        assert_eq!(sum.removed.code, 15);
-        assert_eq!(sum.net_code(), 15);
+        assert_eq!(sum.added.logic, 30);
+        assert_eq!(sum.removed.logic, 15);
+        assert_eq!(sum.net_logic(), 15);
     }
 
     #[test]
     fn test_loc_stats_diff_totals() {
         let diff = LocStatsDiff {
             file_count: 3,
-            main: LocsDiff {
+            code: LocsDiff {
                 added: Locs {
-                    code: 100,
-                    blanks: 10,
+                    logic: 100,
+                    blank: 10,
                     docs: 20,
                     comments: 5,
                 },
                 removed: Locs {
-                    code: 50,
-                    blanks: 5,
+                    logic: 50,
+                    blank: 5,
                     docs: 10,
                     comments: 2,
                 },
             },
             tests: LocsDiff {
                 added: Locs {
-                    code: 50,
-                    blanks: 5,
+                    logic: 50,
+                    blank: 5,
                     docs: 2,
                     comments: 1,
                 },
                 removed: Locs {
-                    code: 20,
-                    blanks: 2,
+                    logic: 20,
+                    blank: 2,
                     docs: 1,
                     comments: 0,
                 },
@@ -777,9 +777,9 @@ mod tests {
             examples: LocsDiff::new(),
         };
 
-        assert_eq!(diff.total_added().code, 150);
-        assert_eq!(diff.total_removed().code, 70);
-        assert_eq!(diff.net_code(), 80);
+        assert_eq!(diff.total_added().logic, 150);
+        assert_eq!(diff.total_removed().logic, 70);
+        assert_eq!(diff.net_logic(), 80);
     }
 
     #[test]
@@ -797,9 +797,9 @@ mod tests {
         let old = LocStats::new();
         let new = LocStats {
             file_count: 1,
-            main: Locs {
-                code: 100,
-                blanks: 20,
+            code: Locs {
+                logic: 100,
+                blank: 20,
                 docs: 10,
                 comments: 5,
             },
@@ -808,18 +808,18 @@ mod tests {
         };
 
         let diff = compute_stats_diff(&old, &new);
-        assert_eq!(diff.main.added.code, 100);
-        assert_eq!(diff.main.removed.code, 0);
+        assert_eq!(diff.code.added.logic, 100);
+        assert_eq!(diff.code.removed.logic, 0);
     }
 
     #[test]
     fn test_compute_stats_diff_deleted_file() {
         let old = LocStats {
             file_count: 1,
-            main: Locs::new(),
+            code: Locs::new(),
             tests: Locs {
-                code: 50,
-                blanks: 10,
+                logic: 50,
+                blank: 10,
                 docs: 5,
                 comments: 2,
             },
@@ -828,17 +828,17 @@ mod tests {
         let new = LocStats::new();
 
         let diff = compute_stats_diff(&old, &new);
-        assert_eq!(diff.tests.added.code, 0);
-        assert_eq!(diff.tests.removed.code, 50);
+        assert_eq!(diff.tests.added.logic, 0);
+        assert_eq!(diff.tests.removed.logic, 50);
     }
 
     #[test]
     fn test_compute_stats_diff_modified_file() {
         let old = LocStats {
             file_count: 1,
-            main: Locs {
-                code: 100,
-                blanks: 20,
+            code: Locs {
+                logic: 100,
+                blank: 20,
                 docs: 10,
                 comments: 5,
             },
@@ -847,9 +847,9 @@ mod tests {
         };
         let new = LocStats {
             file_count: 1,
-            main: Locs {
-                code: 120,
-                blanks: 25,
+            code: Locs {
+                logic: 120,
+                blank: 25,
                 docs: 8,
                 comments: 5,
             },
@@ -858,27 +858,27 @@ mod tests {
         };
 
         let diff = compute_stats_diff(&old, &new);
-        assert_eq!(diff.main.added.code, 20); // 120 - 100
-        assert_eq!(diff.main.removed.code, 0);
-        assert_eq!(diff.main.added.docs, 0);
-        assert_eq!(diff.main.removed.docs, 2); // 10 - 8
+        assert_eq!(diff.code.added.logic, 20); // 120 - 100
+        assert_eq!(diff.code.removed.logic, 0);
+        assert_eq!(diff.code.added.docs, 0);
+        assert_eq!(diff.code.removed.docs, 2); // 10 - 8
     }
 
     #[test]
     fn test_compute_stats_diff_mixed_contexts() {
-        // Test that a file with both main and test code is properly diffed
+        // Test that a file with both production code and test code is properly diffed
         let old = LocStats::new();
         let new = LocStats {
             file_count: 1,
-            main: Locs {
-                code: 100,
-                blanks: 20,
+            code: Locs {
+                logic: 100,
+                blank: 20,
                 docs: 10,
                 comments: 5,
             },
             tests: Locs {
-                code: 50,
-                blanks: 10,
+                logic: 50,
+                blank: 10,
                 docs: 0,
                 comments: 5,
             },
@@ -886,12 +886,12 @@ mod tests {
         };
 
         let diff = compute_stats_diff(&old, &new);
-        // Main code should be tracked
-        assert_eq!(diff.main.added.code, 100);
+        // Production code should be tracked
+        assert_eq!(diff.code.added.logic, 100);
         // Test code should also be tracked
-        assert_eq!(diff.tests.added.code, 50);
+        assert_eq!(diff.tests.added.logic, 50);
         // Total should include both
-        assert_eq!(diff.total_added().code, 150);
+        assert_eq!(diff.total_added().logic, 150);
     }
 
     // Integration tests that use a real git repository

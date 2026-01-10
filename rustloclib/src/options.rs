@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 /// When a context is disabled, it will be zeroed in returned stats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Contexts {
-    /// Include main/production code
-    pub main: bool,
+    /// Include production code
+    pub code: bool,
     /// Include test code
     pub tests: bool,
     /// Include example code
@@ -28,7 +28,7 @@ impl Contexts {
     /// Include all contexts (default)
     pub fn all() -> Self {
         Self {
-            main: true,
+            code: true,
             tests: true,
             examples: true,
         }
@@ -37,16 +37,16 @@ impl Contexts {
     /// Include no contexts
     pub fn none() -> Self {
         Self {
-            main: false,
+            code: false,
             tests: false,
             examples: false,
         }
     }
 
-    /// Include only main/production code
-    pub fn main_only() -> Self {
+    /// Include only production code
+    pub fn code_only() -> Self {
         Self {
-            main: true,
+            code: true,
             tests: false,
             examples: false,
         }
@@ -55,7 +55,7 @@ impl Contexts {
     /// Include only test code
     pub fn tests_only() -> Self {
         Self {
-            main: false,
+            code: false,
             tests: true,
             examples: false,
         }
@@ -64,15 +64,15 @@ impl Contexts {
     /// Include only example code
     pub fn examples_only() -> Self {
         Self {
-            main: false,
+            code: false,
             tests: false,
             examples: true,
         }
     }
 
-    /// Builder: set main inclusion
-    pub fn with_main(mut self, include: bool) -> Self {
-        self.main = include;
+    /// Builder: set code inclusion
+    pub fn with_code(mut self, include: bool) -> Self {
+        self.code = include;
         self
     }
 
@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn test_contexts_default() {
         let ctx = Contexts::default();
-        assert!(ctx.main);
+        assert!(ctx.code);
         assert!(ctx.tests);
         assert!(ctx.examples);
     }
@@ -120,23 +120,23 @@ mod tests {
     #[test]
     fn test_contexts_none() {
         let ctx = Contexts::none();
-        assert!(!ctx.main);
+        assert!(!ctx.code);
         assert!(!ctx.tests);
         assert!(!ctx.examples);
     }
 
     #[test]
     fn test_contexts_builder() {
-        let ctx = Contexts::none().with_main(true).with_tests(true);
-        assert!(ctx.main);
+        let ctx = Contexts::none().with_code(true).with_tests(true);
+        assert!(ctx.code);
         assert!(ctx.tests);
         assert!(!ctx.examples);
     }
 
     #[test]
-    fn test_contexts_main_only() {
-        let ctx = Contexts::main_only();
-        assert!(ctx.main);
+    fn test_contexts_code_only() {
+        let ctx = Contexts::code_only();
+        assert!(ctx.code);
         assert!(!ctx.tests);
         assert!(!ctx.examples);
     }

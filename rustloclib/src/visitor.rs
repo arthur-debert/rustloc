@@ -14,7 +14,7 @@
 //!
 //! - Adapted to use rustloclib's `LocStats` and `Locs` types
 //! - Added `from_reader` constructor for testing without files
-//! - Changed from `whitespaces` to `blanks` field naming
+//! - Changed from `whitespaces` to `blank` field naming
 //! - Added proper error handling instead of panics
 
 use std::fs::File;
@@ -52,8 +52,8 @@ pub struct Visitor<T: Read> {
 /// The context in which code is being analyzed.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum VisitorContext {
-    /// Main/production code
-    Main,
+    /// Production code
+    Code,
     /// Test code (in `#[test]` or `#[cfg(test)]` blocks, or `tests/` directory)
     Tests,
     /// Example code (in `examples/` directory)
@@ -103,7 +103,7 @@ impl VisitorContext {
     ///
     /// - Files under `tests/` or named `tests.rs` → Tests
     /// - Files under `examples/` → Example
-    /// - Everything else → Main
+    /// - Everything else → Code
     pub fn from_file_path(path: impl AsRef<Path>) -> Self {
         for component in path.as_ref().components() {
             match component {
@@ -119,7 +119,7 @@ impl VisitorContext {
             }
         }
 
-        Self::Main
+        Self::Code
     }
 }
 
@@ -369,10 +369,10 @@ impl<T: Read> Visitor<T> {
         let stats = self.mut_stats(context);
 
         if line_context.has_code {
-            stats.code += 1;
+            stats.logic += 1;
 
             if self.debug {
-                eprint!("{line}: CODE: {curr}");
+                eprint!("{line}: LOGIC: {curr}");
             }
         } else if line_context.has_doc_comment_start {
             stats.docs += 1;
@@ -385,7 +385,7 @@ impl<T: Read> Visitor<T> {
                 eprint!("{line}: COMM: {curr}");
             }
         } else {
-            stats.blanks += 1;
+            stats.blank += 1;
             if self.debug {
                 eprint!("{line}: BLANK: {curr}");
             }
@@ -394,7 +394,7 @@ impl<T: Read> Visitor<T> {
 
     fn mut_stats(&mut self, context: VisitorContext) -> &mut Locs {
         match context {
-            VisitorContext::Main => &mut self.stats.main,
+            VisitorContext::Code => &mut self.stats.code,
             VisitorContext::Tests => &mut self.stats.tests,
             VisitorContext::Example => &mut self.stats.examples,
         }
@@ -518,7 +518,7 @@ impl<T: Read> Visitor<T> {
 /// use rustloclib::visitor::parse_file;
 ///
 /// let stats = parse_file("src/main.rs")?;
-/// println!("Code: {}, Tests: {}", stats.main.code, stats.tests.code);
+/// println!("Code: {}, Tests: {}", stats.code.logic, stats.tests.logic);
 /// ```
 pub fn parse_file(path: impl AsRef<Path>) -> Result<LocStats> {
     let visitor = Visitor::new(path, false)?;
@@ -527,7 +527,7 @@ pub fn parse_file(path: impl AsRef<Path>) -> Result<LocStats> {
 
 /// Parse Rust source from a string and return LOC statistics.
 ///
-/// The context determines how the code is categorized (main, tests, or examples).
+/// The context determines how the code is categorized (code, tests, or examples).
 ///
 /// # Example
 ///
@@ -540,8 +540,8 @@ pub fn parse_file(path: impl AsRef<Path>) -> Result<LocStats> {
 /// }
 /// "#;
 ///
-/// let stats = parse_string(source, VisitorContext::Main);
-/// assert_eq!(stats.main.code, 3);
+/// let stats = parse_string(source, VisitorContext::Code);
+/// assert_eq!(stats.code.logic, 3);
 /// ```
 pub fn parse_string(source: &str, context: VisitorContext) -> LocStats {
     let visitor = Visitor::from_reader(source.as_bytes(), context, false);
@@ -553,7 +553,7 @@ mod tests {
     use super::*;
 
     fn stats(file: &str) -> LocStats {
-        parse_string(file, VisitorContext::Main)
+        parse_string(file, VisitorContext::Code)
     }
 
     #[test]
@@ -562,8 +562,8 @@ mod tests {
         let stats = stats(file);
 
         assert_eq!(stats.file_count, 1);
-        assert_eq!(stats.main.blanks, 1);
-        assert_eq!(stats.main.total(), 1);
+        assert_eq!(stats.code.blank, 1);
+        assert_eq!(stats.code.total(), 1);
     }
 
     #[test]
@@ -572,8 +572,8 @@ mod tests {
         let stats = stats(file);
 
         assert_eq!(stats.file_count, 1);
-        assert_eq!(stats.main.blanks, 1);
-        assert_eq!(stats.main.total(), 1);
+        assert_eq!(stats.code.blank, 1);
+        assert_eq!(stats.code.total(), 1);
     }
 
     #[test]
@@ -581,8 +581,8 @@ mod tests {
         let file = "mod lib;\n";
         let stats = stats(file);
 
-        assert_eq!(stats.main.code, 1);
-        assert_eq!(stats.main.total(), 1);
+        assert_eq!(stats.code.logic, 1);
+        assert_eq!(stats.code.total(), 1);
     }
 
     #[test]
@@ -590,8 +590,8 @@ mod tests {
         let file = "   // Comment\n";
         let stats = stats(file);
 
-        assert_eq!(stats.main.comments, 1);
-        assert_eq!(stats.main.total(), 1);
+        assert_eq!(stats.code.comments, 1);
+        assert_eq!(stats.code.total(), 1);
     }
 
     #[test]
@@ -599,8 +599,8 @@ mod tests {
         let file = "   /// Documentation\n";
         let stats = stats(file);
 
-        assert_eq!(stats.main.docs, 1);
-        assert_eq!(stats.main.total(), 1);
+        assert_eq!(stats.code.docs, 1);
+        assert_eq!(stats.code.total(), 1);
     }
 
     #[test]
@@ -608,8 +608,8 @@ mod tests {
         let file = "   //! Documentation\n";
         let stats = stats(file);
 
-        assert_eq!(stats.main.docs, 1);
-        assert_eq!(stats.main.total(), 1);
+        assert_eq!(stats.code.docs, 1);
+        assert_eq!(stats.code.total(), 1);
     }
 
     #[test]
@@ -617,8 +617,8 @@ mod tests {
         let file = "   /* comment */ \n";
         let stats = stats(file);
 
-        assert_eq!(stats.main.comments, 1);
-        assert_eq!(stats.main.total(), 1);
+        assert_eq!(stats.code.comments, 1);
+        assert_eq!(stats.code.total(), 1);
     }
 
     #[test]
@@ -631,9 +631,9 @@ mod tests {
 
         let stats = stats(file);
 
-        assert_eq!(stats.main.comments, 3);
-        assert_eq!(stats.main.blanks, 1);
-        assert_eq!(stats.main.total(), 4);
+        assert_eq!(stats.code.comments, 3);
+        assert_eq!(stats.code.blank, 1);
+        assert_eq!(stats.code.total(), 4);
     }
 
     #[test]
@@ -641,8 +641,8 @@ mod tests {
         let file = "   /** comment */ \n";
         let stats = stats(file);
 
-        assert_eq!(stats.main.docs, 1);
-        assert_eq!(stats.main.total(), 1);
+        assert_eq!(stats.code.docs, 1);
+        assert_eq!(stats.code.total(), 1);
     }
 
     #[test]
@@ -655,9 +655,9 @@ mod tests {
 
         let stats = stats(file);
 
-        assert_eq!(stats.main.docs, 3);
-        assert_eq!(stats.main.blanks, 1);
-        assert_eq!(stats.main.total(), 4);
+        assert_eq!(stats.code.docs, 3);
+        assert_eq!(stats.code.blank, 1);
+        assert_eq!(stats.code.total(), 4);
     }
 
     #[test]
@@ -669,8 +669,8 @@ let a = 1;
 
         let stats = stats(file);
 
-        assert_eq!(stats.main.comments, 0);
-        assert_eq!(stats.main.code, 2);
+        assert_eq!(stats.code.comments, 0);
+        assert_eq!(stats.code.logic, 2);
     }
 
     #[test]
@@ -686,8 +686,8 @@ mod tests {
 
         let stats = stats(file);
 
-        assert_eq!(stats.tests.code, 4);
-        assert_eq!(stats.tests.blanks, 2);
+        assert_eq!(stats.tests.logic, 4);
+        assert_eq!(stats.tests.blank, 2);
         assert_eq!(stats.tests.total(), 6);
     }
 
@@ -702,11 +702,11 @@ fn my_test() {
 
         let stats = stats(file);
 
-        // First empty line is in main context before #[test]
-        assert_eq!(stats.main.blanks, 1);
+        // First empty line is in code context before #[test]
+        assert_eq!(stats.code.blank, 1);
         // #[test], fn, assert, } are all test code
-        assert_eq!(stats.tests.code, 4);
-        assert_eq!(stats.tests.blanks, 0);
+        assert_eq!(stats.tests.logic, 4);
+        assert_eq!(stats.tests.blank, 0);
     }
 
     #[test]
@@ -723,9 +723,9 @@ This is a string
 
         let stats = stats(file);
 
-        assert_eq!(stats.main.code, 4);
-        assert_eq!(stats.main.blanks, 4);
-        assert_eq!(stats.main.total(), 8);
+        assert_eq!(stats.code.logic, 4);
+        assert_eq!(stats.code.blank, 4);
+        assert_eq!(stats.code.total(), 8);
     }
 
     #[test]
@@ -747,19 +747,19 @@ mod tests {
         let stats = stats(file);
 
         // Production code: fn + println + }
-        assert_eq!(stats.main.code, 3);
-        // Main blanks: first line + line after }
-        assert_eq!(stats.main.blanks, 2);
+        assert_eq!(stats.code.logic, 3);
+        // Code blanks: first line + line after }
+        assert_eq!(stats.code.blank, 2);
 
         // Test code: #[cfg(test)] + mod tests { + #[test] + fn test + assert + } + }
-        assert_eq!(stats.tests.code, 7);
+        assert_eq!(stats.tests.logic, 7);
     }
 
     #[test]
     fn context_from_path() {
         assert_eq!(
             VisitorContext::from_file_path("src/lib.rs"),
-            VisitorContext::Main
+            VisitorContext::Code
         );
         assert_eq!(
             VisitorContext::from_file_path("tests/integration.rs"),
@@ -784,8 +784,8 @@ fn code() {}
 
         let stats = stats(file);
 
-        assert_eq!(stats.main.comments, 1);
-        assert_eq!(stats.main.code, 1);
+        assert_eq!(stats.code.comments, 1);
+        assert_eq!(stats.code.logic, 1);
     }
 
     #[test]
@@ -798,9 +798,9 @@ fn documented() {}
 
         let stats = stats(file);
 
-        assert_eq!(stats.main.docs, 1);
-        assert_eq!(stats.main.comments, 1);
-        assert_eq!(stats.main.code, 1);
+        assert_eq!(stats.code.docs, 1);
+        assert_eq!(stats.code.comments, 1);
+        assert_eq!(stats.code.logic, 1);
     }
 
     #[test]
@@ -810,8 +810,8 @@ fn documented() {}
         let stats = stats(file);
 
         // This is counted as code because there's code before the comment
-        assert_eq!(stats.main.code, 1);
-        assert_eq!(stats.main.comments, 0);
+        assert_eq!(stats.code.logic, 1);
+        assert_eq!(stats.code.comments, 0);
     }
 
     #[test]
@@ -826,7 +826,7 @@ fn foo() {
 
         let stats = stats(file);
 
-        assert_eq!(stats.main.code, 3); // fn, let, }
-        assert_eq!(stats.main.blanks, 3); // empty line at start, two empty lines inside
+        assert_eq!(stats.code.logic, 3); // fn, let, }
+        assert_eq!(stats.code.blank, 3); // empty line at start, two empty lines inside
     }
 }

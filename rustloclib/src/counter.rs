@@ -444,7 +444,7 @@ edition = "2021"
         let result = count_directory(&src, &filter).unwrap();
 
         assert_eq!(result.total.file_count, 1);
-        assert_eq!(result.total.main.code, 3);
+        assert_eq!(result.total.code.logic, 3);
     }
 
     #[test]
@@ -465,9 +465,9 @@ fn foo() {
         let stats = count_file(&file).unwrap();
 
         assert_eq!(stats.file_count, 1);
-        assert_eq!(stats.main.docs, 1);
-        assert_eq!(stats.main.code, 3); // fn, let, }
-        assert_eq!(stats.main.comments, 1);
+        assert_eq!(stats.code.docs, 1);
+        assert_eq!(stats.code.logic, 3); // fn, let, }
+        assert_eq!(stats.code.comments, 1);
     }
 
     #[test]
@@ -518,10 +518,10 @@ fn foo() {
 
         let result = count_workspace(temp.path(), CountOptions::new()).unwrap();
 
-        // main.rs has 3 main code lines + test block
+        // main.rs has 3 production code lines + test block
         // lib.rs has doc comment + code
-        assert!(result.total.main.code > 0);
-        assert!(result.total.tests.code > 0);
-        assert!(result.total.main.docs > 0);
+        assert!(result.total.code.logic > 0);
+        assert!(result.total.tests.logic > 0);
+        assert!(result.total.code.docs > 0);
     }
 }

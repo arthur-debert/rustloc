@@ -10,12 +10,12 @@ A Rust-aware lines of code counter that separates production code from tests.
 
 Unlike generic LOC counters (tokei, cloc, scc), rustloc understands Rust's unique structure where tests live alongside production code. It parses Rust syntax to accurately separate:
 
-- **Main code**: Production code lines
-- **Test code**: Code within `#[test]` or `#[cfg(test)]` blocks
-- **Example code**: Code in `examples/` directories
-- **Doc comments**: `///`, `//!`, `/** */`, `/*! */`
-- **Comments**: `//`, `/* */`
-- **Blanks**: Whitespace-only lines
+- **Code**: Production code lines
+- **Tests**: Code within `#[test]` or `#[cfg(test)]` blocks
+- **Examples**: Code in `examples/` directories
+- **Docs**: Documentation comments (`///`, `//!`, `/** */`, `/*! */`)
+- **Comments**: Regular comments (`//`, `/* */`)
+- **Blank**: Whitespace-only lines
 
 ## Installation
 
@@ -72,31 +72,45 @@ rustloc . --include "**/src/**"
 
 ### Table (default)
 
+Columns show LOC totals per context (Code, Tests, Examples):
+
 ```
-File count: 10
-Type         |         Code |        Blank | Doc comments |     Comments |        Total
--------------------------------------------------------------------------------
-Main         |         1256 |          224 |          296 |           25 |         1801
-Tests        |          586 |          113 |           78 |           30 |          807
-Examples     |           46 |            4 |            1 |            0 |           51
--------------------------------------------------------------------------------
-             |         1888 |          341 |          375 |           55 |         2659
+        Code       Tests    Examples       Total     Files
+----------------------------------------------------------
+        1801         807          51        2659        10
+```
+
+With `--by-crate`:
+
+```
+Crate                                        Code       Tests    Examples       Total
+--------------------------------------------------------------------------------------
+my-lib                                       1256         500          45        1801
+my-cli                                        545         307           6         858
+--------------------------------------------------------------------------------------
+Total (10 files)                             1801         807          51        2659
+```
+
+Filter columns with `--type`:
+
+```bash
+rustloc . --type tests          # Only show Tests column
+rustloc . --type code,tests     # Show Code and Tests columns
 ```
 
 ### JSON
 
 ```bash
-rustloc . --format json
+rustloc . --output json
 ```
 
 ```json
 {
-  "file_count": 10,
-  "totals": {
-    "main": { "code": 1256, "blanks": 224, "docs": 296, "comments": 25 },
-    "tests": { "code": 586, "blanks": 113, "docs": 78, "comments": 30 },
-    "examples": { "code": 46, "blanks": 4, "docs": 1, "comments": 0 },
-    "total": { "code": 1888, "blanks": 341, "docs": 375, "comments": 55, "total": 2659 }
+  "total": {
+    "file_count": 10,
+    "code": { "logic": 1256, "blank": 224, "docs": 296, "comments": 25 },
+    "tests": { "logic": 586, "blank": 113, "docs": 78, "comments": 30 },
+    "examples": { "logic": 46, "blank": 4, "docs": 1, "comments": 0 }
   }
 }
 ```
@@ -104,15 +118,21 @@ rustloc . --format json
 ### CSV
 
 ```bash
-rustloc . --format csv
+rustloc . --output csv
 ```
 
 ```csv
-type,name,code,blanks,docs,comments,total
-main,total,1256,224,296,25,1801
-tests,total,586,113,78,30,807
-examples,total,46,4,1,0,51
-total,total,1888,341,375,55,2659
+name,code,tests,examples,total,files
+"total",1801,807,51,2659,10
+```
+
+With `--by-crate`:
+
+```csv
+name,code,tests,examples,total,files
+"my-lib",1256,500,45,1801,6
+"my-cli",545,307,6,858,4
+"total",1801,807,51,2659,10
 ```
 
 ## Library Usage
@@ -124,7 +144,7 @@ use rustloclib::{count_workspace, CountOptions, FilterConfig};
 
 // Count all crates in a workspace
 let result = count_workspace(".", CountOptions::new())?;
-println!("Total code: {}", result.total.code());
+println!("Total logic lines: {}", result.total.logic());
 
 // Count specific crates with filtering
 let filter = FilterConfig::new().exclude("**/generated/**")?;

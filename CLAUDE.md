@@ -25,8 +25,8 @@ When adding a feature, ask: "Where does the logic live?"
 
 **Correct**: The library computes and filters data, CLI displays it.
 ```rust
-// Library: takes LineTypes, returns filtered data
-let options = CountOptions::new().line_types(LineTypes::code_only());
+// Library: takes Contexts, returns filtered data
+let options = CountOptions::new().contexts(Contexts::code_only());
 let result = count_workspace(path, options)?;  // Returns pre-filtered data
 
 // CLI: just displays what it receives
@@ -45,21 +45,21 @@ let filtered = result.filter(my_cli_filter);  // Should be done in library
 ### `rustloclib/src/options.rs`
 Input configuration types that control what the library returns:
 
-- `LineTypes` - which line types to include (code, blank, docs, comments)
+- `Contexts` - which code contexts to include (code, tests, examples)
 - `Aggregation` - result granularity (Total, ByCrate, ByModule, ByFile)
 
 ### `rustloclib/src/stats.rs`
 Output data types returned by the library:
 
-- `Locs` - counts for a single context (blanks, code, docs, comments)
-- `LocStats` - aggregated stats separating main/tests/examples
+- `Locs` - counts for a single context (blank, logic, docs, comments)
+- `LocStats` - aggregated stats separating code/tests/examples
 - `FileStats`, `ModuleStats`, `CrateStats` - breakdown types
-- All types implement `filter(&self, types: LineTypes) -> Self`
+- All types implement `filter(&self, contexts: Contexts) -> Self`
 
 ### `rustloclib/src/counter.rs`
 Counting API:
 
-- `CountOptions` - configuration for counting (crates, filters, aggregation, line_types)
+- `CountOptions` - configuration for counting (crates, filters, aggregation, contexts)
 - `CountResult` - result containing total and optional breakdowns
 - `count_workspace()`, `count_directory()`, `count_file()` - entry points
 

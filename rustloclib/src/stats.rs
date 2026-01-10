@@ -5,13 +5,13 @@ use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::path::PathBuf;
 
-/// Lines of code counts for a single context (main, tests, or examples)
+/// Lines of code counts for a single context (code, tests, or examples)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Locs {
     /// Blank lines (whitespace only)
-    pub blanks: u64,
-    /// Code lines
-    pub code: u64,
+    pub blank: u64,
+    /// Executable/logic lines (actual code, not comments or blanks)
+    pub logic: u64,
     /// Documentation comment lines (`///`, `//!`, `/** */`, `/*! */`)
     pub docs: u64,
     /// Regular comment lines (`//`, `/* */`)
@@ -26,7 +26,7 @@ impl Locs {
 
     /// Total lines in this context
     pub fn total(&self) -> u64 {
-        self.blanks + self.code + self.docs + self.comments
+        self.blank + self.logic + self.docs + self.comments
     }
 }
 
@@ -35,8 +35,8 @@ impl Add for Locs {
 
     fn add(self, other: Self) -> Self {
         Self {
-            blanks: self.blanks + other.blanks,
-            code: self.code + other.code,
+            blank: self.blank + other.blank,
+            logic: self.logic + other.logic,
             docs: self.docs + other.docs,
             comments: self.comments + other.comments,
         }
@@ -45,8 +45,8 @@ impl Add for Locs {
 
 impl AddAssign for Locs {
     fn add_assign(&mut self, other: Self) {
-        self.blanks += other.blanks;
-        self.code += other.code;
+        self.blank += other.blank;
+        self.logic += other.logic;
         self.docs += other.docs;
         self.comments += other.comments;
     }
@@ -57,8 +57,8 @@ impl Sub for Locs {
 
     fn sub(self, other: Self) -> Self {
         Self {
-            blanks: self.blanks.saturating_sub(other.blanks),
-            code: self.code.saturating_sub(other.code),
+            blank: self.blank.saturating_sub(other.blank),
+            logic: self.logic.saturating_sub(other.logic),
             docs: self.docs.saturating_sub(other.docs),
             comments: self.comments.saturating_sub(other.comments),
         }
@@ -67,20 +67,20 @@ impl Sub for Locs {
 
 impl SubAssign for Locs {
     fn sub_assign(&mut self, other: Self) {
-        self.blanks = self.blanks.saturating_sub(other.blanks);
-        self.code = self.code.saturating_sub(other.code);
+        self.blank = self.blank.saturating_sub(other.blank);
+        self.logic = self.logic.saturating_sub(other.logic);
         self.docs = self.docs.saturating_sub(other.docs);
         self.comments = self.comments.saturating_sub(other.comments);
     }
 }
 
-/// Aggregated LOC statistics separating main code, tests, and examples
+/// Aggregated LOC statistics separating code, tests, and examples
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocStats {
     /// Number of files analyzed
     pub file_count: u64,
-    /// Main/production code
-    pub main: Locs,
+    /// Production code (not tests, not examples)
+    pub code: Locs,
     /// Test code (`#[test]`, `#[cfg(test)]`, `tests/` directory)
     pub tests: Locs,
     /// Example code (`examples/` directory)
@@ -94,36 +94,36 @@ impl LocStats {
     }
 
     /// Total blank lines across all contexts
-    pub fn blanks(&self) -> u64 {
-        self.main.blanks + self.tests.blanks + self.examples.blanks
+    pub fn blank(&self) -> u64 {
+        self.code.blank + self.tests.blank + self.examples.blank
     }
 
-    /// Total code lines across all contexts
-    pub fn code(&self) -> u64 {
-        self.main.code + self.tests.code + self.examples.code
+    /// Total logic/executable lines across all contexts
+    pub fn logic(&self) -> u64 {
+        self.code.logic + self.tests.logic + self.examples.logic
     }
 
     /// Total doc comment lines across all contexts
     pub fn docs(&self) -> u64 {
-        self.main.docs + self.tests.docs + self.examples.docs
+        self.code.docs + self.tests.docs + self.examples.docs
     }
 
     /// Total regular comment lines across all contexts
     pub fn comments(&self) -> u64 {
-        self.main.comments + self.tests.comments + self.examples.comments
+        self.code.comments + self.tests.comments + self.examples.comments
     }
 
     /// Total lines across all contexts
     pub fn total(&self) -> u64 {
-        self.main.total() + self.tests.total() + self.examples.total()
+        self.code.total() + self.tests.total() + self.examples.total()
     }
 
     /// Return a filtered copy with only the specified contexts included.
     pub fn filter(&self, contexts: Contexts) -> Self {
         Self {
             file_count: self.file_count,
-            main: if contexts.main {
-                self.main
+            code: if contexts.code {
+                self.code
             } else {
                 Locs::new()
             },
@@ -147,7 +147,7 @@ impl Add for LocStats {
     fn add(self, other: Self) -> Self {
         Self {
             file_count: self.file_count + other.file_count,
-            main: self.main + other.main,
+            code: self.code + other.code,
             tests: self.tests + other.tests,
             examples: self.examples + other.examples,
         }
@@ -157,7 +157,7 @@ impl Add for LocStats {
 impl AddAssign for LocStats {
     fn add_assign(&mut self, other: Self) {
         self.file_count += other.file_count;
-        self.main += other.main;
+        self.code += other.code;
         self.tests += other.tests;
         self.examples += other.examples;
     }
@@ -169,7 +169,7 @@ impl Sub for LocStats {
     fn sub(self, other: Self) -> Self {
         Self {
             file_count: self.file_count.saturating_sub(other.file_count),
-            main: self.main - other.main,
+            code: self.code - other.code,
             tests: self.tests - other.tests,
             examples: self.examples - other.examples,
         }
@@ -179,7 +179,7 @@ impl Sub for LocStats {
 impl SubAssign for LocStats {
     fn sub_assign(&mut self, other: Self) {
         self.file_count = self.file_count.saturating_sub(other.file_count);
-        self.main -= other.main;
+        self.code -= other.code;
         self.tests -= other.tests;
         self.examples -= other.examples;
     }
@@ -299,8 +299,8 @@ mod tests {
     #[test]
     fn test_locs_default() {
         let locs = Locs::new();
-        assert_eq!(locs.blanks, 0);
-        assert_eq!(locs.code, 0);
+        assert_eq!(locs.blank, 0);
+        assert_eq!(locs.logic, 0);
         assert_eq!(locs.docs, 0);
         assert_eq!(locs.comments, 0);
         assert_eq!(locs.total(), 0);
@@ -309,8 +309,8 @@ mod tests {
     #[test]
     fn test_locs_total() {
         let locs = Locs {
-            blanks: 10,
-            code: 100,
+            blank: 10,
+            logic: 100,
             docs: 20,
             comments: 5,
         };
@@ -320,20 +320,20 @@ mod tests {
     #[test]
     fn test_locs_add() {
         let a = Locs {
-            blanks: 10,
-            code: 100,
+            blank: 10,
+            logic: 100,
             docs: 20,
             comments: 5,
         };
         let b = Locs {
-            blanks: 5,
-            code: 50,
+            blank: 5,
+            logic: 50,
             docs: 10,
             comments: 2,
         };
         let sum = a + b;
-        assert_eq!(sum.blanks, 15);
-        assert_eq!(sum.code, 150);
+        assert_eq!(sum.blank, 15);
+        assert_eq!(sum.logic, 150);
         assert_eq!(sum.docs, 30);
         assert_eq!(sum.comments, 7);
     }
@@ -342,28 +342,28 @@ mod tests {
     fn test_loc_stats_totals() {
         let stats = LocStats {
             file_count: 3,
-            main: Locs {
-                blanks: 10,
-                code: 100,
+            code: Locs {
+                blank: 10,
+                logic: 100,
                 docs: 20,
                 comments: 5,
             },
             tests: Locs {
-                blanks: 5,
-                code: 50,
+                blank: 5,
+                logic: 50,
                 docs: 2,
                 comments: 3,
             },
             examples: Locs {
-                blanks: 2,
-                code: 20,
+                blank: 2,
+                logic: 20,
                 docs: 5,
                 comments: 1,
             },
         };
 
-        assert_eq!(stats.blanks(), 17);
-        assert_eq!(stats.code(), 170);
+        assert_eq!(stats.blank(), 17);
+        assert_eq!(stats.logic(), 170);
         assert_eq!(stats.docs(), 27);
         assert_eq!(stats.comments(), 9);
         assert_eq!(stats.total(), 223);
@@ -373,9 +373,9 @@ mod tests {
     fn test_loc_stats_add() {
         let a = LocStats {
             file_count: 2,
-            main: Locs {
-                blanks: 10,
-                code: 100,
+            code: Locs {
+                blank: 10,
+                logic: 100,
                 docs: 20,
                 comments: 5,
             },
@@ -384,9 +384,9 @@ mod tests {
         };
         let b = LocStats {
             file_count: 1,
-            main: Locs {
-                blanks: 5,
-                code: 50,
+            code: Locs {
+                blank: 5,
+                logic: 50,
                 docs: 10,
                 comments: 2,
             },
@@ -396,6 +396,6 @@ mod tests {
 
         let sum = a + b;
         assert_eq!(sum.file_count, 3);
-        assert_eq!(sum.main.code, 150);
+        assert_eq!(sum.code.logic, 150);
     }
 }
