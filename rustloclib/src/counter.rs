@@ -8,22 +8,34 @@ use std::path::Path;
 
 use crate::error::RustlocError;
 use crate::filter::{discover_files, discover_files_in_dirs, FilterConfig};
+use crate::options::{Aggregation, Contexts};
 use crate::stats::{CrateStats, FileStats, LocStats, ModuleStats};
 use crate::visitor::parse_file;
 use crate::workspace::{CrateInfo, WorkspaceInfo};
 use crate::Result;
 
 /// Options for counting LOC.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CountOptions {
     /// Filter by crate names (empty = all crates)
     pub crate_filter: Vec<String>,
     /// File filter configuration
     pub file_filter: FilterConfig,
-    /// Whether to include per-file statistics
-    pub per_file_stats: bool,
-    /// Whether to include per-module statistics
-    pub per_module_stats: bool,
+    /// Aggregation level for results
+    pub aggregation: Aggregation,
+    /// Which contexts to include in results (main, tests, examples)
+    pub contexts: Contexts,
+}
+
+impl Default for CountOptions {
+    fn default() -> Self {
+        Self {
+            crate_filter: Vec::new(),
+            file_filter: FilterConfig::new(),
+            aggregation: Aggregation::Total,
+            contexts: Contexts::all(),
+        }
+    }
 }
 
 impl CountOptions {
@@ -44,15 +56,15 @@ impl CountOptions {
         self
     }
 
-    /// Include per-file statistics in results.
-    pub fn with_file_stats(mut self) -> Self {
-        self.per_file_stats = true;
+    /// Set aggregation level.
+    pub fn aggregation(mut self, level: Aggregation) -> Self {
+        self.aggregation = level;
         self
     }
 
-    /// Include per-module statistics in results.
-    pub fn with_module_stats(mut self) -> Self {
-        self.per_module_stats = true;
+    /// Set which contexts to include.
+    pub fn contexts(mut self, contexts: Contexts) -> Self {
+        self.contexts = contexts;
         self
     }
 }
@@ -74,6 +86,16 @@ impl CountResult {
     /// Create a new empty result.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Return a filtered copy with only the specified contexts included.
+    pub fn filter(&self, contexts: Contexts) -> Self {
+        Self {
+            total: self.total.filter(contexts),
+            crates: self.crates.iter().map(|c| c.filter(contexts)).collect(),
+            files: self.files.iter().map(|f| f.filter(contexts)).collect(),
+            modules: self.modules.iter().map(|m| m.filter(contexts)).collect(),
+        }
     }
 }
 
@@ -118,29 +140,40 @@ pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<
 
     let mut result = CountResult::new();
 
+    // Determine what to include based on aggregation level
+    let include_files = matches!(options.aggregation, Aggregation::ByFile);
+    let include_modules = matches!(options.aggregation, Aggregation::ByModule);
+    let include_crates = matches!(
+        options.aggregation,
+        Aggregation::ByCrate | Aggregation::ByModule | Aggregation::ByFile
+    );
+
     for crate_info in &crates {
         let crate_stats = count_crate(crate_info, &options)?;
         result.total += crate_stats.stats.clone();
 
-        if options.per_file_stats {
+        if include_files {
             result.files.extend(crate_stats.files.clone());
         }
 
         // Compute module stats per-crate if requested
-        if options.per_module_stats {
+        if include_modules {
             let crate_modules = aggregate_modules(&crate_stats.files, &crate_info.name, crate_info);
             result.modules.extend(crate_modules);
         }
 
-        result.crates.push(crate_stats);
+        if include_crates {
+            result.crates.push(crate_stats);
+        }
     }
 
     // Sort modules by name for consistent output
-    if options.per_module_stats {
+    if include_modules {
         result.modules.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
-    Ok(result)
+    // Apply context filter
+    Ok(result.filter(options.contexts))
 }
 
 /// Compute the module name for a file path relative to a source root.
@@ -442,7 +475,11 @@ fn foo() {
         let temp = tempdir().unwrap();
         create_workspace(temp.path());
 
-        let result = count_workspace(temp.path(), CountOptions::new()).unwrap();
+        let result = count_workspace(
+            temp.path(),
+            CountOptions::new().aggregation(Aggregation::ByCrate),
+        )
+        .unwrap();
 
         assert_eq!(result.crates.len(), 2);
         assert_eq!(result.total.file_count, 2);
@@ -453,7 +490,9 @@ fn foo() {
         let temp = tempdir().unwrap();
         create_workspace(temp.path());
 
-        let options = CountOptions::new().crates(vec!["crate-a".to_string()]);
+        let options = CountOptions::new()
+            .crates(vec!["crate-a".to_string()])
+            .aggregation(Aggregation::ByCrate);
         let result = count_workspace(temp.path(), options).unwrap();
 
         assert_eq!(result.crates.len(), 1);
@@ -466,7 +505,7 @@ fn foo() {
         let temp = tempdir().unwrap();
         create_workspace(temp.path());
 
-        let options = CountOptions::new().with_file_stats();
+        let options = CountOptions::new().aggregation(Aggregation::ByFile);
         let result = count_workspace(temp.path(), options).unwrap();
 
         assert_eq!(result.files.len(), 2);

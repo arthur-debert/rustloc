@@ -45,8 +45,8 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use rustloclib::{
-    count_workspace, diff_commits, CountOptions, CountResult, DiffOptions, DiffResult,
-    FilterConfig, LocStats, LocStatsDiff, Locs, LocsDiff,
+    count_workspace, diff_commits, Aggregation, Contexts, CountOptions, CountResult, DiffOptions,
+    DiffResult, FilterConfig, LocStats, LocStatsDiff, Locs, LocsDiff,
 };
 
 /// Rust-aware lines of code counter with test/code separation
@@ -138,138 +138,32 @@ struct CommonArgs {
     #[arg(short = 'o', long, value_enum, default_value = "table")]
     output: OutputFormat,
 
-    /// Filter which line types to show (comma-separated: code,blank,docs,comments)
-    /// If not specified, all types are shown.
+    /// Filter which code contexts to show (comma-separated: code,tests,examples)
+    /// "code" means main/production code. If not specified, all are shown.
     #[arg(short = 't', long = "type", value_delimiter = ',')]
-    types: Vec<LineType>,
+    types: Vec<ContextType>,
 }
 
-/// Types of lines that can be filtered
+/// Code context types that can be filtered
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum LineType {
+enum ContextType {
+    /// Main/production code
     Code,
-    Blank,
-    Docs,
-    Comments,
+    /// Test code
+    Tests,
+    /// Example code
+    Examples,
 }
 
-/// Helper to check which line types should be displayed
-#[derive(Debug, Clone)]
-struct TypeFilter {
-    code: bool,
-    blank: bool,
-    docs: bool,
-    comments: bool,
-}
-
-impl TypeFilter {
-    /// Create a filter from the CLI args. If empty, show all types.
-    fn from_args(types: &[LineType]) -> Self {
-        if types.is_empty() {
-            // Show all types by default
-            Self {
-                code: true,
-                blank: true,
-                docs: true,
-                comments: true,
-            }
-        } else {
-            Self {
-                code: types.contains(&LineType::Code),
-                blank: types.contains(&LineType::Blank),
-                docs: types.contains(&LineType::Docs),
-                comments: types.contains(&LineType::Comments),
-            }
-        }
-    }
-
-    /// Build column headers based on filter
-    fn headers(&self) -> Vec<&'static str> {
-        let mut cols = Vec::new();
-        if self.code {
-            cols.push("Code");
-        }
-        if self.blank {
-            cols.push("Blank");
-        }
-        if self.docs {
-            cols.push("Docs");
-        }
-        if self.comments {
-            cols.push("Comments");
-        }
-        cols.push("Total");
-        cols
-    }
-
-    /// Format values based on filter
-    fn values(&self, code: u64, blank: u64, docs: u64, comments: u64) -> Vec<u64> {
-        let mut vals = Vec::new();
-        if self.code {
-            vals.push(code);
-        }
-        if self.blank {
-            vals.push(blank);
-        }
-        if self.docs {
-            vals.push(docs);
-        }
-        if self.comments {
-            vals.push(comments);
-        }
-        // Calculate total based on selected types only
-        let total = (if self.code { code } else { 0 })
-            + (if self.blank { blank } else { 0 })
-            + (if self.docs { docs } else { 0 })
-            + (if self.comments { comments } else { 0 });
-        vals.push(total);
-        vals
-    }
-
-    /// Format diff values based on filter (returns strings like "+x/-y/z")
-    fn diff_values(&self, added: &Locs, removed: &Locs) -> Vec<String> {
-        let mut vals = Vec::new();
-        if self.code {
-            vals.push(format_diff_cell(added.code, removed.code));
-        }
-        if self.blank {
-            vals.push(format_diff_cell(added.blanks, removed.blanks));
-        }
-        if self.docs {
-            vals.push(format_diff_cell(added.docs, removed.docs));
-        }
-        if self.comments {
-            vals.push(format_diff_cell(added.comments, removed.comments));
-        }
-        // Calculate totals based on selected types
-        let added_total = (if self.code { added.code } else { 0 })
-            + (if self.blank { added.blanks } else { 0 })
-            + (if self.docs { added.docs } else { 0 })
-            + (if self.comments { added.comments } else { 0 });
-        let removed_total = (if self.code { removed.code } else { 0 })
-            + (if self.blank { removed.blanks } else { 0 })
-            + (if self.docs { removed.docs } else { 0 })
-            + (if self.comments { removed.comments } else { 0 });
-        vals.push(format_diff_cell(added_total, removed_total));
-        vals
-    }
-
-    /// Get number of columns (including Total)
-    fn column_count(&self) -> usize {
-        let mut count = 1; // Total always included
-        if self.code {
-            count += 1;
-        }
-        if self.blank {
-            count += 1;
-        }
-        if self.docs {
-            count += 1;
-        }
-        if self.comments {
-            count += 1;
-        }
-        count
+/// Convert CLI ContextType args to library's Contexts
+fn to_contexts(types: &[ContextType]) -> Contexts {
+    if types.is_empty() {
+        Contexts::all()
+    } else {
+        Contexts::none()
+            .with_main(types.contains(&ContextType::Code))
+            .with_tests(types.contains(&ContextType::Tests))
+            .with_examples(types.contains(&ContextType::Examples))
     }
 }
 
@@ -316,19 +210,24 @@ fn build_filter(common: &CommonArgs) -> Result<FilterConfig, Box<dyn std::error:
 
 fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
     let filter = build_filter(&args.common)?;
-    let type_filter = TypeFilter::from_args(&args.common.types);
+    let contexts = to_contexts(&args.common.types);
 
-    let mut options = CountOptions::new()
+    // Determine aggregation level from flags
+    let aggregation = if args.by_file {
+        Aggregation::ByFile
+    } else if args.by_module {
+        Aggregation::ByModule
+    } else if args.by_crate {
+        Aggregation::ByCrate
+    } else {
+        Aggregation::Total
+    };
+
+    let options = CountOptions::new()
         .crates(args.common.crates.clone())
-        .filter(filter);
-
-    if args.by_file {
-        options = options.with_file_stats();
-    }
-
-    if args.by_module {
-        options = options.with_module_stats();
-    }
+        .filter(filter)
+        .aggregation(aggregation)
+        .contexts(contexts);
 
     let result = count_workspace(&args.path, options)?;
 
@@ -338,7 +237,7 @@ fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
             args.by_crate,
             args.by_file,
             args.by_module,
-            &type_filter,
+            &contexts,
         ),
         OutputFormat::Json => print_count_json(&result)?,
         OutputFormat::Csv => print_count_csv(
@@ -346,7 +245,7 @@ fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
             args.by_crate,
             args.by_file,
             args.by_module,
-            &type_filter,
+            &contexts,
         ),
     }
 
@@ -358,22 +257,29 @@ fn run_diff(args: DiffArgs) -> Result<(), Box<dyn std::error::Error>> {
     let (from, to) = parse_commit_range(&args.from, args.to.as_deref())?;
 
     let filter = build_filter(&args.common)?;
-    let type_filter = TypeFilter::from_args(&args.common.types);
+    let contexts = to_contexts(&args.common.types);
 
-    let mut options = DiffOptions::new()
+    // Determine aggregation level from flags
+    let aggregation = if args.by_file {
+        Aggregation::ByFile
+    } else if args.by_crate {
+        Aggregation::ByCrate
+    } else {
+        Aggregation::Total
+    };
+
+    let options = DiffOptions::new()
         .crates(args.common.crates.clone())
-        .filter(filter);
-
-    if args.by_file {
-        options = options.with_file_stats();
-    }
+        .filter(filter)
+        .aggregation(aggregation)
+        .contexts(contexts);
 
     let result = diff_commits(&args.path, &from, &to, options)?;
 
     match args.common.output {
-        OutputFormat::Table => print_diff_table(&result, args.by_crate, args.by_file, &type_filter),
+        OutputFormat::Table => print_diff_table(&result, args.by_crate, args.by_file, &contexts),
         OutputFormat::Json => print_diff_json(&result)?,
-        OutputFormat::Csv => print_diff_csv(&result, args.by_crate, args.by_file, &type_filter),
+        OutputFormat::Csv => print_diff_csv(&result, args.by_crate, args.by_file, &contexts),
     }
 
     Ok(())
@@ -408,20 +314,16 @@ fn print_count_table(
     by_crate: bool,
     by_file: bool,
     by_module: bool,
-    type_filter: &TypeFilter,
+    ctx: &Contexts,
 ) {
-    let headers = type_filter.headers();
-    let col_count = type_filter.column_count();
-
     if by_module && !result.modules.is_empty() {
         println!("By-module breakdown:");
-        // Build dynamic header
-        print!("{:<40} {:>6}", "Module", "Files");
-        for h in &headers {
-            print!(" {:>8}", h);
-        }
+        print!(
+            "{:<40} {:>6} {:>8} {:>8} {:>8} {:>8} {:>8}",
+            "Module", "Files", "Code", "Blank", "Docs", "Comments", "Total"
+        );
         println!();
-        println!("{}", "-".repeat(48 + col_count * 9));
+        println!("{}", "-".repeat(94));
 
         for module in &result.modules {
             let name = if module.name.is_empty() {
@@ -434,31 +336,28 @@ fn print_count_table(
             } else {
                 name.to_string()
             };
-
-            print!("{:<40} {:>6}", truncated, module.files.len());
-            let vals = type_filter.values(
-                module.stats.code(),
-                module.stats.blanks(),
-                module.stats.docs(),
-                module.stats.comments(),
+            let s = &module.stats;
+            println!(
+                "{:<40} {:>6} {:>8} {:>8} {:>8} {:>8} {:>8}",
+                truncated,
+                module.files.len(),
+                s.code(),
+                s.blanks(),
+                s.docs(),
+                s.comments(),
+                s.total()
             );
-            for v in vals {
-                print!(" {:>8}", v);
-            }
-            println!();
         }
         println!();
     }
 
     if by_file && !result.files.is_empty() {
         println!("By-file breakdown:");
-        // Build dynamic header
-        print!("{:<60}", "File");
-        for h in &headers {
-            print!(" {:>8}", h);
-        }
-        println!();
-        println!("{}", "-".repeat(60 + col_count * 9));
+        println!(
+            "{:<60} {:>8} {:>8} {:>8} {:>8} {:>8}",
+            "File", "Code", "Blank", "Docs", "Comments", "Total"
+        );
+        println!("{}", "-".repeat(105));
 
         for file in &result.files {
             let path_str = file.path.to_string_lossy();
@@ -467,18 +366,16 @@ fn print_count_table(
             } else {
                 path_str.to_string()
             };
-
-            print!("{:<60}", truncated);
-            let vals = type_filter.values(
-                file.stats.code(),
-                file.stats.blanks(),
-                file.stats.docs(),
-                file.stats.comments(),
+            let s = &file.stats;
+            println!(
+                "{:<60} {:>8} {:>8} {:>8} {:>8} {:>8}",
+                truncated,
+                s.code(),
+                s.blanks(),
+                s.docs(),
+                s.comments(),
+                s.total()
             );
-            for v in vals {
-                print!(" {:>8}", v);
-            }
-            println!();
         }
         println!();
     }
@@ -490,7 +387,7 @@ fn print_count_table(
                 "\n{} ({} files):",
                 crate_stats.name, crate_stats.stats.file_count
             );
-            print_stats_table(&crate_stats.stats, type_filter);
+            print_stats_table(&crate_stats.stats, ctx);
         }
         println!();
     }
@@ -500,46 +397,51 @@ fn print_count_table(
     } else {
         println!("File count: {}", result.total.file_count);
     }
-    print_stats_table(&result.total, type_filter);
+    print_stats_table(&result.total, ctx);
 }
 
-fn print_stats_table(stats: &LocStats, type_filter: &TypeFilter) {
-    let headers = type_filter.headers();
+fn print_stats_table(stats: &LocStats, ctx: &Contexts) {
+    println!(
+        "{:<12} | {:>12} | {:>12} | {:>12} | {:>12} | {:>12}",
+        "Type", "Code", "Blank", "Docs", "Comments", "Total"
+    );
+    println!("{}", "-".repeat(87));
 
-    // Build header
-    print!("{:<12}", "Type");
-    for h in &headers {
-        print!(" | {:>12}", h);
+    if ctx.main {
+        print_locs_row("Main", &stats.main);
     }
-    println!();
-    println!("{}", "-".repeat(15 + headers.len() * 15));
-
-    print_locs_row("Main", &stats.main, type_filter);
-    print_locs_row("Tests", &stats.tests, type_filter);
-    print_locs_row("Examples", &stats.examples, type_filter);
-
-    println!("{}", "-".repeat(15 + headers.len() * 15));
-
-    // Total row
-    print!("{:<12}", "");
-    let vals = type_filter.values(stats.code(), stats.blanks(), stats.docs(), stats.comments());
-    for v in vals {
-        print!(" | {:>12}", v);
+    if ctx.tests {
+        print_locs_row("Tests", &stats.tests);
     }
-    println!();
+    if ctx.examples {
+        print_locs_row("Examples", &stats.examples);
+    }
+
+    println!("{}", "-".repeat(87));
+    println!(
+        "{:<12} | {:>12} | {:>12} | {:>12} | {:>12} | {:>12}",
+        "",
+        stats.code(),
+        stats.blanks(),
+        stats.docs(),
+        stats.comments(),
+        stats.total()
+    );
 }
 
-fn print_locs_row(name: &str, locs: &Locs, type_filter: &TypeFilter) {
-    print!("{:<12}", name);
-    let vals = type_filter.values(locs.code, locs.blanks, locs.docs, locs.comments);
-    for v in vals {
-        print!(" | {:>12}", v);
-    }
-    println!();
+fn print_locs_row(name: &str, locs: &Locs) {
+    println!(
+        "{:<12} | {:>12} | {:>12} | {:>12} | {:>12} | {:>12}",
+        name,
+        locs.code,
+        locs.blanks,
+        locs.docs,
+        locs.comments,
+        locs.total()
+    );
 }
 
 fn print_count_json(result: &CountResult) -> Result<(), serde_json::Error> {
-    // Direct serialization of the library type - no transformation needed
     println!("{}", serde_json::to_string_pretty(result)?);
     Ok(())
 }
@@ -549,36 +451,34 @@ fn print_count_csv(
     by_crate: bool,
     by_file: bool,
     by_module: bool,
-    type_filter: &TypeFilter,
+    ctx: &Contexts,
 ) {
-    // Build header dynamically
-    let mut header = "type,name".to_string();
-    if type_filter.code {
-        header.push_str(",code");
-    }
-    if type_filter.blank {
-        header.push_str(",blanks");
-    }
-    if type_filter.docs {
-        header.push_str(",docs");
-    }
-    if type_filter.comments {
-        header.push_str(",comments");
-    }
-    header.push_str(",total");
-    println!("{}", header);
+    println!("type,name,code,blanks,docs,comments,total");
 
-    // Helper to format a row
-    let format_row = |type_name: &str, name: &str, locs: &Locs, tf: &TypeFilter| {
-        let vals = tf.values(locs.code, locs.blanks, locs.docs, locs.comments);
-        let vals_str: Vec<String> = vals.iter().map(|v| v.to_string()).collect();
-        format!("{},\"{}\",{}", type_name, name, vals_str.join(","))
+    let format_locs = |type_name: &str, name: &str, locs: &Locs| {
+        format!(
+            "{},\"{}\",{},{},{},{},{}",
+            type_name,
+            name,
+            locs.code,
+            locs.blanks,
+            locs.docs,
+            locs.comments,
+            locs.total()
+        )
     };
 
-    let format_stats_row = |type_name: &str, name: &str, stats: &LocStats, tf: &TypeFilter| {
-        let vals = tf.values(stats.code(), stats.blanks(), stats.docs(), stats.comments());
-        let vals_str: Vec<String> = vals.iter().map(|v| v.to_string()).collect();
-        format!("{},\"{}\",{}", type_name, name, vals_str.join(","))
+    let format_stats = |type_name: &str, name: &str, stats: &LocStats| {
+        format!(
+            "{},\"{}\",{},{},{},{},{}",
+            type_name,
+            name,
+            stats.code(),
+            stats.blanks(),
+            stats.docs(),
+            stats.comments(),
+            stats.total()
+        )
     };
 
     if by_module {
@@ -588,10 +488,7 @@ fn print_count_csv(
             } else {
                 &module.name
             };
-            println!(
-                "{}",
-                format_stats_row("module", name, &module.stats, type_filter)
-            );
+            println!("{}", format_stats("module", name, &module.stats));
         }
     }
 
@@ -599,12 +496,7 @@ fn print_count_csv(
         for file in &result.files {
             println!(
                 "{}",
-                format_stats_row(
-                    "file",
-                    &file.path.to_string_lossy(),
-                    &file.stats,
-                    type_filter
-                )
+                format_stats("file", &file.path.to_string_lossy(), &file.stats)
             );
         }
     }
@@ -613,44 +505,39 @@ fn print_count_csv(
         for crate_stats in &result.crates {
             println!(
                 "{}",
-                format_stats_row("crate", &crate_stats.name, &crate_stats.stats, type_filter)
+                format_stats("crate", &crate_stats.name, &crate_stats.stats)
             );
         }
     }
 
     let stats = &result.total;
-    println!("{}", format_row("main", "total", &stats.main, type_filter));
-    println!(
-        "{}",
-        format_row("tests", "total", &stats.tests, type_filter)
-    );
-    println!(
-        "{}",
-        format_row("examples", "total", &stats.examples, type_filter)
-    );
-    println!("{}", format_stats_row("total", "total", stats, type_filter));
+    if ctx.main {
+        println!("{}", format_locs("main", "total", &stats.main));
+    }
+    if ctx.tests {
+        println!("{}", format_locs("tests", "total", &stats.tests));
+    }
+    if ctx.examples {
+        println!("{}", format_locs("examples", "total", &stats.examples));
+    }
+    println!("{}", format_stats("total", "total", stats));
 }
 
 // ============================================================================
 // Diff output functions
 // ============================================================================
 
-fn print_diff_table(result: &DiffResult, by_crate: bool, by_file: bool, type_filter: &TypeFilter) {
+fn print_diff_table(result: &DiffResult, by_crate: bool, by_file: bool, ctx: &Contexts) {
     println!("Diff: {} → {}", result.from_commit, result.to_commit);
     println!();
 
-    let headers = type_filter.headers();
-    let col_count = type_filter.column_count();
-
     if by_file && !result.files.is_empty() {
         println!("By-file breakdown:");
-        // Build dynamic header
-        print!("{:<50} {:>6}", "File", "Change");
-        for h in &headers {
-            print!(" {:>14}", h);
-        }
-        println!();
-        println!("{}", "-".repeat(58 + col_count * 15));
+        println!(
+            "{:<50} {:>6} {:>16} {:>16}",
+            "File", "Change", "Code", "Total"
+        );
+        println!("{}", "-".repeat(92));
 
         for file in &result.files {
             let path_str = file.path.to_string_lossy();
@@ -666,15 +553,14 @@ fn print_diff_table(result: &DiffResult, by_crate: bool, by_file: bool, type_fil
                 rustloclib::FileChangeType::Modified => "M",
             };
 
-            // Sum up the diff across all contexts for this file
             let total_diff = sum_diff_contexts(&file.diff);
-
-            print!("{:<50} {:>6}", truncated, change_type);
-            let vals = type_filter.diff_values(&total_diff.added, &total_diff.removed);
-            for v in vals {
-                print!(" {:>14}", v);
-            }
-            println!();
+            println!(
+                "{:<50} {:>6} {:>16} {:>16}",
+                truncated,
+                change_type,
+                format_diff_cell(total_diff.added.code, total_diff.removed.code),
+                format_diff_cell(total_diff.added.total(), total_diff.removed.total())
+            );
         }
         println!();
     }
@@ -686,7 +572,7 @@ fn print_diff_table(result: &DiffResult, by_crate: bool, by_file: bool, type_fil
                 "\n{} ({} files changed):",
                 crate_stats.name, crate_stats.diff.file_count
             );
-            print_diff_stats_table(&crate_stats.diff, type_filter);
+            print_diff_stats_table(&crate_stats.diff, ctx);
         }
         println!();
     }
@@ -696,48 +582,53 @@ fn print_diff_table(result: &DiffResult, by_crate: bool, by_file: bool, type_fil
     } else {
         println!("Files changed: {}", result.total.file_count);
     }
-    print_diff_stats_table(&result.total, type_filter);
+    print_diff_stats_table(&result.total, ctx);
 }
 
-fn print_diff_stats_table(diff: &LocStatsDiff, type_filter: &TypeFilter) {
-    let headers = type_filter.headers();
+fn print_diff_stats_table(diff: &LocStatsDiff, ctx: &Contexts) {
+    println!(
+        "{:<12} | {:>16} | {:>16} | {:>16} | {:>16} | {:>16}",
+        "Type", "Code", "Blank", "Docs", "Comments", "Total"
+    );
+    println!("{}", "-".repeat(104));
 
-    // Build header
-    print!("{:<12}", "Type");
-    for h in &headers {
-        print!(" | {:>14}", h);
+    if ctx.main {
+        print_diff_locs_row("Main", &diff.main);
     }
-    println!();
-    println!("{}", "-".repeat(15 + headers.len() * 17));
+    if ctx.tests {
+        print_diff_locs_row("Tests", &diff.tests);
+    }
+    if ctx.examples {
+        print_diff_locs_row("Examples", &diff.examples);
+    }
 
-    print_diff_locs_row("Main", &diff.main, type_filter);
-    print_diff_locs_row("Tests", &diff.tests, type_filter);
-    print_diff_locs_row("Examples", &diff.examples, type_filter);
+    println!("{}", "-".repeat(104));
 
-    println!("{}", "-".repeat(15 + headers.len() * 17));
-
-    // Calculate totals across contexts
     let total_added = diff.total_added();
     let total_removed = diff.total_removed();
-
-    print!("{:<12}", "");
-    let vals = type_filter.diff_values(&total_added, &total_removed);
-    for v in vals {
-        print!(" | {:>14}", v);
-    }
-    println!();
+    println!(
+        "{:<12} | {:>16} | {:>16} | {:>16} | {:>16} | {:>16}",
+        "",
+        format_diff_cell(total_added.code, total_removed.code),
+        format_diff_cell(total_added.blanks, total_removed.blanks),
+        format_diff_cell(total_added.docs, total_removed.docs),
+        format_diff_cell(total_added.comments, total_removed.comments),
+        format_diff_cell(total_added.total(), total_removed.total())
+    );
 }
 
-fn print_diff_locs_row(name: &str, diff: &LocsDiff, type_filter: &TypeFilter) {
-    print!("{:<12}", name);
-    let vals = type_filter.diff_values(&diff.added, &diff.removed);
-    for v in vals {
-        print!(" | {:>14}", v);
-    }
-    println!();
+fn print_diff_locs_row(name: &str, diff: &LocsDiff) {
+    println!(
+        "{:<12} | {:>16} | {:>16} | {:>16} | {:>16} | {:>16}",
+        name,
+        format_diff_cell(diff.added.code, diff.removed.code),
+        format_diff_cell(diff.added.blanks, diff.removed.blanks),
+        format_diff_cell(diff.added.docs, diff.removed.docs),
+        format_diff_cell(diff.added.comments, diff.removed.comments),
+        format_diff_cell(diff.added.total(), diff.removed.total())
+    );
 }
 
-/// Sum up the diff across all contexts (main, tests, examples)
 fn sum_diff_contexts(diff: &LocStatsDiff) -> LocsDiff {
     LocsDiff {
         added: diff.total_added(),
@@ -746,101 +637,43 @@ fn sum_diff_contexts(diff: &LocStatsDiff) -> LocsDiff {
 }
 
 fn print_diff_json(result: &DiffResult) -> Result<(), serde_json::Error> {
-    // Direct serialization of the library type - no transformation needed
     println!("{}", serde_json::to_string_pretty(result)?);
     Ok(())
 }
 
-fn print_diff_csv(result: &DiffResult, by_crate: bool, by_file: bool, type_filter: &TypeFilter) {
-    // Build header dynamically
-    let mut header = "type,name,change".to_string();
-    if type_filter.code {
-        header.push_str(",code_added,code_removed,code_net");
-    }
-    if type_filter.blank {
-        header.push_str(",blanks_added,blanks_removed,blanks_net");
-    }
-    if type_filter.docs {
-        header.push_str(",docs_added,docs_removed,docs_net");
-    }
-    if type_filter.comments {
-        header.push_str(",comments_added,comments_removed,comments_net");
-    }
-    header.push_str(",total_added,total_removed,total_net");
-    println!("{}", header);
+fn print_diff_csv(result: &DiffResult, by_crate: bool, by_file: bool, ctx: &Contexts) {
+    println!(
+        "type,name,change,code_added,code_removed,code_net,total_added,total_removed,total_net"
+    );
 
-    // Helper to format a diff row
-    let format_diff_row =
-        |type_name: &str, name: &str, change: &str, diff: &LocsDiff, tf: &TypeFilter| {
-            let mut vals = Vec::new();
-            if tf.code {
-                vals.push(format!(
-                    "{},{},{}",
-                    diff.added.code,
-                    diff.removed.code,
-                    diff.net_code()
-                ));
-            }
-            if tf.blank {
-                vals.push(format!(
-                    "{},{},{}",
-                    diff.added.blanks,
-                    diff.removed.blanks,
-                    diff.net_blanks()
-                ));
-            }
-            if tf.docs {
-                vals.push(format!(
-                    "{},{},{}",
-                    diff.added.docs,
-                    diff.removed.docs,
-                    diff.net_docs()
-                ));
-            }
-            if tf.comments {
-                vals.push(format!(
-                    "{},{},{}",
-                    diff.added.comments,
-                    diff.removed.comments,
-                    diff.net_comments()
-                ));
-            }
-            // Calculate filtered total
-            let added_total = (if tf.code { diff.added.code } else { 0 })
-                + (if tf.blank { diff.added.blanks } else { 0 })
-                + (if tf.docs { diff.added.docs } else { 0 })
-                + (if tf.comments { diff.added.comments } else { 0 });
-            let removed_total = (if tf.code { diff.removed.code } else { 0 })
-                + (if tf.blank { diff.removed.blanks } else { 0 })
-                + (if tf.docs { diff.removed.docs } else { 0 })
-                + (if tf.comments {
-                    diff.removed.comments
-                } else {
-                    0
-                });
-            let net_total = added_total as i64 - removed_total as i64;
-            vals.push(format!("{},{},{}", added_total, removed_total, net_total));
-
-            format!("{},\"{}\",{},{}", type_name, name, change, vals.join(","))
-        };
+    let format_diff = |type_name: &str, name: &str, change: &str, diff: &LocsDiff| {
+        let net_code = diff.added.code as i64 - diff.removed.code as i64;
+        let net_total = diff.added.total() as i64 - diff.removed.total() as i64;
+        format!(
+            "{},\"{}\",{},{},{},{},{},{},{}",
+            type_name,
+            name,
+            change,
+            diff.added.code,
+            diff.removed.code,
+            net_code,
+            diff.added.total(),
+            diff.removed.total(),
+            net_total
+        )
+    };
 
     if by_file {
         for file in &result.files {
             let total_diff = sum_diff_contexts(&file.diff);
-            let change_type_str = match file.change_type {
+            let change = match file.change_type {
                 rustloclib::FileChangeType::Added => "added",
                 rustloclib::FileChangeType::Deleted => "deleted",
                 rustloclib::FileChangeType::Modified => "modified",
             };
             println!(
                 "{}",
-                format_diff_row(
-                    "file",
-                    &file.path.to_string_lossy(),
-                    change_type_str,
-                    &total_diff,
-                    type_filter
-                )
+                format_diff("file", &file.path.to_string_lossy(), change, &total_diff)
             );
         }
     }
@@ -853,33 +686,25 @@ fn print_diff_csv(result: &DiffResult, by_crate: bool, by_file: bool, type_filte
             };
             println!(
                 "{}",
-                format_diff_row("crate", &crate_stats.name, "-", &total_diff, type_filter)
+                format_diff("crate", &crate_stats.name, "-", &total_diff)
             );
         }
     }
 
-    // Category totals
     let d = &result.total;
-    println!(
-        "{}",
-        format_diff_row("main", "total", "-", &d.main, type_filter)
-    );
-    println!(
-        "{}",
-        format_diff_row("tests", "total", "-", &d.tests, type_filter)
-    );
-    println!(
-        "{}",
-        format_diff_row("examples", "total", "-", &d.examples, type_filter)
-    );
+    if ctx.main {
+        println!("{}", format_diff("main", "total", "-", &d.main));
+    }
+    if ctx.tests {
+        println!("{}", format_diff("tests", "total", "-", &d.tests));
+    }
+    if ctx.examples {
+        println!("{}", format_diff("examples", "total", "-", &d.examples));
+    }
 
-    // Grand total
     let total_diff = LocsDiff {
         added: d.total_added(),
         removed: d.total_removed(),
     };
-    println!(
-        "{}",
-        format_diff_row("total", "total", "-", &total_diff, type_filter)
-    );
+    println!("{}", format_diff("total", "total", "-", &total_diff));
 }
