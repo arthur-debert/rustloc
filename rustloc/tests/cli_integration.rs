@@ -26,9 +26,9 @@ fn test_cli_help() {
     assert!(success);
     assert!(stdout.contains("rustloc"));
     assert!(stdout.contains("--crate"));
-    assert!(stdout.contains("--format"));
-    assert!(stdout.contains("--per-crate"));
-    assert!(stdout.contains("--per-file"));
+    assert!(stdout.contains("--output"));
+    assert!(stdout.contains("--by-crate"));
+    assert!(stdout.contains("--by-file"));
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn test_table_output() {
 
 #[test]
 fn test_json_output() {
-    let (stdout, _, success) = run_rustloc(&[".", "--format", "json"]);
+    let (stdout, _, success) = run_rustloc(&[".", "--output", "json"]);
 
     assert!(success);
     assert!(stdout.contains("\"file_count\""));
@@ -71,7 +71,7 @@ fn test_json_output() {
 
 #[test]
 fn test_csv_output() {
-    let (stdout, _, success) = run_rustloc(&[".", "--format", "csv"]);
+    let (stdout, _, success) = run_rustloc(&[".", "--output", "csv"]);
 
     assert!(success);
     assert!(stdout.contains("type,name,code,blanks,docs,comments,total"));
@@ -81,12 +81,24 @@ fn test_csv_output() {
 }
 
 #[test]
-fn test_per_crate_output() {
-    let (stdout, _, success) = run_rustloc(&[".", "--per-crate"]);
+fn test_by_crate_output() {
+    let (stdout, _, success) = run_rustloc(&[".", "--by-crate"]);
 
     assert!(success);
-    assert!(stdout.contains("Per-crate breakdown:"));
+    assert!(stdout.contains("By-crate breakdown:"));
     assert!(stdout.contains("rustloclib"));
+    assert!(stdout.contains("rustloc"));
+    assert!(stdout.contains("Total ("));
+}
+
+#[test]
+fn test_by_module_output() {
+    let (stdout, _, success) = run_rustloc(&[".", "--by-module"]);
+
+    assert!(success);
+    assert!(stdout.contains("By-module breakdown:"));
+    assert!(stdout.contains("rustloclib::counter"));
+    assert!(stdout.contains("rustloclib::diff"));
     assert!(stdout.contains("rustloc"));
     assert!(stdout.contains("Total ("));
 }
@@ -118,14 +130,14 @@ fn test_diff_help() {
     assert!(success);
     assert!(stdout.contains("diff"));
     assert!(stdout.contains("Commit range"));
-    assert!(stdout.contains("--per-file"));
-    assert!(stdout.contains("--per-crate"));
+    assert!(stdout.contains("--by-file"));
+    assert!(stdout.contains("--by-crate"));
 }
 
 #[test]
 fn test_diff_table_output() {
     // Use known commits from the repo
-    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~1..HEAD"]);
+    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD"]);
 
     assert!(success, "diff command should succeed");
     assert!(stdout.contains("Diff:"));
@@ -140,7 +152,7 @@ fn test_diff_table_output() {
 #[test]
 fn test_diff_with_separate_commits() {
     // Test using two separate commit arguments
-    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~1", "HEAD"]);
+    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5", "HEAD"]);
 
     assert!(success);
     assert!(stdout.contains("Diff:"));
@@ -149,7 +161,7 @@ fn test_diff_with_separate_commits() {
 
 #[test]
 fn test_diff_json_output() {
-    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~1..HEAD", "--format", "json"]);
+    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--output", "json"]);
 
     assert!(success);
     assert!(stdout.contains("\"from_commit\""));
@@ -169,7 +181,7 @@ fn test_diff_json_output() {
 
 #[test]
 fn test_diff_csv_output() {
-    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~1..HEAD", "--format", "csv"]);
+    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--output", "csv"]);
 
     assert!(success);
     assert!(stdout.contains("type,name,change,code_added,code_removed,code_net"));
@@ -179,11 +191,11 @@ fn test_diff_csv_output() {
 }
 
 #[test]
-fn test_diff_per_file() {
-    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~1..HEAD", "--per-file"]);
+fn test_diff_by_file() {
+    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--by-file"]);
 
     assert!(success);
-    assert!(stdout.contains("Per-file breakdown:"));
+    assert!(stdout.contains("By-file breakdown:"));
     assert!(stdout.contains("Change"));
     // Should show file change markers
     assert!(stdout.contains("M") || stdout.contains("+") || stdout.contains("-"));

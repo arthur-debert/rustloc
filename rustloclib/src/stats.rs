@@ -178,6 +178,39 @@ impl FileStats {
     }
 }
 
+/// Statistics for a Rust module.
+///
+/// A module aggregates files at the directory level. In Rust's new-style module syntax:
+/// - `foo/` directory and its sibling `foo.rs` file together form module "foo"
+/// - `foo/bar.rs` is submodule "foo::bar"
+/// - Files in `foo/` without a sibling `foo.rs` are still grouped under "foo"
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModuleStats {
+    /// Module path (e.g., "foo", "foo::bar", or "" for root)
+    pub name: String,
+    /// Aggregated LOC statistics
+    pub stats: LocStats,
+    /// Files belonging to this module
+    pub files: Vec<PathBuf>,
+}
+
+impl ModuleStats {
+    /// Create new module stats
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            stats: LocStats::new(),
+            files: Vec::new(),
+        }
+    }
+
+    /// Add stats from a file to this module
+    pub fn add_file(&mut self, path: PathBuf, stats: LocStats) {
+        self.stats += stats;
+        self.files.push(path);
+    }
+}
+
 /// Statistics for a crate within a workspace
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CrateStats {
