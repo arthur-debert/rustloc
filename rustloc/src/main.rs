@@ -34,6 +34,12 @@
 //! # Diff between commits
 //! rustloc diff HEAD~5..HEAD
 //! rustloc diff main feature-branch
+//!
+//! # Diff working directory changes (like git diff)
+//! rustloc diff
+//!
+//! # Diff only staged changes (like git diff --cached)
+//! rustloc diff --staged
 //! ```
 //!
 //! ## Origins
@@ -46,8 +52,8 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use rustloclib::{
-    count_workspace, diff_commits, Aggregation, Contexts, CountOptions, CountResult, DiffOptions,
-    DiffResult, FilterConfig, LocStats, LocStatsDiff, LocsDiff,
+    count_workspace, diff_commits, diff_workdir, Aggregation, Contexts, CountOptions, CountResult,
+    DiffOptions, DiffResult, FilterConfig, LocStats, LocStatsDiff, LocsDiff, WorkdirDiffMode,
 };
 
 /// Rust-aware lines of code counter with test/code separation
@@ -97,9 +103,9 @@ struct CountArgs {
 /// Arguments for the diff command
 #[derive(Args, Debug)]
 struct DiffArgs {
-    /// Commit range (e.g., HEAD~5..HEAD) or base commit
-    #[arg(required = true)]
-    from: String,
+    /// Commit range (e.g., HEAD~5..HEAD) or base commit.
+    /// If omitted, shows working directory changes vs HEAD.
+    from: Option<String>,
 
     /// Target commit (optional if using range syntax like HEAD~5..HEAD)
     to: Option<String>,
@@ -107,6 +113,11 @@ struct DiffArgs {
     /// Path to repository (defaults to current directory)
     #[arg(short, long, default_value = ".")]
     path: String,
+
+    /// Show only staged changes (like git diff --cached).
+    /// Only valid when comparing working directory (no commit args).
+    #[arg(long, visible_alias = "cached")]
+    staged: bool,
 
     #[command(flatten)]
     common: CommonArgs,
@@ -265,9 +276,6 @@ fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_diff(args: DiffArgs) -> Result<(), Box<dyn std::error::Error>> {
-    // Parse commit range - support both "from..to" and "from to" syntax
-    let (from, to) = parse_commit_range(&args.from, args.to.as_deref())?;
-
     let filter = build_filter(&args.common)?;
     let contexts = to_contexts(&args.common.types);
     let base_path = std::fs::canonicalize(&args.path)?;
@@ -287,7 +295,23 @@ fn run_diff(args: DiffArgs) -> Result<(), Box<dyn std::error::Error>> {
         .aggregation(aggregation)
         .contexts(contexts);
 
-    let result = diff_commits(&args.path, &from, &to, options)?;
+    // Determine if this is a working directory diff or commit diff
+    let result = if args.from.is_none() {
+        // No commit args - diff working directory
+        let mode = if args.staged {
+            WorkdirDiffMode::Staged
+        } else {
+            WorkdirDiffMode::All
+        };
+        diff_workdir(&args.path, mode, options)?
+    } else {
+        // Commit args provided - diff between commits
+        if args.staged {
+            return Err("--staged/--cached can only be used without commit arguments".into());
+        }
+        let (from, to) = parse_commit_range(args.from.as_deref().unwrap(), args.to.as_deref())?;
+        diff_commits(&args.path, &from, &to, options)?
+    };
 
     match args.common.output {
         OutputFormat::Table => {

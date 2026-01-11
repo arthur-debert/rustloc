@@ -72,8 +72,8 @@ pub mod workspace;
 
 pub use counter::{count_directory, count_file, count_workspace, CountOptions, CountResult};
 pub use diff::{
-    diff_commits, CrateDiffStats, DiffOptions, DiffResult, FileChangeType, FileDiffStats,
-    LocStatsDiff, LocsDiff,
+    diff_commits, diff_workdir, CrateDiffStats, DiffOptions, DiffResult, FileChangeType,
+    FileDiffStats, LocStatsDiff, LocsDiff, WorkdirDiffMode,
 };
 pub use error::RustlocError;
 pub use filter::FilterConfig;
