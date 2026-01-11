@@ -109,19 +109,29 @@ impl CountResult {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust
 /// use rustloclib::{count_workspace, CountOptions, FilterConfig};
+/// use std::fs;
+/// use tempfile::tempdir;
+///
+/// let dir = tempdir().unwrap();
+/// fs::write(dir.path().join("Cargo.toml"), r#"
+/// [package]
+/// name = "my-lib"
+/// version = "0.1.0"
+/// edition = "2021"
+/// "#).unwrap();
+/// fs::create_dir(dir.path().join("src")).unwrap();
+/// fs::write(dir.path().join("src/lib.rs"), "pub fn hello() {}\n").unwrap();
 ///
 /// // Count all crates in the workspace
-/// let result = count_workspace(".", CountOptions::new())?;
+/// let result = count_workspace(dir.path(), CountOptions::new()).unwrap();
+/// assert_eq!(result.crates.len(), 0); // Total aggregation doesn't include crate breakdown
+/// assert!(result.total.code.logic >= 1);
 ///
-/// // Count specific crates only
-/// let result = count_workspace(".", CountOptions::new()
-///     .crates(vec!["my-lib".to_string()]))?;
-///
-/// // Exclude test files
-/// let filter = FilterConfig::new().exclude("**/tests/**")?;
-/// let result = count_workspace(".", CountOptions::new().filter(filter))?;
+/// // Exclude test files with filter
+/// let filter = FilterConfig::new().exclude("**/tests/**").unwrap();
+/// let result = count_workspace(dir.path(), CountOptions::new().filter(filter)).unwrap();
 /// ```
 pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<CountResult> {
     let workspace = WorkspaceInfo::discover(path)?;
@@ -280,11 +290,20 @@ fn count_crate(crate_info: &CrateInfo, options: &CountOptions) -> Result<CrateSt
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust
 /// use rustloclib::{count_directory, FilterConfig};
+/// use std::fs;
+/// use tempfile::tempdir;
+///
+/// let dir = tempdir().unwrap();
+/// let src = dir.path().join("src");
+/// fs::create_dir(&src).unwrap();
+/// fs::write(src.join("lib.rs"), "pub fn hello() {}\n").unwrap();
+/// fs::write(src.join("util.rs"), "pub fn util() {\n    // helper\n}\n").unwrap();
 ///
 /// let filter = FilterConfig::new();
-/// let result = count_directory("src/", &filter)?;
+/// let result = count_directory(&src, &filter).unwrap();
+/// assert_eq!(result.files.len(), 2);
 /// ```
 pub fn count_directory(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<CountResult> {
     let path = path.as_ref();
@@ -310,11 +329,17 @@ pub fn count_directory(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust
 /// use rustloclib::count_file;
+/// use std::fs;
+/// use tempfile::tempdir;
 ///
-/// let stats = count_file("src/main.rs")?;
-/// println!("Code: {}, Tests: {}", stats.main.code, stats.tests.code);
+/// let dir = tempdir().unwrap();
+/// let file_path = dir.path().join("main.rs");
+/// fs::write(&file_path, "fn main() {\n    println!(\"Hello\");\n}\n").unwrap();
+///
+/// let stats = count_file(&file_path).unwrap();
+/// assert_eq!(stats.code.logic, 3);
 /// ```
 pub fn count_file(path: impl AsRef<Path>) -> Result<LocStats> {
     parse_file(path)

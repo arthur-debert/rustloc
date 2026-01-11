@@ -514,11 +514,17 @@ impl<T: Read> Visitor<T> {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust
 /// use rustloclib::visitor::parse_file;
+/// use std::fs;
+/// use tempfile::tempdir;
 ///
-/// let stats = parse_file("src/main.rs")?;
-/// println!("Code: {}, Tests: {}", stats.code.logic, stats.tests.logic);
+/// let dir = tempdir().unwrap();
+/// let file_path = dir.path().join("main.rs");
+/// fs::write(&file_path, "fn main() {\n    println!(\"Hello\");\n}\n").unwrap();
+///
+/// let stats = parse_file(&file_path).unwrap();
+/// assert_eq!(stats.code.logic, 3);
 /// ```
 pub fn parse_file(path: impl AsRef<Path>) -> Result<LocStats> {
     let visitor = Visitor::new(path, false)?;

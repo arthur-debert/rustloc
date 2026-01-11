@@ -31,20 +31,34 @@
 //!
 //! ## Example
 //!
-//! ```rust,ignore
+//! ```rust
 //! use rustloclib::{count_file, count_workspace, CountOptions, FilterConfig};
+//! use std::fs;
+//! use tempfile::tempdir;
+//!
+//! // Set up a temporary project
+//! let dir = tempdir().unwrap();
+//! fs::write(dir.path().join("Cargo.toml"), r#"
+//! [package]
+//! name = "my-lib"
+//! version = "0.1.0"
+//! edition = "2021"
+//! "#).unwrap();
+//! fs::create_dir(dir.path().join("src")).unwrap();
+//! let file_path = dir.path().join("src/lib.rs");
+//! fs::write(&file_path, "pub fn hello() {\n    println!(\"Hi\");\n}\n").unwrap();
 //!
 //! // Count a single file
-//! let stats = count_file("src/main.rs")?;
+//! let stats = count_file(&file_path).unwrap();
+//! assert_eq!(stats.code.logic, 3);
 //!
 //! // Count an entire workspace
-//! let result = count_workspace(".", CountOptions::new())?;
+//! let result = count_workspace(dir.path(), CountOptions::new()).unwrap();
+//! assert!(result.total.code.logic >= 1);
 //!
-//! // Count specific crates with filtering
-//! let filter = FilterConfig::new().exclude("**/generated/**")?;
-//! let result = count_workspace(".", CountOptions::new()
-//!     .crates(vec!["my-lib".to_string()])
-//!     .filter(filter))?;
+//! // Count with filtering
+//! let filter = FilterConfig::new().exclude("**/generated/**").unwrap();
+//! let result = count_workspace(dir.path(), CountOptions::new().filter(filter)).unwrap();
 //! ```
 
 pub mod counter;
