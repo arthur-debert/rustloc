@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Working directory diff support: `rustloc diff` now shows uncommitted changes vs HEAD
+- `--staged`/`--cached` flag to show only staged changes (like `git diff --cached`)
+
 ## [0.3.1] - 2026-01-11
 
 ## [0.3.0] - 2026-01-10
