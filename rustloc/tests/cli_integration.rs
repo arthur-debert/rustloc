@@ -214,3 +214,73 @@ fn test_diff_same_commit() {
     assert!(success);
     assert!(stdout.contains("Files changed: 0"));
 }
+
+// ============================================================================
+// Working directory diff tests
+// ============================================================================
+
+#[test]
+fn test_diff_workdir() {
+    // Diff without commit args should show working directory changes
+    let (stdout, _, success) = run_rustloc(&["diff"]);
+
+    assert!(success, "diff without args should succeed");
+    assert!(stdout.contains("Diff: HEAD"));
+    assert!(stdout.contains("working tree"));
+    assert!(stdout.contains("Files changed:"));
+}
+
+#[test]
+fn test_diff_workdir_staged() {
+    // Diff with --staged should show staged changes vs HEAD
+    let (stdout, _, success) = run_rustloc(&["diff", "--staged"]);
+
+    assert!(success, "diff --staged should succeed");
+    assert!(stdout.contains("Diff: HEAD"));
+    assert!(stdout.contains("index"));
+    assert!(stdout.contains("Files changed:"));
+}
+
+#[test]
+fn test_diff_workdir_cached_alias() {
+    // --cached should work as an alias for --staged
+    let (stdout, _, success) = run_rustloc(&["diff", "--cached"]);
+
+    assert!(success, "diff --cached should succeed");
+    assert!(stdout.contains("Diff: HEAD"));
+    assert!(stdout.contains("index"));
+}
+
+#[test]
+fn test_diff_workdir_json() {
+    let (stdout, _, success) = run_rustloc(&["diff", "--output", "json"]);
+
+    assert!(success);
+    assert!(stdout.contains("\"from_commit\""));
+    assert!(stdout.contains("\"to_commit\""));
+    assert!(stdout.contains("\"HEAD\""));
+    assert!(stdout.contains("\"working tree\""));
+
+    // Verify it's valid JSON
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON output");
+    assert_eq!(parsed["from_commit"], "HEAD");
+    assert_eq!(parsed["to_commit"], "working tree");
+}
+
+#[test]
+fn test_diff_workdir_by_file() {
+    let (stdout, _, success) = run_rustloc(&["diff", "--by-file"]);
+
+    assert!(success);
+    // Should still show working tree diff
+    assert!(stdout.contains("working tree"));
+}
+
+#[test]
+fn test_diff_staged_with_commits_error() {
+    // Using --staged with commit args should fail
+    let (_, stderr, success) = run_rustloc(&["diff", "HEAD~1", "--staged"]);
+
+    assert!(!success);
+    assert!(stderr.contains("--staged") || stderr.contains("--cached"));
+}

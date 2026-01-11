@@ -594,12 +594,23 @@ fn collect_workdir_changes(
     let mut head_entries: HashMap<PathBuf, gix::ObjectId> = HashMap::new();
     collect_tree_entries(repo, head_tree, PathBuf::new(), &mut head_entries)?;
 
+    // Get the set of tracked files from the index to check for untracked files
+    let index = repo
+        .index()
+        .map_err(|e| RustlocError::GitError(format!("Failed to read index: {}", e)))?;
+    let tracked_paths: HashSet<PathBuf> = index
+        .entries()
+        .iter()
+        .map(|e| PathBuf::from(gix::path::from_bstr(e.path(&index))))
+        .collect();
+
     // Walk the working directory for .rs files
     let walker = walkdir::WalkDir::new(repo_root)
         .into_iter()
         .filter_entry(|e| {
-            // Skip .git directory
-            e.file_name().to_str().is_none_or(|s| s != ".git")
+            let name = e.file_name().to_str();
+            // Skip .git directory and target directory (cargo build output)
+            name.is_none_or(|s| s != ".git" && s != "target")
         });
 
     for entry in walker.filter_map(|e| e.ok()) {
@@ -617,6 +628,12 @@ fn collect_workdir_changes(
             .strip_prefix(repo_root)
             .unwrap_or(abs_path)
             .to_path_buf();
+
+        // Skip untracked files (not in index and not in HEAD)
+        // We only want to show changes to tracked files or staged new files
+        if !tracked_paths.contains(&rel_path) && !head_entries.contains_key(&rel_path) {
+            continue;
+        }
 
         seen_paths.insert(rel_path.clone());
 
@@ -640,7 +657,7 @@ fn collect_workdir_changes(
             }
             // If equal, no change
         } else {
-            // File not in HEAD (added/untracked)
+            // File not in HEAD but is tracked (staged new file)
             changes.push(WorkdirFileChange {
                 path: rel_path,
                 change_type: FileChangeType::Added,
