@@ -1,0 +1,21 @@
+# cargo-release configuration for rustloclib
+# This crate is released together with rustloc
+
+# Use standard v prefix for tags (shared with rustloc)
+tag-prefix = "v"
+tag-name = "v{{version}}"
+
+# Don't create separate tags for the library (rustloc tag covers both)
+tag = false
+
+# Commit message format
+pre-release-commit-message = "chore: Release v{{version}}"
+
+# Publish to crates.io
+publish = true
+
+# Enable dependent version bumps
+dependent-version = "upgrade"
+
+# Consolidate commits in workspace
+consolidate-commits = true

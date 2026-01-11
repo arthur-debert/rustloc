@@ -1,0 +1,32 @@
+# cargo-release configuration for rustloc
+# Run from workspace root: cargo release patch --package rustloc
+
+# Use standard v prefix for tags
+tag-prefix = "v"
+tag-name = "v{{version}}"
+
+# Sign commits and tags
+sign-commit = false
+sign-tag = false
+
+# Push to remote
+push = true
+push-remote = "origin"
+
+# Changelog configuration
+pre-release-replacements = [
+    { file = "../CHANGELOG.md", search = "## \\[Unreleased\\]", replace = "## [Unreleased]\n\n## [{{version}}] - {{date}}", exactly = 1 },
+    { file = "../CHANGELOG.md", search = "\\[Unreleased\\]: https://github.com/arthur-debert/rustloc/compare/v(.+)\\.\\.\\.HEAD", replace = "[Unreleased]: https://github.com/arthur-debert/rustloc/compare/v{{version}}...HEAD\n[{{version}}]: https://github.com/arthur-debert/rustloc/compare/v$1...v{{version}}", exactly = 1 },
+]
+
+# Commit message format
+pre-release-commit-message = "chore: Release v{{version}}"
+
+# Publish to crates.io
+publish = true
+
+# Enable dependent version bumps
+dependent-version = "upgrade"
+
+# Consolidate commits in workspace
+consolidate-commits = true
