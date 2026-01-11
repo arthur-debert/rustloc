@@ -1,7 +1,8 @@
-//! Git diff analysis for LOC changes between commits.
+//! Git diff analysis for LOC changes between commits and working directory.
 //!
-//! This module provides functionality to compute LOC differences between two git commits,
-//! leveraging the existing parsing and filtering infrastructure.
+//! This module provides functionality to compute LOC differences between:
+//! - Two git commits (using `diff_commits`)
+//! - Working directory and HEAD or index (using `diff_workdir`)
 //!
 //! ## Design Principle
 //!
@@ -332,6 +333,397 @@ impl DiffOptions {
         self.contexts = contexts;
         self
     }
+}
+
+/// Mode for working directory diff.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WorkdirDiffMode {
+    /// Compare HEAD with working directory (all uncommitted changes).
+    /// This is equivalent to `git diff HEAD`.
+    #[default]
+    All,
+    /// Compare HEAD with the staging area/index (staged changes only).
+    /// This is equivalent to `git diff --cached` or `git diff --staged`.
+    Staged,
+}
+
+/// Compute LOC diff for working directory changes.
+///
+/// This function compares the current working directory against HEAD or the index,
+/// similar to `git diff` or `git diff --cached`.
+///
+/// # Arguments
+///
+/// * `repo_path` - Path to the git repository (or any path within it)
+/// * `mode` - Whether to show all uncommitted changes or only staged changes
+/// * `options` - Diff options including filters
+///
+/// # Returns
+///
+/// A `DiffResult` containing the LOC changes. The `from_commit` field will be "HEAD"
+/// and `to_commit` will be "working tree" or "index" depending on the mode.
+pub fn diff_workdir(
+    repo_path: impl AsRef<Path>,
+    mode: WorkdirDiffMode,
+    options: DiffOptions,
+) -> Result<DiffResult> {
+    let repo_path = repo_path.as_ref();
+
+    // Open the git repository
+    let repo = gix::discover(repo_path)
+        .map_err(|e| RustlocError::GitError(format!("Failed to discover git repository: {}", e)))?;
+
+    let repo_root = repo
+        .work_dir()
+        .ok_or_else(|| RustlocError::GitError("Repository has no work directory".to_string()))?
+        .to_path_buf();
+
+    // Get HEAD commit and its tree
+    let head_commit = repo
+        .head_commit()
+        .map_err(|e| RustlocError::GitError(format!("Failed to get HEAD commit: {}", e)))?;
+
+    let head_tree = head_commit
+        .tree()
+        .map_err(|e| RustlocError::GitError(format!("Failed to get HEAD tree: {}", e)))?;
+
+    // Get the index
+    let index = repo
+        .index()
+        .map_err(|e| RustlocError::GitError(format!("Failed to read index: {}", e)))?;
+
+    // Collect changes based on mode
+    let changes = match mode {
+        WorkdirDiffMode::Staged => {
+            // Compare HEAD tree with index (staged changes)
+            collect_staged_changes(&repo, &head_tree, &index)?
+        }
+        WorkdirDiffMode::All => {
+            // Compare HEAD tree with working directory (all uncommitted changes)
+            collect_workdir_changes(&repo, &head_tree, &repo_root)?
+        }
+    };
+
+    // Try to discover workspace info for crate grouping
+    let workspace = WorkspaceInfo::discover(&repo_root).ok();
+
+    // Apply crate filter if specified
+    let filtered_workspace = workspace.as_ref().map(|ws| {
+        if options.crate_filter.is_empty() {
+            ws.clone()
+        } else {
+            let names: Vec<&str> = options.crate_filter.iter().map(|s| s.as_str()).collect();
+            ws.filter_by_names(&names)
+        }
+    });
+
+    // Process changes
+    let mut total = LocStatsDiff::new();
+    let mut files = Vec::new();
+    let mut crate_stats: HashMap<String, CrateDiffStats> = HashMap::new();
+
+    // Determine what to include based on aggregation level
+    let include_files = matches!(options.aggregation, Aggregation::ByFile);
+    let include_crates = matches!(
+        options.aggregation,
+        Aggregation::ByCrate | Aggregation::ByFile
+    );
+
+    for change in changes {
+        let path = change.path.clone();
+
+        // Apply glob filter using centralized FilterConfig
+        if !options.file_filter.matches(&path) {
+            continue;
+        }
+
+        // Determine which crate this file belongs to (if any)
+        let crate_info = filtered_workspace
+            .as_ref()
+            .and_then(|ws| ws.crate_for_path(&path));
+
+        // If crate filter is active and file doesn't belong to a filtered crate, skip
+        if !options.crate_filter.is_empty() && crate_info.is_none() {
+            continue;
+        }
+
+        // Compute file diff
+        let file_diff = compute_workdir_file_diff(&change, &path)?;
+
+        // Aggregate into total
+        total += file_diff.diff.clone();
+
+        // Aggregate into crate stats if applicable
+        if include_crates {
+            if let Some(crate_info) = crate_info {
+                let crate_stats_entry =
+                    crate_stats
+                        .entry(crate_info.name.clone())
+                        .or_insert_with(|| {
+                            CrateDiffStats::new(crate_info.name.clone(), crate_info.root.clone())
+                        });
+
+                if include_files {
+                    crate_stats_entry.add_file(file_diff.clone());
+                } else {
+                    crate_stats_entry.diff += file_diff.diff.clone();
+                }
+            }
+        }
+
+        // Collect file stats if requested
+        if include_files {
+            files.push(file_diff);
+        }
+    }
+
+    // Convert crate stats map to vec
+    let crates: Vec<CrateDiffStats> = crate_stats.into_values().collect();
+
+    // Build result and apply context filter
+    let (from_label, to_label) = match mode {
+        WorkdirDiffMode::All => ("HEAD", "working tree"),
+        WorkdirDiffMode::Staged => ("HEAD", "index"),
+    };
+
+    let result = DiffResult {
+        from_commit: from_label.to_string(),
+        to_commit: to_label.to_string(),
+        total,
+        crates,
+        files,
+    };
+
+    Ok(result.filter(options.contexts))
+}
+
+/// Internal representation of a working directory file change
+struct WorkdirFileChange {
+    path: PathBuf,
+    change_type: FileChangeType,
+    /// Content from HEAD/index (None for added files)
+    old_content: Option<String>,
+    /// Content from working directory/index (None for deleted files)
+    new_content: Option<String>,
+}
+
+/// Collect staged changes (HEAD vs index)
+fn collect_staged_changes(
+    repo: &gix::Repository,
+    head_tree: &gix::Tree<'_>,
+    index: &gix::worktree::Index,
+) -> Result<Vec<WorkdirFileChange>> {
+    use std::collections::HashSet;
+
+    let mut changes = Vec::new();
+    let mut seen_paths: HashSet<PathBuf> = HashSet::new();
+
+    // Build a map of HEAD tree entries for comparison
+    let mut head_entries: HashMap<PathBuf, gix::ObjectId> = HashMap::new();
+    collect_tree_entries(repo, head_tree, PathBuf::new(), &mut head_entries)?;
+
+    // Check each entry in the index against HEAD
+    for entry in index.entries() {
+        let path = PathBuf::from(gix::path::from_bstr(entry.path(index)));
+
+        // Only process .rs files
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+
+        seen_paths.insert(path.clone());
+        let index_oid = entry.id;
+
+        if let Some(&head_oid) = head_entries.get(&path) {
+            // File exists in both HEAD and index
+            if head_oid != index_oid {
+                // Modified
+                let old_content = read_blob(repo, head_oid)?;
+                let new_content = read_blob(repo, index_oid)?;
+                changes.push(WorkdirFileChange {
+                    path,
+                    change_type: FileChangeType::Modified,
+                    old_content: Some(old_content),
+                    new_content: Some(new_content),
+                });
+            }
+            // If equal, no change
+        } else {
+            // File only in index (added)
+            let new_content = read_blob(repo, index_oid)?;
+            changes.push(WorkdirFileChange {
+                path,
+                change_type: FileChangeType::Added,
+                old_content: None,
+                new_content: Some(new_content),
+            });
+        }
+    }
+
+    // Check for files in HEAD that are not in index (deleted)
+    for (path, head_oid) in head_entries {
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        if !seen_paths.contains(&path) {
+            let old_content = read_blob(repo, head_oid)?;
+            changes.push(WorkdirFileChange {
+                path,
+                change_type: FileChangeType::Deleted,
+                old_content: Some(old_content),
+                new_content: None,
+            });
+        }
+    }
+
+    Ok(changes)
+}
+
+/// Collect all uncommitted changes (HEAD vs working directory)
+fn collect_workdir_changes(
+    repo: &gix::Repository,
+    head_tree: &gix::Tree<'_>,
+    repo_root: &Path,
+) -> Result<Vec<WorkdirFileChange>> {
+    use std::collections::HashSet;
+
+    let mut changes = Vec::new();
+    let mut seen_paths: HashSet<PathBuf> = HashSet::new();
+
+    // Build a map of HEAD tree entries
+    let mut head_entries: HashMap<PathBuf, gix::ObjectId> = HashMap::new();
+    collect_tree_entries(repo, head_tree, PathBuf::new(), &mut head_entries)?;
+
+    // Walk the working directory for .rs files
+    let walker = walkdir::WalkDir::new(repo_root)
+        .into_iter()
+        .filter_entry(|e| {
+            // Skip .git directory
+            e.file_name().to_str().is_none_or(|s| s != ".git")
+        });
+
+    for entry in walker.filter_map(|e| e.ok()) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let abs_path = entry.path();
+        if abs_path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+
+        // Get relative path from repo root
+        let rel_path = abs_path
+            .strip_prefix(repo_root)
+            .unwrap_or(abs_path)
+            .to_path_buf();
+
+        seen_paths.insert(rel_path.clone());
+
+        // Read working directory content
+        let workdir_content = match std::fs::read_to_string(abs_path) {
+            Ok(content) => content,
+            Err(_) => continue, // Skip files we can't read
+        };
+
+        if let Some(&head_oid) = head_entries.get(&rel_path) {
+            // File exists in HEAD
+            let head_content = read_blob(repo, head_oid)?;
+            if head_content != workdir_content {
+                // Modified
+                changes.push(WorkdirFileChange {
+                    path: rel_path,
+                    change_type: FileChangeType::Modified,
+                    old_content: Some(head_content),
+                    new_content: Some(workdir_content),
+                });
+            }
+            // If equal, no change
+        } else {
+            // File not in HEAD (added/untracked)
+            changes.push(WorkdirFileChange {
+                path: rel_path,
+                change_type: FileChangeType::Added,
+                old_content: None,
+                new_content: Some(workdir_content),
+            });
+        }
+    }
+
+    // Check for files in HEAD that are not in working directory (deleted)
+    for (path, head_oid) in head_entries {
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        if !seen_paths.contains(&path) {
+            let old_content = read_blob(repo, head_oid)?;
+            changes.push(WorkdirFileChange {
+                path,
+                change_type: FileChangeType::Deleted,
+                old_content: Some(old_content),
+                new_content: None,
+            });
+        }
+    }
+
+    Ok(changes)
+}
+
+/// Recursively collect all blob entries from a tree
+fn collect_tree_entries(
+    repo: &gix::Repository,
+    tree: &gix::Tree<'_>,
+    prefix: PathBuf,
+    entries: &mut HashMap<PathBuf, gix::ObjectId>,
+) -> Result<()> {
+    for entry in tree.iter() {
+        let entry = entry
+            .map_err(|e| RustlocError::GitError(format!("Failed to read tree entry: {}", e)))?;
+
+        let name = gix::path::from_bstr(entry.filename());
+        let path = prefix.join(name);
+
+        if entry.mode().is_blob() {
+            entries.insert(path, entry.oid().to_owned());
+        } else if entry.mode().is_tree() {
+            let subtree = repo
+                .find_object(entry.oid())
+                .map_err(|e| RustlocError::GitError(format!("Failed to find tree: {}", e)))?
+                .try_into_tree()
+                .map_err(|_| RustlocError::GitError("Object is not a tree".to_string()))?;
+            collect_tree_entries(repo, &subtree, path, entries)?;
+        }
+    }
+    Ok(())
+}
+
+/// Compute the LOC diff for a working directory file change
+fn compute_workdir_file_diff(change: &WorkdirFileChange, path: &Path) -> Result<FileDiffStats> {
+    let context = VisitorContext::from_file_path(path);
+
+    let (old_stats, new_stats) = match change.change_type {
+        FileChangeType::Added => {
+            let stats = parse_string(change.new_content.as_ref().unwrap(), context);
+            (LocStats::new(), stats)
+        }
+        FileChangeType::Deleted => {
+            let stats = parse_string(change.old_content.as_ref().unwrap(), context);
+            (stats, LocStats::new())
+        }
+        FileChangeType::Modified => {
+            let old_stats = parse_string(change.old_content.as_ref().unwrap(), context);
+            let new_stats = parse_string(change.new_content.as_ref().unwrap(), context);
+            (old_stats, new_stats)
+        }
+    };
+
+    let diff = compute_stats_diff(&old_stats, &new_stats);
+
+    Ok(FileDiffStats {
+        path: path.to_path_buf(),
+        change_type: change.change_type,
+        diff,
+    })
 }
 
 /// Compute LOC diff between two git commits.
@@ -1042,6 +1434,113 @@ mod tests {
             assert!(
                 !path_str.contains("/tests/"),
                 "File {:?} should not be in tests directory",
+                file.path
+            );
+        }
+    }
+
+    // Working directory diff tests
+
+    #[test]
+    fn test_workdir_diff_mode_default() {
+        assert_eq!(WorkdirDiffMode::default(), WorkdirDiffMode::All);
+    }
+
+    #[test]
+    fn test_diff_workdir_clean_repo() {
+        // In a clean repo (no uncommitted changes), diff should be empty
+        // This test assumes we're running in a clean state (which may not always be true)
+        let result = diff_workdir(".", WorkdirDiffMode::All, DiffOptions::new());
+
+        // Should succeed in a git repository
+        assert!(
+            result.is_ok(),
+            "diff_workdir should succeed: {:?}",
+            result.err()
+        );
+
+        let diff = result.unwrap();
+        assert_eq!(diff.from_commit, "HEAD");
+        assert_eq!(diff.to_commit, "working tree");
+    }
+
+    #[test]
+    fn test_diff_workdir_staged_mode() {
+        // Test staged mode returns correct labels
+        let result = diff_workdir(".", WorkdirDiffMode::Staged, DiffOptions::new());
+
+        assert!(
+            result.is_ok(),
+            "diff_workdir staged should succeed: {:?}",
+            result.err()
+        );
+
+        let diff = result.unwrap();
+        assert_eq!(diff.from_commit, "HEAD");
+        assert_eq!(diff.to_commit, "index");
+    }
+
+    #[test]
+    fn test_diff_workdir_not_git_repo() {
+        // Try to diff in a non-git directory
+        let result = diff_workdir("/tmp", WorkdirDiffMode::All, DiffOptions::new());
+
+        // Should fail - /tmp is not a git repo
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_diff_workdir_with_aggregation() {
+        // Test with file aggregation
+        let options = DiffOptions::new().aggregation(Aggregation::ByFile);
+        let result = diff_workdir(".", WorkdirDiffMode::All, options);
+
+        assert!(result.is_ok());
+        // Structure is correct if we got here
+    }
+
+    #[test]
+    fn test_diff_workdir_with_crate_filter() {
+        // Test with crate filter
+        let options = DiffOptions::new()
+            .crates(vec!["rustloclib".to_string()])
+            .aggregation(Aggregation::ByFile);
+
+        let result = diff_workdir(".", WorkdirDiffMode::All, options);
+        assert!(result.is_ok());
+
+        let diff = result.unwrap();
+        // All files should be in the rustloclib crate (if any changes)
+        for file in &diff.files {
+            let path_str = file.path.to_string_lossy();
+            assert!(
+                path_str.contains("rustloclib") || path_str.starts_with("rustloclib"),
+                "File {:?} should be in rustloclib crate",
+                file.path
+            );
+        }
+    }
+
+    #[test]
+    fn test_diff_workdir_with_glob_filter() {
+        // Test with glob filter
+        let filter = FilterConfig::new()
+            .include("**/lib.rs")
+            .expect("valid pattern");
+
+        let options = DiffOptions::new()
+            .filter(filter)
+            .aggregation(Aggregation::ByFile);
+
+        let result = diff_workdir(".", WorkdirDiffMode::All, options);
+        assert!(result.is_ok());
+
+        let diff = result.unwrap();
+        // All files should match the pattern (if any)
+        for file in &diff.files {
+            assert!(
+                file.path.to_string_lossy().ends_with("lib.rs"),
+                "File {:?} should match lib.rs pattern",
                 file.path
             );
         }
