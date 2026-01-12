@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Get the latest release tag
-latest_tag=$(git tag --list --sort=-version:refname | head -n1)
+latest_tag=$(git tag --list --sort=-version:refname  | head -n1)
 
 if [ -z "$latest_tag" ]; then
   echo "No release tags found"
@@ -11,4 +11,4 @@ fi
 
 echo "Showing diff since latest release: $latest_tag"
 echo "─────────────────────────────────────────────"
-git --no-pager diff "$latest_tag"..HEAD
+git --no-pager log --oneline "$latest_tag"..HEAD
