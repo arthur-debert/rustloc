@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::RustlocError;
 use crate::filter::FilterConfig;
 use crate::options::{Aggregation, Contexts};
-use crate::stats::{LocStats, Locs};
+use crate::stats::{CellValue, LocStats, Locs, StatsRow};
 use crate::visitor::{parse_string, VisitorContext};
 use crate::workspace::WorkspaceInfo;
 use crate::Result;
@@ -146,6 +146,18 @@ impl LocStatsDiff {
             } else {
                 LocsDiff::default()
             },
+        }
+    }
+
+    /// Convert to a unified StatsRow for display
+    pub fn to_stats_row(&self, name: impl Into<String>) -> StatsRow {
+        StatsRow {
+            name: name.into(),
+            code: CellValue::diff(self.code.added.total(), self.code.removed.total()),
+            tests: CellValue::diff(self.tests.added.total(), self.tests.removed.total()),
+            examples: CellValue::diff(self.examples.added.total(), self.examples.removed.total()),
+            total: CellValue::diff(self.total_added().total(), self.total_removed().total()),
+            file_count: self.file_count,
         }
     }
 }

@@ -78,7 +78,7 @@ pub use diff::{
 pub use error::RustlocError;
 pub use filter::FilterConfig;
 pub use options::{Aggregation, Contexts};
-pub use stats::{CrateStats, FileStats, LocStats, Locs, ModuleStats};
+pub use stats::{CellValue, CrateStats, FileStats, LocStats, Locs, ModuleStats, StatsRow};
 pub use visitor::{parse_file, parse_string, VisitorContext};
 pub use workspace::{CrateInfo, WorkspaceInfo};
 

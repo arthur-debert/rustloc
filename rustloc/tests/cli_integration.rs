@@ -49,7 +49,8 @@ fn test_table_output() {
     assert!(stdout.contains("Tests"));
     assert!(stdout.contains("Examples"));
     assert!(stdout.contains("Total"));
-    assert!(stdout.contains("Files"));
+    // Total row shows file count in row name
+    assert!(stdout.contains("Total (") && stdout.contains("files)"));
 }
 
 #[test]
@@ -140,7 +141,8 @@ fn test_diff_table_output() {
 
     assert!(success, "diff command should succeed");
     assert!(stdout.contains("Diff:"));
-    assert!(stdout.contains("Files changed:"));
+    // Total row shows file count in row name (same layout as counts)
+    assert!(stdout.contains("Total (") && stdout.contains("files)"));
     assert!(stdout.contains("Code"));
     assert!(stdout.contains("Tests"));
     assert!(stdout.contains("Examples"));
@@ -155,7 +157,8 @@ fn test_diff_with_separate_commits() {
 
     assert!(success);
     assert!(stdout.contains("Diff:"));
-    assert!(stdout.contains("Files changed:"));
+    // Total row shows file count in row name (same layout as counts)
+    assert!(stdout.contains("Total (") && stdout.contains("files)"));
 }
 
 #[test]
@@ -181,10 +184,10 @@ fn test_diff_csv_output() {
     let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--output", "csv"]);
 
     assert!(success);
-    assert!(stdout.contains("type,name,change,logic_added,logic_removed,logic_net"));
-    assert!(stdout.contains("code,\"total\","));
-    assert!(stdout.contains("tests,\"total\","));
-    assert!(stdout.contains("total,\"total\","));
+    // New unified CSV format with context columns
+    assert!(stdout.contains("name,code_added,code_removed,code_net"));
+    assert!(stdout.contains("total_added,total_removed,total_net"));
+    assert!(stdout.contains("\"total\","));
 }
 
 #[test]
@@ -192,10 +195,12 @@ fn test_diff_by_file() {
     let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--by-file"]);
 
     assert!(success);
-    assert!(stdout.contains("By-file breakdown:"));
-    assert!(stdout.contains("Change"));
-    // Should show file change markers
-    assert!(stdout.contains("M") || stdout.contains("+") || stdout.contains("-"));
+    // New unified layout has File header and Code/Tests/Examples/Total columns
+    assert!(stdout.contains("File"));
+    assert!(stdout.contains("Code"));
+    assert!(stdout.contains("Total"));
+    // Should show diff format (+x/-y/z)
+    assert!(stdout.contains("+") && stdout.contains("/-"));
 }
 
 #[test]
@@ -212,7 +217,7 @@ fn test_diff_same_commit() {
     let (stdout, _, success) = run_rustloc(&["diff", "HEAD..HEAD"]);
 
     assert!(success);
-    assert!(stdout.contains("Files changed: 0"));
+    assert!(stdout.contains("Total (0 files)"));
 }
 
 // ============================================================================
@@ -227,7 +232,8 @@ fn test_diff_workdir() {
     assert!(success, "diff without args should succeed");
     assert!(stdout.contains("Diff: HEAD"));
     assert!(stdout.contains("working tree"));
-    assert!(stdout.contains("Files changed:"));
+    // Total row shows file count in row name (same layout as counts)
+    assert!(stdout.contains("Total (") && stdout.contains("files)"));
 }
 
 #[test]
@@ -238,7 +244,8 @@ fn test_diff_workdir_staged() {
     assert!(success, "diff --staged should succeed");
     assert!(stdout.contains("Diff: HEAD"));
     assert!(stdout.contains("index"));
-    assert!(stdout.contains("Files changed:"));
+    // Total row shows file count in row name (same layout as counts)
+    assert!(stdout.contains("Total (") && stdout.contains("files)"));
 }
 
 #[test]

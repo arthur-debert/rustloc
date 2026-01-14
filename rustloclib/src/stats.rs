@@ -5,6 +5,121 @@ use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::path::PathBuf;
 
+/// A cell value that can represent either a count or a diff.
+///
+/// This provides a unified interface for displaying both count and diff statistics
+/// using the same layout (rows = objects, columns = contexts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CellValue {
+    /// A simple count value
+    Count(u64),
+    /// A diff value with added and removed counts
+    Diff { added: u64, removed: u64 },
+}
+
+impl CellValue {
+    /// Create a count cell
+    pub fn count(value: u64) -> Self {
+        CellValue::Count(value)
+    }
+
+    /// Create a diff cell
+    pub fn diff(added: u64, removed: u64) -> Self {
+        CellValue::Diff { added, removed }
+    }
+
+    /// Get the net value (for counts, this is just the value; for diffs, added - removed)
+    pub fn net(&self) -> i64 {
+        match self {
+            CellValue::Count(v) => *v as i64,
+            CellValue::Diff { added, removed } => *added as i64 - *removed as i64,
+        }
+    }
+
+    /// Check if this is a count value
+    pub fn is_count(&self) -> bool {
+        matches!(self, CellValue::Count(_))
+    }
+
+    /// Check if this is a diff value
+    pub fn is_diff(&self) -> bool {
+        matches!(self, CellValue::Diff { .. })
+    }
+}
+
+impl Default for CellValue {
+    fn default() -> Self {
+        CellValue::Count(0)
+    }
+}
+
+impl std::fmt::Display for CellValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            CellValue::Count(v) => v.to_string(),
+            CellValue::Diff { added, removed } => {
+                let net = *added as i64 - *removed as i64;
+                format!("+{}/-{}/{}", added, removed, net)
+            }
+        };
+
+        // Respect width and alignment from the formatter
+        if let Some(width) = f.width() {
+            if f.align() == Some(std::fmt::Alignment::Left) {
+                write!(f, "{:<width$}", s, width = width)
+            } else {
+                write!(f, "{:>width$}", s, width = width)
+            }
+        } else {
+            write!(f, "{}", s)
+        }
+    }
+}
+
+/// A unified statistics row for display purposes.
+///
+/// This struct provides a common interface for displaying both count and diff statistics.
+/// Each cell (code, tests, examples, total) uses `CellValue` which can be either a count or diff.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatsRow {
+    /// Row label (file path, crate name, module name, or "Total")
+    pub name: String,
+    /// Production code cell
+    pub code: CellValue,
+    /// Test code cell
+    pub tests: CellValue,
+    /// Example code cell
+    pub examples: CellValue,
+    /// Total cell (sum of all contexts)
+    pub total: CellValue,
+    /// Number of files
+    pub file_count: u64,
+}
+
+impl StatsRow {
+    /// Create a new stats row from a count stats
+    pub fn from_count(name: impl Into<String>, stats: &LocStats) -> Self {
+        Self {
+            name: name.into(),
+            code: CellValue::count(stats.code.total()),
+            tests: CellValue::count(stats.tests.total()),
+            examples: CellValue::count(stats.examples.total()),
+            total: CellValue::count(stats.total()),
+            file_count: stats.file_count,
+        }
+    }
+
+    /// Check if all cells are counts
+    pub fn is_count(&self) -> bool {
+        self.code.is_count()
+    }
+
+    /// Check if all cells are diffs
+    pub fn is_diff(&self) -> bool {
+        self.code.is_diff()
+    }
+}
+
 /// Lines of code counts for a single context (code, tests, or examples)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Locs {
