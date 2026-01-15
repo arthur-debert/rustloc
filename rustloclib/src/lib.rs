@@ -67,6 +67,7 @@ pub mod error;
 pub mod filter;
 pub mod options;
 pub mod stats;
+pub mod table;
 pub mod visitor;
 pub mod workspace;
 
@@ -79,6 +80,7 @@ pub use error::RustlocError;
 pub use filter::FilterConfig;
 pub use options::{Aggregation, Contexts};
 pub use stats::{CellValue, CrateStats, FileStats, LocStats, Locs, ModuleStats, StatsRow};
+pub use table::{LOCTable, TableRow};
 pub use visitor::{parse_file, parse_string, VisitorContext};
 pub use workspace::{CrateInfo, WorkspaceInfo};
 

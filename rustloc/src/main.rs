@@ -54,8 +54,8 @@ use console::Style;
 use outstanding::cli::{App, CommandContext, HandlerResult, Output, RunResult};
 use outstanding::Theme;
 use rustloclib::{
-    count_workspace, diff_commits, diff_workdir, Aggregation, Contexts, CountOptions, CountResult,
-    DiffOptions, DiffResult, FilterConfig, WorkdirDiffMode,
+    count_workspace, diff_commits, diff_workdir, Aggregation, Contexts, CountOptions, DiffOptions,
+    FilterConfig, LOCTable, WorkdirDiffMode,
 };
 
 /// Include template at compile time
@@ -283,8 +283,8 @@ fn extract_crates(matches: &ArgMatches) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Handler for count command - returns raw CountResult
-fn count_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<CountResult> {
+/// Handler for count command - returns LOCTable
+fn count_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<LOCTable> {
     let path = matches
         .get_one::<String>("path")
         .map(|s| s.as_str())
@@ -314,11 +314,12 @@ fn count_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<C
         .contexts(contexts);
 
     let result = count_workspace(path, options)?;
-    Ok(Output::Render(result))
+    let table = LOCTable::from_count(&result, aggregation, contexts);
+    Ok(Output::Render(table))
 }
 
-/// Handler for diff command - returns raw DiffResult
-fn diff_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<DiffResult> {
+/// Handler for diff command - returns LOCTable
+fn diff_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<LOCTable> {
     let path = matches
         .get_one::<String>("path")
         .map(|s| s.as_str())
@@ -367,7 +368,8 @@ fn diff_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<Di
         diff_commits(path, &from_commit, &to_commit, options)?
     };
 
-    Ok(Output::Render(result))
+    let table = LOCTable::from_diff(&result, aggregation, contexts);
+    Ok(Output::Render(table))
 }
 
 fn parse_commit_range(from: &str, to: Option<&str>) -> Result<(String, String), anyhow::Error> {

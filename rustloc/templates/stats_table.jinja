@@ -1,109 +1,26 @@
-{#- Template for stats table - handles both CountResult and DiffResult -#}
-{#- Detect diff vs count by presence of from_commit -#}
-{%- set is_diff = from_commit is defined -%}
+{#- Table template for LOCTable - just iterate and format, no computation -#}
 
-{#- Display diff header if applicable -#}
-{%- if is_diff %}
-Diff: {{ from_commit }} → {{ to_commit }}
+{#- Title (e.g., "Diff: HEAD~5 → HEAD") -#}
+{%- if title %}
+{{ title }}
 
 {% endif -%}
 
-{#- Column widths -#}
-{%- set cell_width = 16 if is_diff else 10 -%}
-{%- set name_width = 40 -%}
+{#- Column widths - first column wider for labels -#}
+{%- set label_width = 40 -%}
+{%- set value_width = 16 -%}
 
-{#- Determine the name header based on data type -#}
-{%- if files and files | length > 0 %}
-{%- set name_header = "File" %}
-{%- elif modules and modules | length > 0 %}
-{%- set name_header = "Module" %}
-{%- elif crates and crates | length > 0 %}
-{%- set name_header = "Crate" %}
-{%- else %}
-{%- set name_header = "Name" %}
-{%- endif %}
+{#- Headers -#}
+{{ headers[0] | col(label_width, align='center') }}{% for h in headers[1:] %} [category]{{ h | col(value_width, align='center') }}[/category]{% endfor %}
 
-{#- Column headers -#}
-{{ name_header | col(name_width, align='center') }} [category]{{ "Code" | col(cell_width, align='center') }}[/category] [category]{{ "Tests" | col(cell_width, align='center') }}[/category] [category]{{ "Examples" | col(cell_width, align='center') }}[/category] [category]{{ "Total" | col(cell_width, align='center') }}[/category]
-
-{{ "-" * (name_width + (cell_width + 1) * 4) }}
-{%- if files and files | length > 0 %}
-{%- for f in files %}
-{%- if is_diff %}
-{%- set ca = f.diff.code.added.blank + f.diff.code.added.comments + f.diff.code.added.docs + f.diff.code.added.logic %}
-{%- set cr = f.diff.code.removed.blank + f.diff.code.removed.comments + f.diff.code.removed.docs + f.diff.code.removed.logic %}
-{%- set ta = f.diff.tests.added.blank + f.diff.tests.added.comments + f.diff.tests.added.docs + f.diff.tests.added.logic %}
-{%- set tr = f.diff.tests.removed.blank + f.diff.tests.removed.comments + f.diff.tests.removed.docs + f.diff.tests.removed.logic %}
-{%- set ea = f.diff.examples.added.blank + f.diff.examples.added.comments + f.diff.examples.added.docs + f.diff.examples.added.logic %}
-{%- set er = f.diff.examples.removed.blank + f.diff.examples.removed.comments + f.diff.examples.removed.docs + f.diff.examples.removed.logic %}
-{%- set all_a = ca + ta + ea %}
-{%- set all_r = cr + tr + er %}
-{%- if all_a - all_r != 0 %}
-{{ f.path | col(name_width, truncate='start') }} {{ ("+" ~ ca ~ "/-" ~ cr ~ "/" ~ (ca - cr)) | col(cell_width, align='right') }} {{ ("+" ~ ta ~ "/-" ~ tr ~ "/" ~ (ta - tr)) | col(cell_width, align='right') }} {{ ("+" ~ ea ~ "/-" ~ er ~ "/" ~ (ea - er)) | col(cell_width, align='right') }} {{ ("+" ~ all_a ~ "/-" ~ all_r ~ "/" ~ (all_a - all_r)) | col(cell_width, align='right') }}
-{%- endif %}
-{%- else %}
-{%- set c = f.stats.code.blank + f.stats.code.comments + f.stats.code.docs + f.stats.code.logic %}
-{%- set t = f.stats.tests.blank + f.stats.tests.comments + f.stats.tests.docs + f.stats.tests.logic %}
-{%- set e = f.stats.examples.blank + f.stats.examples.comments + f.stats.examples.docs + f.stats.examples.logic %}
-{%- if c + t + e != 0 %}
-{{ f.path | col(name_width, truncate='start') }} {{ c | col(cell_width, align='right') }} {{ t | col(cell_width, align='right') }} {{ e | col(cell_width, align='right') }} {{ (c + t + e) | col(cell_width, align='right') }}
-{%- endif %}
-{%- endif %}
+{{ "-" * (label_width + (value_width + 1) * (headers | length - 1)) }}
+{#- Data rows -#}
+{%- for row in rows %}
+{{ row.label | col(label_width, truncate='start') }}{% for v in row.values %} {{ v | col(value_width, align='right') }}{% endfor %}
 {%- endfor %}
-{%- elif modules and modules | length > 0 %}
-{%- for m in modules %}
-{%- set name = "(root)" if m.name == "" else m.name %}
-{%- set c = m.stats.code.blank + m.stats.code.comments + m.stats.code.docs + m.stats.code.logic %}
-{%- set t = m.stats.tests.blank + m.stats.tests.comments + m.stats.tests.docs + m.stats.tests.logic %}
-{%- set e = m.stats.examples.blank + m.stats.examples.comments + m.stats.examples.docs + m.stats.examples.logic %}
-{%- if c + t + e != 0 %}
-{{ name | col(name_width, truncate='start') }} {{ c | col(cell_width, align='right') }} {{ t | col(cell_width, align='right') }} {{ e | col(cell_width, align='right') }} {{ (c + t + e) | col(cell_width, align='right') }}
+{#- Separator before footer if we had rows -#}
+{%- if rows | length > 0 %}
+{{ "-" * (label_width + (value_width + 1) * (headers | length - 1)) }}
 {%- endif %}
-{%- endfor %}
-{%- elif crates and crates | length > 0 %}
-{%- for c in crates %}
-{%- if is_diff %}
-{%- set ca = c.diff.code.added.blank + c.diff.code.added.comments + c.diff.code.added.docs + c.diff.code.added.logic %}
-{%- set cr = c.diff.code.removed.blank + c.diff.code.removed.comments + c.diff.code.removed.docs + c.diff.code.removed.logic %}
-{%- set ta = c.diff.tests.added.blank + c.diff.tests.added.comments + c.diff.tests.added.docs + c.diff.tests.added.logic %}
-{%- set tr = c.diff.tests.removed.blank + c.diff.tests.removed.comments + c.diff.tests.removed.docs + c.diff.tests.removed.logic %}
-{%- set ea = c.diff.examples.added.blank + c.diff.examples.added.comments + c.diff.examples.added.docs + c.diff.examples.added.logic %}
-{%- set er = c.diff.examples.removed.blank + c.diff.examples.removed.comments + c.diff.examples.removed.docs + c.diff.examples.removed.logic %}
-{%- set all_a = ca + ta + ea %}
-{%- set all_r = cr + tr + er %}
-{%- if all_a - all_r != 0 %}
-{{ c.name | col(name_width, truncate='start') }} {{ ("+" ~ ca ~ "/-" ~ cr ~ "/" ~ (ca - cr)) | col(cell_width, align='right') }} {{ ("+" ~ ta ~ "/-" ~ tr ~ "/" ~ (ta - tr)) | col(cell_width, align='right') }} {{ ("+" ~ ea ~ "/-" ~ er ~ "/" ~ (ea - er)) | col(cell_width, align='right') }} {{ ("+" ~ all_a ~ "/-" ~ all_r ~ "/" ~ (all_a - all_r)) | col(cell_width, align='right') }}
-{%- endif %}
-{%- else %}
-{%- set code = c.stats.code.blank + c.stats.code.comments + c.stats.code.docs + c.stats.code.logic %}
-{%- set tests = c.stats.tests.blank + c.stats.tests.comments + c.stats.tests.docs + c.stats.tests.logic %}
-{%- set examples = c.stats.examples.blank + c.stats.examples.comments + c.stats.examples.docs + c.stats.examples.logic %}
-{%- if code + tests + examples != 0 %}
-{{ c.name | col(name_width, truncate='start') }} {{ code | col(cell_width, align='right') }} {{ tests | col(cell_width, align='right') }} {{ examples | col(cell_width, align='right') }} {{ (code + tests + examples) | col(cell_width, align='right') }}
-{%- endif %}
-{%- endif %}
-{%- endfor %}
-{%- endif %}
-{#- Separator before total if we had rows -#}
-{%- set has_rows = (files and files | length > 0) or (modules and modules | length > 0) or (crates and crates | length > 0) %}
-{%- if has_rows %}
-{{ "-" * (name_width + (cell_width + 1) * 4) }}
-{%- endif %}
-{#- Total row -#}
-{%- set total_label = "Total (" ~ total.file_count ~ " files)" %}
-{%- if is_diff %}
-{%- set ca = total.code.added.blank + total.code.added.comments + total.code.added.docs + total.code.added.logic %}
-{%- set cr = total.code.removed.blank + total.code.removed.comments + total.code.removed.docs + total.code.removed.logic %}
-{%- set ta = total.tests.added.blank + total.tests.added.comments + total.tests.added.docs + total.tests.added.logic %}
-{%- set tr = total.tests.removed.blank + total.tests.removed.comments + total.tests.removed.docs + total.tests.removed.logic %}
-{%- set ea = total.examples.added.blank + total.examples.added.comments + total.examples.added.docs + total.examples.added.logic %}
-{%- set er = total.examples.removed.blank + total.examples.removed.comments + total.examples.removed.docs + total.examples.removed.logic %}
-{%- set all_a = ca + ta + ea %}
-{%- set all_r = cr + tr + er %}
-{{ total_label | col(name_width) }} {{ ("+" ~ ca ~ "/-" ~ cr ~ "/" ~ (ca - cr)) | col(cell_width, align='right') }} {{ ("+" ~ ta ~ "/-" ~ tr ~ "/" ~ (ta - tr)) | col(cell_width, align='right') }} {{ ("+" ~ ea ~ "/-" ~ er ~ "/" ~ (ea - er)) | col(cell_width, align='right') }} {{ ("+" ~ all_a ~ "/-" ~ all_r ~ "/" ~ (all_a - all_r)) | col(cell_width, align='right') }}
-{%- else %}
-{%- set c = total.code.blank + total.code.comments + total.code.docs + total.code.logic %}
-{%- set t = total.tests.blank + total.tests.comments + total.tests.docs + total.tests.logic %}
-{%- set e = total.examples.blank + total.examples.comments + total.examples.docs + total.examples.logic %}
-{{ total_label | col(name_width) }} {{ c | col(cell_width, align='right') }} {{ t | col(cell_width, align='right') }} {{ e | col(cell_width, align='right') }} {{ (c + t + e) | col(cell_width, align='right') }}
-{%- endif %}
+{#- Footer/summary row -#}
+{{ footer.label | col(label_width) }}{% for v in footer.values %} {{ v | col(value_width, align='right') }}{% endfor %}
