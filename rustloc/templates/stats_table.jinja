@@ -6,7 +6,7 @@
 {{ title }}
 
 {% endif -%}
-{{ headers[0] | col(label_width, align='center') }}{% for h in headers[1:] %} {{ h | col(value_width, align='center') }}{% endfor %}
+[header]{{ headers[0] | col(label_width, align='center') }}{% for h in headers[1:] %} {{ h | col(value_width, align='center') }}{% endfor %}[/header]
 {{ "-" * line_width }}
 {% for row in rows -%}
 {{ row.label | col(label_width, truncate='start') }}{% for v in row.values %} {{ v | col(value_width, align='right') }}{% endfor %}

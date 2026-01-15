@@ -53,7 +53,9 @@
 use std::process::ExitCode;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use console::Style;
 use outstanding::cli::{App, CommandContext, HandlerResult, Output, RunResult};
+use outstanding::Theme;
 use rustloclib::{
     count_workspace, diff_commits, diff_workdir, Aggregation, CountOptions, CountQuerySet,
     DiffOptions, DiffQuerySet, FilterConfig, LOCTable, LineTypes, OrderBy, OrderDirection,
@@ -458,10 +460,13 @@ fn parse_commit_range(from: &str, to: Option<&str>) -> Result<(String, String), 
 fn main() -> ExitCode {
     let cmd = build_command();
 
+    // Build theme with bold headers
+    let theme = Theme::new().add("header", Style::new().bold());
+
     // Build the outstanding app with command handlers and run
     // default_command("count") means `rustloc .` is treated as `rustloc count .`
-    // NOTE: Theme support disabled until outstanding-rs#31 is fixed
     let result = App::builder()
+        .theme(theme)
         .default_command("count")
         .command("count", count_handler, STATS_TABLE_TEMPLATE)
         .command("diff", diff_handler, STATS_TABLE_TEMPLATE)
