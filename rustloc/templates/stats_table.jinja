@@ -11,7 +11,7 @@
 {%- set value_width = 16 -%}
 
 {#- Headers -#}
-{{ headers[0] | col(label_width, align='center') }}{% for h in headers[1:] %} [category]{{ h | col(value_width, align='center') }}[/category]{% endfor %}
+{{ headers[0] | col(label_width, align='center') }}{% for h in headers[1:] %} {{ h | col(value_width, align='center') }}{% endfor %}
 
 {{ "-" * (label_width + (value_width + 1) * (headers | length - 1)) }}
 {#- Data rows -#}
