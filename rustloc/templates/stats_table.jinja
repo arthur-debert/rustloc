@@ -1,16 +1,115 @@
-{# Template for stats table (counts and diffs) #}
-{% if diff_header %}{{ diff_header }}
+{#- Template for stats table - handles both CountResult and DiffResult -#}
+{#- Detect diff vs count by presence of from_commit -#}
+{%- set is_diff = from_commit is defined -%}
 
-{% endif %}
-{{ name_header_formatted }}{% for col in columns %} [category]{{ col.formatted }}[/category]{% endfor %}
+{#- Display diff header if applicable -#}
+{%- if is_diff %}
+Diff: {{ from_commit }} → {{ to_commit }}
 
-{{ separator }}
-{% for row in rows -%}
-{%- if not (row.total_net == 0 and row.is_count) %}
-{{ row.name }}{% for cell in row.cells %} {{ cell }}{% endfor %}
-{%- endif -%}
-{%- endfor -%}
-{%- if rows %}
-{{ separator }}
-{% endif %}
-{{ total.name }}{% for cell in total.cells %} {{ cell }}{% endfor %}
+{% endif -%}
+
+{#- Determine cell width -#}
+{%- set cell_width = 16 if is_diff else 10 -%}
+{%- set name_width = 40 -%}
+
+{#- Determine the name header based on data type -#}
+{%- if files and files | length > 0 %}
+{%- set name_header = "File" %}
+{%- elif modules and modules | length > 0 %}
+{%- set name_header = "Module" %}
+{%- elif crates and crates | length > 0 %}
+{%- set name_header = "Crate" %}
+{%- else %}
+{%- set name_header = "Name" %}
+{%- endif %}
+
+{#- Column headers -#}
+{{ name_header | pad_center(name_width) }} [category]{{ "Code" | pad_center(cell_width) }}[/category] [category]{{ "Tests" | pad_center(cell_width) }}[/category] [category]{{ "Examples" | pad_center(cell_width) }}[/category] [category]{{ "Total" | pad_center(cell_width) }}[/category]
+
+{{ "-" * (name_width + (cell_width + 1) * 4) }}
+{%- if files and files | length > 0 %}
+{%- for f in files %}
+{%- if is_diff %}
+{%- set code_added = f.diff.code.added.blank + f.diff.code.added.comments + f.diff.code.added.docs + f.diff.code.added.logic %}
+{%- set code_removed = f.diff.code.removed.blank + f.diff.code.removed.comments + f.diff.code.removed.docs + f.diff.code.removed.logic %}
+{%- set tests_added = f.diff.tests.added.blank + f.diff.tests.added.comments + f.diff.tests.added.docs + f.diff.tests.added.logic %}
+{%- set tests_removed = f.diff.tests.removed.blank + f.diff.tests.removed.comments + f.diff.tests.removed.docs + f.diff.tests.removed.logic %}
+{%- set examples_added = f.diff.examples.added.blank + f.diff.examples.added.comments + f.diff.examples.added.docs + f.diff.examples.added.logic %}
+{%- set examples_removed = f.diff.examples.removed.blank + f.diff.examples.removed.comments + f.diff.examples.removed.docs + f.diff.examples.removed.logic %}
+{%- set total_added = code_added + tests_added + examples_added %}
+{%- set total_removed = code_removed + tests_removed + examples_removed %}
+{%- set net = total_added - total_removed %}
+{%- if net != 0 %}
+{{ f.path | truncate_at(name_width - 2, "start") | pad_right(name_width) }} {{ ("+" ~ code_added ~ "/-" ~ code_removed ~ "/" ~ (code_added - code_removed)) | pad_left(cell_width) }} {{ ("+" ~ tests_added ~ "/-" ~ tests_removed ~ "/" ~ (tests_added - tests_removed)) | pad_left(cell_width) }} {{ ("+" ~ examples_added ~ "/-" ~ examples_removed ~ "/" ~ (examples_added - examples_removed)) | pad_left(cell_width) }} {{ ("+" ~ total_added ~ "/-" ~ total_removed ~ "/" ~ net) | pad_left(cell_width) }}
+{%- endif %}
+{%- else %}
+{%- set code_total = f.stats.code.blank + f.stats.code.comments + f.stats.code.docs + f.stats.code.logic %}
+{%- set tests_total = f.stats.tests.blank + f.stats.tests.comments + f.stats.tests.docs + f.stats.tests.logic %}
+{%- set examples_total = f.stats.examples.blank + f.stats.examples.comments + f.stats.examples.docs + f.stats.examples.logic %}
+{%- set row_total = code_total + tests_total + examples_total %}
+{%- if row_total != 0 %}
+{{ f.path | truncate_at(name_width - 2, "start") | pad_right(name_width) }} {{ code_total | pad_left(cell_width) }} {{ tests_total | pad_left(cell_width) }} {{ examples_total | pad_left(cell_width) }} {{ row_total | pad_left(cell_width) }}
+{%- endif %}
+{%- endif %}
+{%- endfor %}
+{%- elif modules and modules | length > 0 %}
+{%- for m in modules %}
+{%- set name = "(root)" if m.name == "" else m.name %}
+{%- set code_total = m.stats.code.blank + m.stats.code.comments + m.stats.code.docs + m.stats.code.logic %}
+{%- set tests_total = m.stats.tests.blank + m.stats.tests.comments + m.stats.tests.docs + m.stats.tests.logic %}
+{%- set examples_total = m.stats.examples.blank + m.stats.examples.comments + m.stats.examples.docs + m.stats.examples.logic %}
+{%- set row_total = code_total + tests_total + examples_total %}
+{%- if row_total != 0 %}
+{{ name | truncate_at(name_width - 2, "start") | pad_right(name_width) }} {{ code_total | pad_left(cell_width) }} {{ tests_total | pad_left(cell_width) }} {{ examples_total | pad_left(cell_width) }} {{ row_total | pad_left(cell_width) }}
+{%- endif %}
+{%- endfor %}
+{%- elif crates and crates | length > 0 %}
+{%- for c in crates %}
+{%- if is_diff %}
+{%- set code_added = c.diff.code.added.blank + c.diff.code.added.comments + c.diff.code.added.docs + c.diff.code.added.logic %}
+{%- set code_removed = c.diff.code.removed.blank + c.diff.code.removed.comments + c.diff.code.removed.docs + c.diff.code.removed.logic %}
+{%- set tests_added = c.diff.tests.added.blank + c.diff.tests.added.comments + c.diff.tests.added.docs + c.diff.tests.added.logic %}
+{%- set tests_removed = c.diff.tests.removed.blank + c.diff.tests.removed.comments + c.diff.tests.removed.docs + c.diff.tests.removed.logic %}
+{%- set examples_added = c.diff.examples.added.blank + c.diff.examples.added.comments + c.diff.examples.added.docs + c.diff.examples.added.logic %}
+{%- set examples_removed = c.diff.examples.removed.blank + c.diff.examples.removed.comments + c.diff.examples.removed.docs + c.diff.examples.removed.logic %}
+{%- set total_added = code_added + tests_added + examples_added %}
+{%- set total_removed = code_removed + tests_removed + examples_removed %}
+{%- set net = total_added - total_removed %}
+{%- if net != 0 %}
+{{ c.name | truncate_at(name_width - 2, "start") | pad_right(name_width) }} {{ ("+" ~ code_added ~ "/-" ~ code_removed ~ "/" ~ (code_added - code_removed)) | pad_left(cell_width) }} {{ ("+" ~ tests_added ~ "/-" ~ tests_removed ~ "/" ~ (tests_added - tests_removed)) | pad_left(cell_width) }} {{ ("+" ~ examples_added ~ "/-" ~ examples_removed ~ "/" ~ (examples_added - examples_removed)) | pad_left(cell_width) }} {{ ("+" ~ total_added ~ "/-" ~ total_removed ~ "/" ~ net) | pad_left(cell_width) }}
+{%- endif %}
+{%- else %}
+{%- set code_total = c.stats.code.blank + c.stats.code.comments + c.stats.code.docs + c.stats.code.logic %}
+{%- set tests_total = c.stats.tests.blank + c.stats.tests.comments + c.stats.tests.docs + c.stats.tests.logic %}
+{%- set examples_total = c.stats.examples.blank + c.stats.examples.comments + c.stats.examples.docs + c.stats.examples.logic %}
+{%- set row_total = code_total + tests_total + examples_total %}
+{%- if row_total != 0 %}
+{{ c.name | truncate_at(name_width - 2, "start") | pad_right(name_width) }} {{ code_total | pad_left(cell_width) }} {{ tests_total | pad_left(cell_width) }} {{ examples_total | pad_left(cell_width) }} {{ row_total | pad_left(cell_width) }}
+{%- endif %}
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+{#- Separator before total if we had rows -#}
+{%- set has_rows = (files and files | length > 0) or (modules and modules | length > 0) or (crates and crates | length > 0) %}
+{%- if has_rows %}
+{{ "-" * (name_width + (cell_width + 1) * 4) }}
+{%- endif %}
+{#- Total row -#}
+{%- set total_label = "Total (" ~ total.file_count ~ " files)" %}
+{%- if is_diff %}
+{%- set code_added = total.code.added.blank + total.code.added.comments + total.code.added.docs + total.code.added.logic %}
+{%- set code_removed = total.code.removed.blank + total.code.removed.comments + total.code.removed.docs + total.code.removed.logic %}
+{%- set tests_added = total.tests.added.blank + total.tests.added.comments + total.tests.added.docs + total.tests.added.logic %}
+{%- set tests_removed = total.tests.removed.blank + total.tests.removed.comments + total.tests.removed.docs + total.tests.removed.logic %}
+{%- set examples_added = total.examples.added.blank + total.examples.added.comments + total.examples.added.docs + total.examples.added.logic %}
+{%- set examples_removed = total.examples.removed.blank + total.examples.removed.comments + total.examples.removed.docs + total.examples.removed.logic %}
+{%- set total_added = code_added + tests_added + examples_added %}
+{%- set total_removed = code_removed + tests_removed + examples_removed %}
+{{ total_label | pad_right(name_width) }} {{ ("+" ~ code_added ~ "/-" ~ code_removed ~ "/" ~ (code_added - code_removed)) | pad_left(cell_width) }} {{ ("+" ~ tests_added ~ "/-" ~ tests_removed ~ "/" ~ (tests_added - tests_removed)) | pad_left(cell_width) }} {{ ("+" ~ examples_added ~ "/-" ~ examples_removed ~ "/" ~ (examples_added - examples_removed)) | pad_left(cell_width) }} {{ ("+" ~ total_added ~ "/-" ~ total_removed ~ "/" ~ (total_added - total_removed)) | pad_left(cell_width) }}
+{%- else %}
+{%- set code_total = total.code.blank + total.code.comments + total.code.docs + total.code.logic %}
+{%- set tests_total = total.tests.blank + total.tests.comments + total.tests.docs + total.tests.logic %}
+{%- set examples_total = total.examples.blank + total.examples.comments + total.examples.docs + total.examples.logic %}
+{%- set grand_total = code_total + tests_total + examples_total %}
+{{ total_label | pad_right(name_width) }} {{ code_total | pad_left(cell_width) }} {{ tests_total | pad_left(cell_width) }} {{ examples_total | pad_left(cell_width) }} {{ grand_total | pad_left(cell_width) }}
+{%- endif %}

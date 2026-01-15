@@ -54,85 +54,12 @@ use console::Style;
 use outstanding::cli::{App, CommandContext, HandlerResult, Output, RunResult};
 use outstanding::Theme;
 use rustloclib::{
-    count_workspace, diff_commits, diff_workdir, Aggregation, Contexts, CountOptions, DiffOptions,
-    FilterConfig, StatsRow, WorkdirDiffMode,
+    count_workspace, diff_commits, diff_workdir, Aggregation, Contexts, CountOptions, CountResult,
+    DiffOptions, DiffResult, FilterConfig, WorkdirDiffMode,
 };
-use serde::Serialize;
 
 /// Include template at compile time
 const STATS_TABLE_TEMPLATE: &str = include_str!("../templates/stats_table.jinja");
-
-/// Column data for template rendering
-#[derive(Debug, Serialize)]
-struct TemplateColumn {
-    name: String,
-    formatted: String,
-}
-
-/// Row data for template rendering
-#[derive(Debug, Serialize)]
-struct TemplateRow {
-    name: String,
-    cells: Vec<String>,
-    total_net: i64,
-    is_count: bool,
-}
-
-/// Data context for stats table template
-#[derive(Debug, Serialize)]
-struct StatsTableContext {
-    name_header: String,
-    name_header_formatted: String,
-    columns: Vec<TemplateColumn>,
-    separator: String,
-    rows: Vec<TemplateRow>,
-    total: TemplateRow,
-}
-
-/// Truncate a name to fit within max_len
-fn truncate_name(name: &str, max_len: usize) -> String {
-    if name.len() > max_len {
-        format!("..{}", &name[name.len() - max_len + 2..])
-    } else {
-        name.to_string()
-    }
-}
-
-/// Convert a StatsRow to a TemplateRow
-fn to_template_row(
-    row: &StatsRow,
-    ctx: &Contexts,
-    name_width: usize,
-    cell_width: usize,
-) -> TemplateRow {
-    let mut cells = Vec::new();
-    if ctx.code {
-        cells.push(format!("{:>width$}", row.code, width = cell_width));
-    }
-    if ctx.tests {
-        cells.push(format!("{:>width$}", row.tests, width = cell_width));
-    }
-    if ctx.examples {
-        cells.push(format!("{:>width$}", row.examples, width = cell_width));
-    }
-    cells.push(format!("{:>width$}", row.total, width = cell_width));
-
-    let truncated = truncate_name(&row.name, name_width - 2);
-
-    TemplateRow {
-        name: format!("{:<width$}", truncated, width = name_width),
-        cells,
-        total_net: row.total.net(),
-        is_count: row.is_count(),
-    }
-}
-
-/// Convert a path to a relative path from the base directory
-fn make_relative(path: &std::path::Path, base: &std::path::Path) -> String {
-    path.strip_prefix(base)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| path.to_string_lossy().to_string())
-}
 
 /// Build the clap Command structure
 fn build_command() -> Command {
@@ -356,8 +283,8 @@ fn extract_crates(matches: &ArgMatches) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Handler for count command
-fn count_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
+/// Handler for count command - returns raw CountResult
+fn count_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<CountResult> {
     let path = matches
         .get_one::<String>("path")
         .map(|s| s.as_str())
@@ -387,120 +314,11 @@ fn count_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<se
         .contexts(contexts);
 
     let result = count_workspace(path, options)?;
-
-    // For JSON mode, return raw data
-    if ctx.output_mode.is_structured() {
-        return Ok(Output::Render(serde_json::to_value(&result)?));
-    }
-
-    // For table mode, build template context
-    let base_path = std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
-
-    let (name_header, name_width) = if by_file {
-        ("File", 60)
-    } else if by_module {
-        ("Module", 40)
-    } else if by_crate {
-        ("Crate", 40)
-    } else {
-        ("", 40)
-    };
-
-    let rows: Vec<StatsRow> = if by_file && !result.files.is_empty() {
-        result
-            .files
-            .iter()
-            .map(|f| {
-                let path_str = make_relative(&f.path, &base_path);
-                StatsRow::from_count(path_str, &f.stats)
-            })
-            .collect()
-    } else if by_module && !result.modules.is_empty() {
-        result
-            .modules
-            .iter()
-            .map(|m| {
-                let name = if m.name.is_empty() {
-                    "(root)".to_string()
-                } else {
-                    m.name.clone()
-                };
-                StatsRow::from_count(name, &m.stats)
-            })
-            .collect()
-    } else if by_crate && !result.crates.is_empty() {
-        result
-            .crates
-            .iter()
-            .map(|c| StatsRow::from_count(&c.name, &c.stats))
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    let total = StatsRow::from_count(
-        format!("Total ({} files)", result.total.file_count),
-        &result.total,
-    );
-
-    let context = build_stats_context(&rows, &total, name_header, name_width, &contexts);
-    Ok(Output::Render(serde_json::to_value(&context)?))
+    Ok(Output::Render(result))
 }
 
-/// Build StatsTableContext from rows and configuration
-fn build_stats_context(
-    rows: &[StatsRow],
-    total: &StatsRow,
-    name_header: &str,
-    name_width: usize,
-    ctx: &Contexts,
-) -> StatsTableContext {
-    // Build columns based on enabled contexts
-    let mut column_names = Vec::new();
-    if ctx.code {
-        column_names.push("Code");
-    }
-    if ctx.tests {
-        column_names.push("Tests");
-    }
-    if ctx.examples {
-        column_names.push("Examples");
-    }
-    column_names.push("Total");
-
-    // Determine cell width based on whether we're showing diffs or counts
-    let is_diff = total.is_diff();
-    let cell_width = if is_diff { 16 } else { 10 };
-
-    let columns: Vec<TemplateColumn> = column_names
-        .iter()
-        .map(|name| TemplateColumn {
-            name: name.to_string(),
-            formatted: format!("{:>width$}", name, width = cell_width),
-        })
-        .collect();
-
-    let separator = "-".repeat(name_width + (cell_width + 1) * columns.len());
-
-    let template_rows: Vec<TemplateRow> = rows
-        .iter()
-        .map(|r| to_template_row(r, ctx, name_width, cell_width))
-        .collect();
-
-    let total_row = to_template_row(total, ctx, name_width, cell_width);
-
-    StatsTableContext {
-        name_header: name_header.to_string(),
-        name_header_formatted: format!("{:<width$}", name_header, width = name_width),
-        columns,
-        separator,
-        rows: template_rows,
-        total: total_row,
-    }
-}
-
-/// Handler for diff command
-fn diff_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
+/// Handler for diff command - returns raw DiffResult
+fn diff_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<DiffResult> {
     let path = matches
         .get_one::<String>("path")
         .map(|s| s.as_str())
@@ -549,55 +367,7 @@ fn diff_handler(matches: &ArgMatches, ctx: &CommandContext) -> HandlerResult<ser
         diff_commits(path, &from_commit, &to_commit, options)?
     };
 
-    // For JSON mode, return raw data
-    if ctx.output_mode.is_structured() {
-        return Ok(Output::Render(serde_json::to_value(&result)?));
-    }
-
-    // For table mode, build header and template context
-    let base_path = std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
-
-    let (name_header, name_width) = if by_file {
-        ("File", 60)
-    } else if by_crate {
-        ("Crate", 40)
-    } else {
-        ("", 40)
-    };
-
-    let rows: Vec<StatsRow> = if by_file && !result.files.is_empty() {
-        result
-            .files
-            .iter()
-            .map(|f| {
-                let path_str = make_relative(&f.path, &base_path);
-                f.diff.to_stats_row(path_str)
-            })
-            .collect()
-    } else if by_crate && !result.crates.is_empty() {
-        result
-            .crates
-            .iter()
-            .map(|c| c.diff.to_stats_row(&c.name))
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    let total = result
-        .total
-        .to_stats_row(format!("Total ({} files)", result.total.file_count));
-
-    let context = build_stats_context(&rows, &total, name_header, name_width, &contexts);
-
-    // Add diff header info to context
-    let mut value = serde_json::to_value(&context)?;
-    value["diff_header"] = serde_json::json!(format!(
-        "Diff: {} \u{2192} {}",
-        result.from_commit, result.to_commit
-    ));
-
-    Ok(Output::Render(value))
+    Ok(Output::Render(result))
 }
 
 fn parse_commit_range(from: &str, to: Option<&str>) -> Result<(String, String), anyhow::Error> {
@@ -668,17 +438,17 @@ fn main() -> ExitCode {
             };
 
             match count_handler(&matches, &ctx) {
-                Ok(Output::Render(value)) => {
+                Ok(Output::Render(result)) => {
                     if output_mode.is_structured() {
                         // JSON mode - print raw JSON
                         println!(
                             "{}",
-                            serde_json::to_string_pretty(&value).unwrap_or_default()
+                            serde_json::to_string_pretty(&result).unwrap_or_default()
                         );
                     } else {
                         // Table mode - render using outstanding
                         let theme = create_theme();
-                        match outstanding::render(STATS_TABLE_TEMPLATE, &value, &theme) {
+                        match outstanding::render(STATS_TABLE_TEMPLATE, &result, &theme) {
                             Ok(output) => {
                                 print!("{}", output);
                             }
