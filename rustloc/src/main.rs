@@ -396,8 +396,10 @@ fn main() -> ExitCode {
     let theme = create_theme();
 
     // Build the outstanding app with command handlers and run
+    // default_command("count") means `rustloc .` is treated as `rustloc count .`
     let result = App::builder()
         .theme(theme)
+        .default_command("count")
         .command("count", count_handler, STATS_TABLE_TEMPLATE)
         .command("diff", diff_handler, STATS_TABLE_TEMPLATE)
         .run_to_string(cmd, std::env::args());
@@ -405,7 +407,6 @@ fn main() -> ExitCode {
     match result {
         RunResult::Handled(output) => {
             if !output.is_empty() {
-                // Check if it's an error message from handler
                 if output.starts_with("Error:") {
                     eprintln!("{}", output);
                     return ExitCode::FAILURE;
@@ -414,59 +415,11 @@ fn main() -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        RunResult::Binary(_, _) => {
-            // Not used in rustloc
-            ExitCode::SUCCESS
-        }
-        RunResult::NoMatch(matches) => {
-            // Handle root command (no subcommand) - treat as count
-            // Extract output mode from args (outstanding adds _output_mode)
-            let output_mode = matches
-                .get_one::<String>("_output_mode")
-                .map(|s| match s.as_str() {
-                    "json" => outstanding::OutputMode::Json,
-                    "text" => outstanding::OutputMode::Text,
-                    "term-debug" => outstanding::OutputMode::TermDebug,
-                    "term" => outstanding::OutputMode::Term,
-                    _ => outstanding::OutputMode::Auto,
-                })
-                .unwrap_or(outstanding::OutputMode::Auto);
-
-            let ctx = CommandContext {
-                output_mode,
-                command_path: vec![],
-            };
-
-            match count_handler(&matches, &ctx) {
-                Ok(Output::Render(result)) => {
-                    if output_mode.is_structured() {
-                        // JSON mode - print raw JSON
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&result).unwrap_or_default()
-                        );
-                    } else {
-                        // Table mode - render using outstanding
-                        let theme = create_theme();
-                        match outstanding::render(STATS_TABLE_TEMPLATE, &result, &theme) {
-                            Ok(output) => {
-                                print!("{}", output);
-                            }
-                            Err(e) => {
-                                eprintln!("Error: {e}");
-                                return ExitCode::FAILURE;
-                            }
-                        }
-                    }
-                    ExitCode::SUCCESS
-                }
-                Ok(Output::Silent) => ExitCode::SUCCESS,
-                Ok(Output::Binary { .. }) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    ExitCode::FAILURE
-                }
-            }
+        RunResult::Binary(_, _) => ExitCode::SUCCESS,
+        RunResult::NoMatch(_) => {
+            // Should not happen with default_command set
+            eprintln!("Error: Unknown command");
+            ExitCode::FAILURE
         }
     }
 }
