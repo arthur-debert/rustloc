@@ -55,8 +55,9 @@ use std::process::ExitCode;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use outstanding::cli::{App, CommandContext, HandlerResult, Output, RunResult};
 use rustloclib::{
-    count_workspace, diff_commits, diff_workdir, Aggregation, CountOptions, DiffOptions,
-    FilterConfig, LOCTable, LineTypes, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
+    count_workspace, diff_commits, diff_workdir, Aggregation, CountOptions, CountQuerySet,
+    DiffOptions, DiffQuerySet, FilterConfig, LOCTable, LineTypes, OrderBy, OrderDirection,
+    Ordering, WorkdirDiffMode,
 };
 
 /// Include template at compile time
@@ -376,7 +377,8 @@ fn count_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<L
         .line_types(line_types);
 
     let result = count_workspace(path, options)?;
-    let table = LOCTable::from_count(&result, aggregation, line_types, ordering);
+    let queryset = CountQuerySet::from_result(&result, aggregation, line_types, ordering);
+    let table = LOCTable::from_count_queryset(&queryset);
     Ok(Output::Render(table))
 }
 
@@ -431,7 +433,8 @@ fn diff_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<LO
         diff_workdir(path, mode, options)?
     };
 
-    let table = LOCTable::from_diff(&result, aggregation, line_types, ordering);
+    let queryset = DiffQuerySet::from_result(&result, aggregation, line_types, ordering);
+    let table = LOCTable::from_diff_queryset(&queryset);
     Ok(Output::Render(table))
 }
 

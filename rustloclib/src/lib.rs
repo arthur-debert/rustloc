@@ -69,6 +69,7 @@ pub mod diff;
 pub mod error;
 pub mod filter;
 pub mod options;
+pub mod queryset;
 pub mod stats;
 pub mod table;
 pub mod visitor;
@@ -82,6 +83,7 @@ pub use diff::{
 pub use error::RustlocError;
 pub use filter::FilterConfig;
 pub use options::{Aggregation, LineTypes, OrderBy, OrderDirection, Ordering};
+pub use queryset::{CountQuerySet, DiffQuerySet, QueryItem};
 pub use stats::{CrateStats, FileStats, Locs, ModuleStats};
 pub use table::{LOCTable, TableRow};
 pub use visitor::{gather_stats, gather_stats_for_path, VisitorContext};
