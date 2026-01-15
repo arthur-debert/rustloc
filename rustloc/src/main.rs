@@ -405,7 +405,16 @@ fn diff_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<LO
     let from = matches.get_one::<String>("from");
     let to = matches.get_one::<String>("to");
 
-    let result = if from.is_none() {
+    let result = if let Some(from_str) = from {
+        // Commit diff
+        if staged {
+            return Err(anyhow::anyhow!(
+                "--staged/--cached can only be used without commit arguments"
+            ));
+        }
+        let (from_commit, to_commit) = parse_commit_range(from_str, to.map(|s| s.as_str()))?;
+        diff_commits(path, &from_commit, &to_commit, options)?
+    } else {
         // Working directory diff
         let mode = if staged {
             WorkdirDiffMode::Staged
@@ -413,15 +422,6 @@ fn diff_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<LO
             WorkdirDiffMode::All
         };
         diff_workdir(path, mode, options)?
-    } else {
-        // Commit diff
-        if staged {
-            return Err(anyhow::anyhow!(
-                "--staged/--cached can only be used without commit arguments"
-            ));
-        }
-        let (from_commit, to_commit) = parse_commit_range(from.unwrap(), to.map(|s| s.as_str()))?;
-        diff_commits(path, &from_commit, &to_commit, options)?
     };
 
     let table = LOCTable::from_diff(&result, aggregation, contexts, ordering);
