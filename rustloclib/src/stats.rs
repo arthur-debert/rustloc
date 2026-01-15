@@ -1,147 +1,74 @@
-//! Core data structures for LOC statistics
+//! Core data structures for LOC statistics.
+//!
+//! This module provides the fundamental types for representing line counts
+//! in Rust source files. The design uses a single flat structure with 6 line types:
+//!
+//! - **code**: Logic lines in production code (src/, not in tests)
+//! - **tests**: Logic lines in test code (#[test], #[cfg(test)], tests/)
+//! - **examples**: Logic lines in example code (examples/)
+//! - **docs**: Documentation comments (///, //!, /** */, /*! */) - anywhere
+//! - **comments**: Regular comments (//, /* */) - anywhere
+//! - **blanks**: Blank/whitespace-only lines - anywhere
+//!
+//! The key insight: only actual code lines need context (code/tests/examples),
+//! because that's the meaningful distinction. A blank is a blank, a comment is
+//! a comment - where they appear doesn't matter for most analysis.
 
-use crate::options::Contexts;
+use crate::options::LineTypes;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::path::PathBuf;
 
-/// A cell value that can represent either a count or a diff.
+/// Lines of code counts with 6 line types.
 ///
-/// This provides a unified interface for displaying both count and diff statistics
-/// using the same layout (rows = objects, columns = contexts).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CellValue {
-    /// A simple count value
-    Count(u64),
-    /// A diff value with added and removed counts
-    Diff { added: u64, removed: u64 },
-}
-
-impl CellValue {
-    /// Create a count cell
-    pub fn count(value: u64) -> Self {
-        CellValue::Count(value)
-    }
-
-    /// Create a diff cell
-    pub fn diff(added: u64, removed: u64) -> Self {
-        CellValue::Diff { added, removed }
-    }
-
-    /// Get the net value (for counts, this is just the value; for diffs, added - removed)
-    pub fn net(&self) -> i64 {
-        match self {
-            CellValue::Count(v) => *v as i64,
-            CellValue::Diff { added, removed } => *added as i64 - *removed as i64,
-        }
-    }
-
-    /// Check if this is a count value
-    pub fn is_count(&self) -> bool {
-        matches!(self, CellValue::Count(_))
-    }
-
-    /// Check if this is a diff value
-    pub fn is_diff(&self) -> bool {
-        matches!(self, CellValue::Diff { .. })
-    }
-}
-
-impl Default for CellValue {
-    fn default() -> Self {
-        CellValue::Count(0)
-    }
-}
-
-impl std::fmt::Display for CellValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            CellValue::Count(v) => v.to_string(),
-            CellValue::Diff { added, removed } => {
-                let net = *added as i64 - *removed as i64;
-                format!("+{}/-{}/{}", added, removed, net)
-            }
-        };
-
-        // Respect width and alignment from the formatter
-        if let Some(width) = f.width() {
-            if f.align() == Some(std::fmt::Alignment::Left) {
-                write!(f, "{:<width$}", s, width = width)
-            } else {
-                write!(f, "{:>width$}", s, width = width)
-            }
-        } else {
-            write!(f, "{}", s)
-        }
-    }
-}
-
-/// A unified statistics row for display purposes.
+/// This is the fundamental unit of measurement in rustloc. Each field counts
+/// a specific type of line:
 ///
-/// This struct provides a common interface for displaying both count and diff statistics.
-/// Each cell (code, tests, examples, total) uses `CellValue` which can be either a count or diff.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StatsRow {
-    /// Row label (file path, crate name, module name, or "Total")
-    pub name: String,
-    /// Production code cell
-    pub code: CellValue,
-    /// Test code cell
-    pub tests: CellValue,
-    /// Example code cell
-    pub examples: CellValue,
-    /// Total cell (sum of all contexts)
-    pub total: CellValue,
-    /// Number of files
-    pub file_count: u64,
-}
-
-impl StatsRow {
-    /// Create a new stats row from a count stats
-    pub fn from_count(name: impl Into<String>, stats: &LocStats) -> Self {
-        Self {
-            name: name.into(),
-            code: CellValue::count(stats.code.total()),
-            tests: CellValue::count(stats.tests.total()),
-            examples: CellValue::count(stats.examples.total()),
-            total: CellValue::count(stats.total()),
-            file_count: stats.file_count,
-        }
-    }
-
-    /// Check if all cells are counts
-    pub fn is_count(&self) -> bool {
-        self.code.is_count()
-    }
-
-    /// Check if all cells are diffs
-    pub fn is_diff(&self) -> bool {
-        self.code.is_diff()
-    }
-}
-
-/// Lines of code counts for a single context (code, tests, or examples)
+/// - `code`, `tests`, `examples`: Actual executable/logic lines, distinguished by context
+/// - `docs`, `comments`, `blanks`: Metadata lines, counted regardless of location
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Locs {
-    /// Blank lines (whitespace only)
-    pub blank: u64,
-    /// Executable/logic lines (actual code, not comments or blanks)
-    pub logic: u64,
-    /// Documentation comment lines (`///`, `//!`, `/** */`, `/*! */`)
+    /// Logic lines in production code (src/, not in test blocks)
+    pub code: u64,
+    /// Logic lines in test code (#[test], #[cfg(test)], tests/ directory)
+    pub tests: u64,
+    /// Logic lines in example code (examples/ directory)
+    pub examples: u64,
+    /// Documentation comment lines (///, //!, /** */, /*! */)
     pub docs: u64,
-    /// Regular comment lines (`//`, `/* */`)
+    /// Regular comment lines (//, /* */)
     pub comments: u64,
+    /// Blank lines (whitespace only)
+    pub blanks: u64,
 }
 
 impl Locs {
-    /// Create a new Locs with all zeros
+    /// Create a new Locs with all zeros.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Total lines in this context
+    /// Total lines (sum of all 6 types).
     pub fn total(&self) -> u64 {
-        self.blank + self.logic + self.docs + self.comments
+        self.code + self.tests + self.examples + self.docs + self.comments + self.blanks
+    }
+
+    /// Total logic lines (code + tests + examples).
+    pub fn total_logic(&self) -> u64 {
+        self.code + self.tests + self.examples
+    }
+
+    /// Return a filtered copy with only the specified line types included.
+    /// Unselected types are zeroed out.
+    pub fn filter(&self, types: LineTypes) -> Self {
+        Self {
+            code: if types.code { self.code } else { 0 },
+            tests: if types.tests { self.tests } else { 0 },
+            examples: if types.examples { self.examples } else { 0 },
+            docs: if types.docs { self.docs } else { 0 },
+            comments: if types.comments { self.comments } else { 0 },
+            blanks: if types.blanks { self.blanks } else { 0 },
+        }
     }
 }
 
@@ -150,20 +77,24 @@ impl Add for Locs {
 
     fn add(self, other: Self) -> Self {
         Self {
-            blank: self.blank + other.blank,
-            logic: self.logic + other.logic,
+            code: self.code + other.code,
+            tests: self.tests + other.tests,
+            examples: self.examples + other.examples,
             docs: self.docs + other.docs,
             comments: self.comments + other.comments,
+            blanks: self.blanks + other.blanks,
         }
     }
 }
 
 impl AddAssign for Locs {
     fn add_assign(&mut self, other: Self) {
-        self.blank += other.blank;
-        self.logic += other.logic;
+        self.code += other.code;
+        self.tests += other.tests;
+        self.examples += other.examples;
         self.docs += other.docs;
         self.comments += other.comments;
+        self.blanks += other.blanks;
     }
 }
 
@@ -172,237 +103,129 @@ impl Sub for Locs {
 
     fn sub(self, other: Self) -> Self {
         Self {
-            blank: self.blank.saturating_sub(other.blank),
-            logic: self.logic.saturating_sub(other.logic),
+            code: self.code.saturating_sub(other.code),
+            tests: self.tests.saturating_sub(other.tests),
+            examples: self.examples.saturating_sub(other.examples),
             docs: self.docs.saturating_sub(other.docs),
             comments: self.comments.saturating_sub(other.comments),
+            blanks: self.blanks.saturating_sub(other.blanks),
         }
     }
 }
 
 impl SubAssign for Locs {
     fn sub_assign(&mut self, other: Self) {
-        self.blank = self.blank.saturating_sub(other.blank);
-        self.logic = self.logic.saturating_sub(other.logic);
+        self.code = self.code.saturating_sub(other.code);
+        self.tests = self.tests.saturating_sub(other.tests);
+        self.examples = self.examples.saturating_sub(other.examples);
         self.docs = self.docs.saturating_sub(other.docs);
         self.comments = self.comments.saturating_sub(other.comments);
+        self.blanks = self.blanks.saturating_sub(other.blanks);
     }
 }
 
-/// Aggregated LOC statistics separating code, tests, and examples
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LocStats {
-    /// Number of files analyzed
-    pub file_count: u64,
-    /// Production code (not tests, not examples)
-    pub code: Locs,
-    /// Test code (`#[test]`, `#[cfg(test)]`, `tests/` directory)
-    pub tests: Locs,
-    /// Example code (`examples/` directory)
-    pub examples: Locs,
-}
-
-impl LocStats {
-    /// Create new empty stats
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Total blank lines across all contexts
-    pub fn blank(&self) -> u64 {
-        self.code.blank + self.tests.blank + self.examples.blank
-    }
-
-    /// Total logic/executable lines across all contexts
-    pub fn logic(&self) -> u64 {
-        self.code.logic + self.tests.logic + self.examples.logic
-    }
-
-    /// Total doc comment lines across all contexts
-    pub fn docs(&self) -> u64 {
-        self.code.docs + self.tests.docs + self.examples.docs
-    }
-
-    /// Total regular comment lines across all contexts
-    pub fn comments(&self) -> u64 {
-        self.code.comments + self.tests.comments + self.examples.comments
-    }
-
-    /// Total lines across all contexts
-    pub fn total(&self) -> u64 {
-        self.code.total() + self.tests.total() + self.examples.total()
-    }
-
-    /// Return a filtered copy with only the specified contexts included.
-    pub fn filter(&self, contexts: Contexts) -> Self {
-        Self {
-            file_count: self.file_count,
-            code: if contexts.code {
-                self.code
-            } else {
-                Locs::new()
-            },
-            tests: if contexts.tests {
-                self.tests
-            } else {
-                Locs::new()
-            },
-            examples: if contexts.examples {
-                self.examples
-            } else {
-                Locs::new()
-            },
-        }
-    }
-}
-
-impl Add for LocStats {
-    type Output = Self;
-
-    fn add(self, other: Self) -> Self {
-        Self {
-            file_count: self.file_count + other.file_count,
-            code: self.code + other.code,
-            tests: self.tests + other.tests,
-            examples: self.examples + other.examples,
-        }
-    }
-}
-
-impl AddAssign for LocStats {
-    fn add_assign(&mut self, other: Self) {
-        self.file_count += other.file_count;
-        self.code += other.code;
-        self.tests += other.tests;
-        self.examples += other.examples;
-    }
-}
-
-impl Sub for LocStats {
-    type Output = Self;
-
-    fn sub(self, other: Self) -> Self {
-        Self {
-            file_count: self.file_count.saturating_sub(other.file_count),
-            code: self.code - other.code,
-            tests: self.tests - other.tests,
-            examples: self.examples - other.examples,
-        }
-    }
-}
-
-impl SubAssign for LocStats {
-    fn sub_assign(&mut self, other: Self) {
-        self.file_count = self.file_count.saturating_sub(other.file_count);
-        self.code -= other.code;
-        self.tests -= other.tests;
-        self.examples -= other.examples;
-    }
-}
-
-/// Statistics for a single file
+/// Statistics for a single file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileStats {
-    /// Path to the file
+    /// Path to the file.
     pub path: PathBuf,
-    /// LOC statistics for this file
-    pub stats: LocStats,
+    /// LOC statistics for this file.
+    pub stats: Locs,
 }
 
 impl FileStats {
-    /// Create new file stats
-    pub fn new(path: PathBuf, stats: LocStats) -> Self {
+    /// Create new file stats.
+    pub fn new(path: PathBuf, stats: Locs) -> Self {
         Self { path, stats }
     }
 
-    /// Return a filtered copy with only the specified contexts included.
-    pub fn filter(&self, contexts: Contexts) -> Self {
+    /// Return a filtered copy with only the specified line types included.
+    pub fn filter(&self, types: LineTypes) -> Self {
         Self {
             path: self.path.clone(),
-            stats: self.stats.filter(contexts),
+            stats: self.stats.filter(types),
         }
     }
 }
 
 /// Statistics for a Rust module.
 ///
-/// A module aggregates files at the directory level. In Rust's new-style module syntax:
+/// A module aggregates files at the directory level. In Rust's module syntax:
 /// - `foo/` directory and its sibling `foo.rs` file together form module "foo"
 /// - `foo/bar.rs` is submodule "foo::bar"
-/// - Files in `foo/` without a sibling `foo.rs` are still grouped under "foo"
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModuleStats {
-    /// Module path (e.g., "foo", "foo::bar", or "" for root)
+    /// Module path (e.g., "foo", "foo::bar", or "" for root).
     pub name: String,
-    /// Aggregated LOC statistics
-    pub stats: LocStats,
-    /// Files belonging to this module
+    /// Aggregated LOC statistics.
+    pub stats: Locs,
+    /// Files belonging to this module.
     pub files: Vec<PathBuf>,
 }
 
 impl ModuleStats {
-    /// Create new module stats
+    /// Create new module stats.
     pub fn new(name: String) -> Self {
         Self {
             name,
-            stats: LocStats::new(),
+            stats: Locs::new(),
             files: Vec::new(),
         }
     }
 
-    /// Add stats from a file to this module
-    pub fn add_file(&mut self, path: PathBuf, stats: LocStats) {
+    /// Add stats from a file to this module.
+    pub fn add_file(&mut self, path: PathBuf, stats: Locs) {
         self.stats += stats;
         self.files.push(path);
     }
 
-    /// Return a filtered copy with only the specified contexts included.
-    pub fn filter(&self, contexts: Contexts) -> Self {
+    /// Return a filtered copy with only the specified line types included.
+    pub fn filter(&self, types: LineTypes) -> Self {
         Self {
             name: self.name.clone(),
-            stats: self.stats.filter(contexts),
+            stats: self.stats.filter(types),
             files: self.files.clone(),
         }
     }
 }
 
-/// Statistics for a crate within a workspace
+/// Statistics for a crate within a workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CrateStats {
-    /// Name of the crate
+    /// Name of the crate.
     pub name: String,
-    /// Root path of the crate
+    /// Root path of the crate.
     pub path: PathBuf,
-    /// Aggregated LOC statistics
-    pub stats: LocStats,
-    /// Per-file statistics (optional, for detailed output)
+    /// Aggregated LOC statistics.
+    pub stats: Locs,
+    /// Per-file statistics (for detailed output).
     pub files: Vec<FileStats>,
 }
 
 impl CrateStats {
-    /// Create new crate stats
+    /// Create new crate stats.
     pub fn new(name: String, path: PathBuf) -> Self {
         Self {
             name,
             path,
-            stats: LocStats::new(),
+            stats: Locs::new(),
             files: Vec::new(),
         }
     }
 
-    /// Add file stats to this crate
+    /// Add file stats to this crate.
     pub fn add_file(&mut self, file_stats: FileStats) {
-        self.stats += file_stats.stats.clone();
+        self.stats += file_stats.stats;
         self.files.push(file_stats);
     }
 
-    /// Return a filtered copy with only the specified contexts included.
-    pub fn filter(&self, contexts: Contexts) -> Self {
+    /// Return a filtered copy with only the specified line types included.
+    pub fn filter(&self, types: LineTypes) -> Self {
         Self {
             name: self.name.clone(),
             path: self.path.clone(),
-            stats: self.stats.filter(contexts),
-            files: self.files.iter().map(|f| f.filter(contexts)).collect(),
+            stats: self.stats.filter(types),
+            files: self.files.iter().map(|f| f.filter(types)).collect(),
         }
     }
 }
@@ -414,103 +237,80 @@ mod tests {
     #[test]
     fn test_locs_default() {
         let locs = Locs::new();
-        assert_eq!(locs.blank, 0);
-        assert_eq!(locs.logic, 0);
+        assert_eq!(locs.code, 0);
+        assert_eq!(locs.tests, 0);
+        assert_eq!(locs.examples, 0);
         assert_eq!(locs.docs, 0);
         assert_eq!(locs.comments, 0);
+        assert_eq!(locs.blanks, 0);
         assert_eq!(locs.total(), 0);
     }
 
     #[test]
     fn test_locs_total() {
         let locs = Locs {
-            blank: 10,
-            logic: 100,
-            docs: 20,
-            comments: 5,
+            code: 100,
+            tests: 50,
+            examples: 20,
+            docs: 30,
+            comments: 10,
+            blanks: 15,
         };
-        assert_eq!(locs.total(), 135);
+        assert_eq!(locs.total(), 225);
+        assert_eq!(locs.total_logic(), 170);
     }
 
     #[test]
     fn test_locs_add() {
         let a = Locs {
-            blank: 10,
-            logic: 100,
-            docs: 20,
-            comments: 5,
+            code: 100,
+            tests: 50,
+            examples: 20,
+            docs: 30,
+            comments: 10,
+            blanks: 15,
         };
         let b = Locs {
-            blank: 5,
-            logic: 50,
-            docs: 10,
-            comments: 2,
+            code: 50,
+            tests: 25,
+            examples: 10,
+            docs: 15,
+            comments: 5,
+            blanks: 10,
         };
         let sum = a + b;
-        assert_eq!(sum.blank, 15);
-        assert_eq!(sum.logic, 150);
-        assert_eq!(sum.docs, 30);
-        assert_eq!(sum.comments, 7);
+        assert_eq!(sum.code, 150);
+        assert_eq!(sum.tests, 75);
+        assert_eq!(sum.examples, 30);
+        assert_eq!(sum.docs, 45);
+        assert_eq!(sum.comments, 15);
+        assert_eq!(sum.blanks, 25);
     }
 
     #[test]
-    fn test_loc_stats_totals() {
-        let stats = LocStats {
-            file_count: 3,
-            code: Locs {
-                blank: 10,
-                logic: 100,
-                docs: 20,
-                comments: 5,
-            },
-            tests: Locs {
-                blank: 5,
-                logic: 50,
-                docs: 2,
-                comments: 3,
-            },
-            examples: Locs {
-                blank: 2,
-                logic: 20,
-                docs: 5,
-                comments: 1,
-            },
+    fn test_locs_filter() {
+        let locs = Locs {
+            code: 100,
+            tests: 50,
+            examples: 20,
+            docs: 30,
+            comments: 10,
+            blanks: 15,
         };
 
-        assert_eq!(stats.blank(), 17);
-        assert_eq!(stats.logic(), 170);
-        assert_eq!(stats.docs(), 27);
-        assert_eq!(stats.comments(), 9);
-        assert_eq!(stats.total(), 223);
-    }
+        // Filter to only code
+        let code_only = locs.filter(LineTypes::new().with_code());
+        assert_eq!(code_only.code, 100);
+        assert_eq!(code_only.tests, 0);
+        assert_eq!(code_only.examples, 0);
+        assert_eq!(code_only.docs, 0);
+        assert_eq!(code_only.comments, 0);
+        assert_eq!(code_only.blanks, 0);
 
-    #[test]
-    fn test_loc_stats_add() {
-        let a = LocStats {
-            file_count: 2,
-            code: Locs {
-                blank: 10,
-                logic: 100,
-                docs: 20,
-                comments: 5,
-            },
-            tests: Locs::new(),
-            examples: Locs::new(),
-        };
-        let b = LocStats {
-            file_count: 1,
-            code: Locs {
-                blank: 5,
-                logic: 50,
-                docs: 10,
-                comments: 2,
-            },
-            tests: Locs::new(),
-            examples: Locs::new(),
-        };
-
-        let sum = a + b;
-        assert_eq!(sum.file_count, 3);
-        assert_eq!(sum.code.logic, 150);
+        // Filter to code + tests
+        let code_tests = locs.filter(LineTypes::new().with_code().with_tests());
+        assert_eq!(code_tests.code, 100);
+        assert_eq!(code_tests.tests, 50);
+        assert_eq!(code_tests.examples, 0);
     }
 }

@@ -1,7 +1,14 @@
 //! Rust source file visitor for LOC counting.
 //!
 //! This module provides the core parsing logic for analyzing Rust source files
-//! and categorizing lines as code, comments, documentation, or blanks.
+//! and categorizing lines into one of 6 types:
+//!
+//! - **code**: Logic lines in production code
+//! - **tests**: Logic lines in test code (#[test], #[cfg(test)], tests/)
+//! - **examples**: Logic lines in example code (examples/)
+//! - **docs**: Documentation comments (///, //!, /** */, /*! */)
+//! - **comments**: Regular comments (//, /* */)
+//! - **blanks**: Blank/whitespace-only lines
 //!
 //! ## Acknowledgment
 //!
@@ -9,13 +16,6 @@
 //! [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc) by Maxim Gritsenko.
 //! Many thanks to the original author for the excellent implementation.
 //! cargo-warloc is licensed under MIT.
-//!
-//! ## Modifications from original
-//!
-//! - Adapted to use rustloclib's `LocStats` and `Locs` types
-//! - Added `from_reader` constructor for testing without files
-//! - Changed from `whitespaces` to `blank` field naming
-//! - Added proper error handling instead of panics
 
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -25,24 +25,19 @@ use std::path::Path;
 use utf8_chars::BufReadCharsExt;
 
 use crate::error::RustlocError;
-use crate::stats::{LocStats, Locs};
+use crate::stats::Locs;
 use crate::Result;
 
 /// A visitor that parses Rust source files and counts lines of code.
 ///
 /// The visitor uses a token-based parser with single-character lookahead to
-/// distinguish between:
-/// - Code lines
-/// - Comment lines (`//`, `/* */`)
-/// - Documentation comment lines (`///`, `//!`, `/** */`, `/*! */`)
-/// - Blank lines (whitespace only)
-///
+/// distinguish between code, comments, documentation, and blank lines.
 /// It also recognizes test blocks (`#[test]`, `#[cfg(test)]`) and categorizes
-/// code appropriately as main, test, or example code.
+/// logic lines appropriately as code, tests, or examples.
 pub struct Visitor<T: Read> {
     reader: BufReader<T>,
     context: VisitorContext,
-    stats: LocStats,
+    stats: Locs,
     lookahead: Option<char>,
     curr_string: String,
     curr_line_no: usize,
@@ -50,6 +45,9 @@ pub struct Visitor<T: Read> {
 }
 
 /// The context in which code is being analyzed.
+///
+/// This determines how logic lines are categorized (code/tests/examples).
+/// Comments, docs, and blanks are context-independent.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum VisitorContext {
     /// Production code
@@ -126,7 +124,7 @@ impl VisitorContext {
 impl Visitor<File> {
     /// Create a new visitor for a file at the given path.
     ///
-    /// The context (main/tests/examples) is automatically determined from the path.
+    /// The context (code/tests/examples) is automatically determined from the path.
     pub fn new(file_path: impl AsRef<Path>, debug: bool) -> Result<Self> {
         let path = file_path.as_ref();
         let file = File::open(path).map_err(|e| RustlocError::FileRead {
@@ -141,7 +139,7 @@ impl Visitor<File> {
         Ok(Self {
             reader,
             context,
-            stats: LocStats::default(),
+            stats: Locs::default(),
             lookahead,
             curr_string: String::new(),
             curr_line_no: 1,
@@ -161,7 +159,7 @@ impl<T: Read> Visitor<T> {
         Self {
             reader,
             context,
-            stats: LocStats::default(),
+            stats: Locs::default(),
             lookahead,
             curr_string: String::new(),
             curr_line_no: 1,
@@ -170,8 +168,7 @@ impl<T: Read> Visitor<T> {
     }
 
     /// Visit the file and return LOC statistics.
-    pub fn visit_file(mut self) -> LocStats {
-        self.stats.file_count += 1;
+    pub fn visit_file(mut self) -> Locs {
         self.visit_code(self.context);
         self.stats
     }
@@ -361,42 +358,48 @@ impl<T: Read> Visitor<T> {
         }
     }
 
+    /// Finish processing a line and categorize it.
+    ///
+    /// The key insight: only logic lines need context (code/tests/examples).
+    /// Comments, docs, and blanks are counted regardless of where they appear.
     fn finish_line(&mut self, context: VisitorContext, line_context: LineContext) {
         let curr = std::mem::take(&mut self.curr_string);
         let line = self.curr_line_no;
         self.curr_line_no += 1;
 
-        let stats = self.mut_stats(context);
-
         if line_context.has_code {
-            stats.logic += 1;
-
+            // Logic lines depend on context
+            match context {
+                VisitorContext::Code => self.stats.code += 1,
+                VisitorContext::Tests => self.stats.tests += 1,
+                VisitorContext::Example => self.stats.examples += 1,
+            }
             if self.debug {
-                eprint!("{line}: LOGIC: {curr}");
+                let ctx = match context {
+                    VisitorContext::Code => "CODE",
+                    VisitorContext::Tests => "TEST",
+                    VisitorContext::Example => "EXAMPLE",
+                };
+                eprint!("{line}: {ctx}: {curr}");
             }
         } else if line_context.has_doc_comment_start {
-            stats.docs += 1;
+            // Doc comments are context-independent
+            self.stats.docs += 1;
             if self.debug {
                 eprint!("{line}: DOCS: {curr}");
             }
         } else if line_context.has_comment_start {
-            stats.comments += 1;
+            // Regular comments are context-independent
+            self.stats.comments += 1;
             if self.debug {
                 eprint!("{line}: COMM: {curr}");
             }
         } else {
-            stats.blank += 1;
+            // Blank lines are context-independent
+            self.stats.blanks += 1;
             if self.debug {
                 eprint!("{line}: BLANK: {curr}");
             }
-        }
-    }
-
-    fn mut_stats(&mut self, context: VisitorContext) -> &mut Locs {
-        match context {
-            VisitorContext::Code => &mut self.stats.code,
-            VisitorContext::Tests => &mut self.stats.tests,
-            VisitorContext::Example => &mut self.stats.examples,
         }
     }
 
@@ -510,12 +513,15 @@ impl<T: Read> Visitor<T> {
     }
 }
 
-/// Parse a single Rust file and return LOC statistics.
+/// Gather LOC statistics for a file at the given path.
+///
+/// This is the primary entry point for analyzing a single file.
+/// The context (code/tests/examples) is automatically determined from the path.
 ///
 /// # Example
 ///
 /// ```rust
-/// use rustloclib::visitor::parse_file;
+/// use rustloclib::visitor::gather_stats_for_path;
 /// use std::fs;
 /// use tempfile::tempdir;
 ///
@@ -523,22 +529,27 @@ impl<T: Read> Visitor<T> {
 /// let file_path = dir.path().join("main.rs");
 /// fs::write(&file_path, "fn main() {\n    println!(\"Hello\");\n}\n").unwrap();
 ///
-/// let stats = parse_file(&file_path).unwrap();
-/// assert_eq!(stats.code.logic, 3);
+/// let stats = gather_stats_for_path(&file_path).unwrap();
+/// assert_eq!(stats.code, 3);
 /// ```
-pub fn parse_file(path: impl AsRef<Path>) -> Result<LocStats> {
+pub fn gather_stats_for_path(path: impl AsRef<Path>) -> Result<Locs> {
     let visitor = Visitor::new(path, false)?;
     Ok(visitor.visit_file())
 }
 
-/// Parse Rust source from a string and return LOC statistics.
+/// Gather LOC statistics from a string of Rust source code.
 ///
-/// The context determines how the code is categorized (code, tests, or examples).
+/// The context determines how logic lines are categorized:
+/// - `VisitorContext::Code` → logic lines count as `code`
+/// - `VisitorContext::Tests` → logic lines count as `tests`
+/// - `VisitorContext::Example` → logic lines count as `examples`
+///
+/// Comments, docs, and blanks are always counted regardless of context.
 ///
 /// # Example
 ///
 /// ```rust
-/// use rustloclib::visitor::{parse_string, VisitorContext};
+/// use rustloclib::visitor::{gather_stats, VisitorContext};
 ///
 /// let source = r#"
 /// fn main() {
@@ -546,20 +557,26 @@ pub fn parse_file(path: impl AsRef<Path>) -> Result<LocStats> {
 /// }
 /// "#;
 ///
-/// let stats = parse_string(source, VisitorContext::Code);
-/// assert_eq!(stats.code.logic, 3);
+/// let stats = gather_stats(source, VisitorContext::Code);
+/// assert_eq!(stats.code, 3);
 /// ```
-pub fn parse_string(source: &str, context: VisitorContext) -> LocStats {
+pub fn gather_stats(source: &str, context: VisitorContext) -> Locs {
     let visitor = Visitor::from_reader(source.as_bytes(), context, false);
     visitor.visit_file()
 }
+
+// Keep old names as aliases for backwards compatibility during transition
+#[doc(hidden)]
+pub use gather_stats as parse_string;
+#[doc(hidden)]
+pub use gather_stats_for_path as parse_file;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn stats(file: &str) -> LocStats {
-        parse_string(file, VisitorContext::Code)
+    fn stats(file: &str) -> Locs {
+        gather_stats(file, VisitorContext::Code)
     }
 
     #[test]
@@ -567,9 +584,8 @@ mod tests {
         let file = "\n";
         let stats = stats(file);
 
-        assert_eq!(stats.file_count, 1);
-        assert_eq!(stats.code.blank, 1);
-        assert_eq!(stats.code.total(), 1);
+        assert_eq!(stats.blanks, 1);
+        assert_eq!(stats.total(), 1);
     }
 
     #[test]
@@ -577,9 +593,8 @@ mod tests {
         let file = "  \t\t \n";
         let stats = stats(file);
 
-        assert_eq!(stats.file_count, 1);
-        assert_eq!(stats.code.blank, 1);
-        assert_eq!(stats.code.total(), 1);
+        assert_eq!(stats.blanks, 1);
+        assert_eq!(stats.total(), 1);
     }
 
     #[test]
@@ -587,8 +602,8 @@ mod tests {
         let file = "mod lib;\n";
         let stats = stats(file);
 
-        assert_eq!(stats.code.logic, 1);
-        assert_eq!(stats.code.total(), 1);
+        assert_eq!(stats.code, 1);
+        assert_eq!(stats.total(), 1);
     }
 
     #[test]
@@ -596,8 +611,8 @@ mod tests {
         let file = "   // Comment\n";
         let stats = stats(file);
 
-        assert_eq!(stats.code.comments, 1);
-        assert_eq!(stats.code.total(), 1);
+        assert_eq!(stats.comments, 1);
+        assert_eq!(stats.total(), 1);
     }
 
     #[test]
@@ -605,8 +620,8 @@ mod tests {
         let file = "   /// Documentation\n";
         let stats = stats(file);
 
-        assert_eq!(stats.code.docs, 1);
-        assert_eq!(stats.code.total(), 1);
+        assert_eq!(stats.docs, 1);
+        assert_eq!(stats.total(), 1);
     }
 
     #[test]
@@ -614,8 +629,8 @@ mod tests {
         let file = "   //! Documentation\n";
         let stats = stats(file);
 
-        assert_eq!(stats.code.docs, 1);
-        assert_eq!(stats.code.total(), 1);
+        assert_eq!(stats.docs, 1);
+        assert_eq!(stats.total(), 1);
     }
 
     #[test]
@@ -623,8 +638,8 @@ mod tests {
         let file = "   /* comment */ \n";
         let stats = stats(file);
 
-        assert_eq!(stats.code.comments, 1);
-        assert_eq!(stats.code.total(), 1);
+        assert_eq!(stats.comments, 1);
+        assert_eq!(stats.total(), 1);
     }
 
     #[test]
@@ -637,9 +652,9 @@ mod tests {
 
         let stats = stats(file);
 
-        assert_eq!(stats.code.comments, 3);
-        assert_eq!(stats.code.blank, 1);
-        assert_eq!(stats.code.total(), 4);
+        assert_eq!(stats.comments, 3);
+        assert_eq!(stats.blanks, 1);
+        assert_eq!(stats.total(), 4);
     }
 
     #[test]
@@ -647,8 +662,8 @@ mod tests {
         let file = "   /** comment */ \n";
         let stats = stats(file);
 
-        assert_eq!(stats.code.docs, 1);
-        assert_eq!(stats.code.total(), 1);
+        assert_eq!(stats.docs, 1);
+        assert_eq!(stats.total(), 1);
     }
 
     #[test]
@@ -661,9 +676,9 @@ mod tests {
 
         let stats = stats(file);
 
-        assert_eq!(stats.code.docs, 3);
-        assert_eq!(stats.code.blank, 1);
-        assert_eq!(stats.code.total(), 4);
+        assert_eq!(stats.docs, 3);
+        assert_eq!(stats.blanks, 1);
+        assert_eq!(stats.total(), 4);
     }
 
     #[test]
@@ -675,8 +690,8 @@ let a = 1;
 
         let stats = stats(file);
 
-        assert_eq!(stats.code.comments, 0);
-        assert_eq!(stats.code.logic, 2);
+        assert_eq!(stats.comments, 0);
+        assert_eq!(stats.code, 2);
     }
 
     #[test]
@@ -692,9 +707,11 @@ mod tests {
 
         let stats = stats(file);
 
-        assert_eq!(stats.tests.logic, 4);
-        assert_eq!(stats.tests.blank, 2);
-        assert_eq!(stats.tests.total(), 6);
+        // Test logic lines
+        assert_eq!(stats.tests, 4);
+        // Blanks (context-independent)
+        assert_eq!(stats.blanks, 3); // first line + 2 inside
+        assert_eq!(stats.total(), 7);
     }
 
     #[test]
@@ -708,11 +725,10 @@ fn my_test() {
 
         let stats = stats(file);
 
-        // First empty line is in code context before #[test]
-        assert_eq!(stats.code.blank, 1);
+        // First empty line is blank
+        assert_eq!(stats.blanks, 1);
         // #[test], fn, assert, } are all test code
-        assert_eq!(stats.tests.logic, 4);
-        assert_eq!(stats.tests.blank, 0);
+        assert_eq!(stats.tests, 4);
     }
 
     #[test]
@@ -729,9 +745,9 @@ This is a string
 
         let stats = stats(file);
 
-        assert_eq!(stats.code.logic, 4);
-        assert_eq!(stats.code.blank, 4);
-        assert_eq!(stats.code.total(), 8);
+        assert_eq!(stats.code, 4);
+        assert_eq!(stats.blanks, 4);
+        assert_eq!(stats.total(), 8);
     }
 
     #[test]
@@ -753,12 +769,11 @@ mod tests {
         let stats = stats(file);
 
         // Production code: fn + println + }
-        assert_eq!(stats.code.logic, 3);
-        // Code blanks: first line + line after }
-        assert_eq!(stats.code.blank, 2);
-
+        assert_eq!(stats.code, 3);
         // Test code: #[cfg(test)] + mod tests { + #[test] + fn test + assert + } + }
-        assert_eq!(stats.tests.logic, 7);
+        assert_eq!(stats.tests, 7);
+        // Blanks: first line + line after } (context-independent)
+        assert_eq!(stats.blanks, 2);
     }
 
     #[test]
@@ -790,8 +805,8 @@ fn code() {}
 
         let stats = stats(file);
 
-        assert_eq!(stats.code.comments, 1);
-        assert_eq!(stats.code.logic, 1);
+        assert_eq!(stats.comments, 1);
+        assert_eq!(stats.code, 1);
     }
 
     #[test]
@@ -804,9 +819,9 @@ fn documented() {}
 
         let stats = stats(file);
 
-        assert_eq!(stats.code.docs, 1);
-        assert_eq!(stats.code.comments, 1);
-        assert_eq!(stats.code.logic, 1);
+        assert_eq!(stats.docs, 1);
+        assert_eq!(stats.comments, 1);
+        assert_eq!(stats.code, 1);
     }
 
     #[test]
@@ -816,8 +831,8 @@ fn documented() {}
         let stats = stats(file);
 
         // This is counted as code because there's code before the comment
-        assert_eq!(stats.code.logic, 1);
-        assert_eq!(stats.code.comments, 0);
+        assert_eq!(stats.code, 1);
+        assert_eq!(stats.comments, 0);
     }
 
     #[test]
@@ -832,7 +847,36 @@ fn foo() {
 
         let stats = stats(file);
 
-        assert_eq!(stats.code.logic, 3); // fn, let, }
-        assert_eq!(stats.code.blank, 3); // empty line at start, two empty lines inside
+        assert_eq!(stats.code, 3); // fn, let, }
+        assert_eq!(stats.blanks, 3); // empty line at start, two empty lines inside
+    }
+
+    #[test]
+    fn examples_context() {
+        let source = "fn example() {}\n";
+        let stats = gather_stats(source, VisitorContext::Example);
+
+        assert_eq!(stats.examples, 1);
+        assert_eq!(stats.code, 0);
+        assert_eq!(stats.tests, 0);
+    }
+
+    #[test]
+    fn comments_and_blanks_are_context_independent() {
+        // Comments and blanks should be counted the same regardless of context
+        let source = "// comment\n\n";
+
+        let code_stats = gather_stats(source, VisitorContext::Code);
+        let test_stats = gather_stats(source, VisitorContext::Tests);
+        let example_stats = gather_stats(source, VisitorContext::Example);
+
+        // All should have same comments and blanks
+        assert_eq!(code_stats.comments, 1);
+        assert_eq!(test_stats.comments, 1);
+        assert_eq!(example_stats.comments, 1);
+
+        assert_eq!(code_stats.blanks, 1);
+        assert_eq!(test_stats.blanks, 1);
+        assert_eq!(example_stats.blanks, 1);
     }
 }

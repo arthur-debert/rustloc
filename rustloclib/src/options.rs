@@ -6,86 +6,129 @@
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-/// Filter for which code contexts to include in results.
+/// Filter for which line types to include in results.
 ///
-/// When a context is disabled, it will be zeroed in returned stats.
+/// The 6 line types are:
+/// - `code`: Production code logic lines
+/// - `tests`: Test code logic lines
+/// - `examples`: Example code logic lines
+/// - `docs`: Documentation comments (anywhere)
+/// - `comments`: Regular comments (anywhere)
+/// - `blanks`: Blank lines (anywhere)
+///
+/// When a line type is disabled, it will be zeroed in returned stats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Contexts {
-    /// Include production code
+pub struct LineTypes {
+    /// Include production code logic lines
     pub code: bool,
-    /// Include test code
+    /// Include test code logic lines
     pub tests: bool,
-    /// Include example code
+    /// Include example code logic lines
     pub examples: bool,
+    /// Include documentation comment lines
+    pub docs: bool,
+    /// Include regular comment lines
+    pub comments: bool,
+    /// Include blank lines
+    pub blanks: bool,
 }
 
-impl Default for Contexts {
+impl Default for LineTypes {
     fn default() -> Self {
         Self::all()
     }
 }
 
-impl Contexts {
-    /// Include all contexts (default)
+impl LineTypes {
+    /// Create with no types enabled (for building up)
+    pub fn new() -> Self {
+        Self::none()
+    }
+
+    /// Include all line types (default)
     pub fn all() -> Self {
         Self {
             code: true,
             tests: true,
             examples: true,
+            docs: true,
+            comments: true,
+            blanks: true,
         }
     }
 
-    /// Include no contexts
+    /// Include no line types
     pub fn none() -> Self {
         Self {
             code: false,
             tests: false,
             examples: false,
+            docs: false,
+            comments: false,
+            blanks: false,
         }
     }
 
     /// Include only production code
     pub fn code_only() -> Self {
-        Self {
-            code: true,
-            tests: false,
-            examples: false,
-        }
+        Self::none().with_code()
     }
 
     /// Include only test code
     pub fn tests_only() -> Self {
-        Self {
-            code: false,
-            tests: true,
-            examples: false,
-        }
+        Self::none().with_tests()
     }
 
     /// Include only example code
     pub fn examples_only() -> Self {
+        Self::none().with_examples()
+    }
+
+    /// Include all logic lines (code + tests + examples)
+    pub fn logic_only() -> Self {
         Self {
-            code: false,
-            tests: false,
+            code: true,
+            tests: true,
             examples: true,
+            docs: false,
+            comments: false,
+            blanks: false,
         }
     }
 
-    /// Builder: set code inclusion
-    pub fn with_code(mut self, include: bool) -> Self {
-        self.code = include;
+    /// Builder: enable code
+    pub fn with_code(mut self) -> Self {
+        self.code = true;
         self
     }
 
-    /// Builder: set tests inclusion
-    pub fn with_tests(mut self, include: bool) -> Self {
-        self.tests = include;
+    /// Builder: enable tests
+    pub fn with_tests(mut self) -> Self {
+        self.tests = true;
         self
     }
 
-    /// Builder: set examples inclusion
-    pub fn with_examples(mut self, include: bool) -> Self {
-        self.examples = include;
+    /// Builder: enable examples
+    pub fn with_examples(mut self) -> Self {
+        self.examples = true;
+        self
+    }
+
+    /// Builder: enable docs
+    pub fn with_docs(mut self) -> Self {
+        self.docs = true;
+        self
+    }
+
+    /// Builder: enable comments
+    pub fn with_comments(mut self) -> Self {
+        self.comments = true;
+        self
+    }
+
+    /// Builder: enable blanks
+    pub fn with_blanks(mut self) -> Self {
+        self.blanks = true;
         self
     }
 }
@@ -118,6 +161,12 @@ pub enum OrderBy {
     Tests,
     /// Order by example line count
     Examples,
+    /// Order by docs line count
+    Docs,
+    /// Order by comments line count
+    Comments,
+    /// Order by blanks line count
+    Blanks,
     /// Order by total line count
     Total,
 }
@@ -131,6 +180,9 @@ impl FromStr for OrderBy {
             "code" => Ok(OrderBy::Code),
             "tests" | "test" => Ok(OrderBy::Tests),
             "examples" | "example" => Ok(OrderBy::Examples),
+            "docs" | "doc" => Ok(OrderBy::Docs),
+            "comments" | "comment" => Ok(OrderBy::Comments),
+            "blanks" | "blank" => Ok(OrderBy::Blanks),
             "total" => Ok(OrderBy::Total),
             _ => Err(format!("Unknown order field: {}", s)),
         }
@@ -213,35 +265,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_contexts_default() {
-        let ctx = Contexts::default();
-        assert!(ctx.code);
-        assert!(ctx.tests);
-        assert!(ctx.examples);
+    fn test_line_types_default() {
+        let lt = LineTypes::default();
+        assert!(lt.code);
+        assert!(lt.tests);
+        assert!(lt.examples);
+        assert!(lt.docs);
+        assert!(lt.comments);
+        assert!(lt.blanks);
     }
 
     #[test]
-    fn test_contexts_none() {
-        let ctx = Contexts::none();
-        assert!(!ctx.code);
-        assert!(!ctx.tests);
-        assert!(!ctx.examples);
+    fn test_line_types_none() {
+        let lt = LineTypes::none();
+        assert!(!lt.code);
+        assert!(!lt.tests);
+        assert!(!lt.examples);
+        assert!(!lt.docs);
+        assert!(!lt.comments);
+        assert!(!lt.blanks);
     }
 
     #[test]
-    fn test_contexts_builder() {
-        let ctx = Contexts::none().with_code(true).with_tests(true);
-        assert!(ctx.code);
-        assert!(ctx.tests);
-        assert!(!ctx.examples);
+    fn test_line_types_builder() {
+        let lt = LineTypes::new().with_code().with_tests();
+        assert!(lt.code);
+        assert!(lt.tests);
+        assert!(!lt.examples);
+        assert!(!lt.docs);
+        assert!(!lt.comments);
+        assert!(!lt.blanks);
     }
 
     #[test]
-    fn test_contexts_code_only() {
-        let ctx = Contexts::code_only();
-        assert!(ctx.code);
-        assert!(!ctx.tests);
-        assert!(!ctx.examples);
+    fn test_line_types_code_only() {
+        let lt = LineTypes::code_only();
+        assert!(lt.code);
+        assert!(!lt.tests);
+        assert!(!lt.examples);
+        assert!(!lt.docs);
+        assert!(!lt.comments);
+        assert!(!lt.blanks);
+    }
+
+    #[test]
+    fn test_line_types_logic_only() {
+        let lt = LineTypes::logic_only();
+        assert!(lt.code);
+        assert!(lt.tests);
+        assert!(lt.examples);
+        assert!(!lt.docs);
+        assert!(!lt.comments);
+        assert!(!lt.blanks);
     }
 
     #[test]
@@ -271,6 +346,9 @@ mod tests {
         assert_eq!(OrderBy::from_str("tests").unwrap(), OrderBy::Tests);
         assert_eq!(OrderBy::from_str("total").unwrap(), OrderBy::Total);
         assert_eq!(OrderBy::from_str("label").unwrap(), OrderBy::Label);
+        assert_eq!(OrderBy::from_str("docs").unwrap(), OrderBy::Docs);
+        assert_eq!(OrderBy::from_str("comments").unwrap(), OrderBy::Comments);
+        assert_eq!(OrderBy::from_str("blanks").unwrap(), OrderBy::Blanks);
         assert!(OrderBy::from_str("invalid").is_err());
     }
 }

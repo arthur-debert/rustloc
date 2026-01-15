@@ -8,44 +8,24 @@ fn main() {
 
     let result = count_workspace(&path, CountOptions::new()).expect("Failed to count workspace");
 
-    println!("File count: {}", result.total.file_count);
-    println!("Context      | Logic        | Blank        | Docs         | Comments     | Total");
+    println!("rustloc flat line type model");
+    println!("=============================");
+    println!();
     println!(
-        "-------------|--------------|--------------|--------------|--------------|-------------"
+        "Line Type    | Count\n\
+         -------------|-------------"
     );
+    println!("Code         | {:12}", result.total.code);
+    println!("Tests        | {:12}", result.total.tests);
+    println!("Examples     | {:12}", result.total.examples);
+    println!("Docs         | {:12}", result.total.docs);
+    println!("Comments     | {:12}", result.total.comments);
+    println!("Blanks       | {:12}", result.total.blanks);
+    println!("-------------|-------------");
+    println!("Total        | {:12}", result.total.total());
+    println!();
     println!(
-        "Code         | {:12} | {:12} | {:12} | {:12} | {:12}",
-        result.total.code.logic,
-        result.total.code.blank,
-        result.total.code.docs,
-        result.total.code.comments,
-        result.total.code.total()
-    );
-    println!(
-        "Tests        | {:12} | {:12} | {:12} | {:12} | {:12}",
-        result.total.tests.logic,
-        result.total.tests.blank,
-        result.total.tests.docs,
-        result.total.tests.comments,
-        result.total.tests.total()
-    );
-    println!(
-        "Examples     | {:12} | {:12} | {:12} | {:12} | {:12}",
-        result.total.examples.logic,
-        result.total.examples.blank,
-        result.total.examples.docs,
-        result.total.examples.comments,
-        result.total.examples.total()
-    );
-    println!(
-        "-------------|--------------|--------------|--------------|--------------|-------------"
-    );
-    println!(
-        "             | {:12} | {:12} | {:12} | {:12} | {:12}",
-        result.total.logic(),
-        result.total.blank(),
-        result.total.docs(),
-        result.total.comments(),
-        result.total.total()
+        "Logic lines (code + tests + examples): {}",
+        result.total.total_logic()
     );
 }
