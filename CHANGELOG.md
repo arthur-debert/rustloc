@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Changed**:
+  - Unified output format for counts and diffs: both now use same table layout (rows=objects, columns=Code/Tests/Examples/Total)
+  - Bare `rustloc` now shows consistent table format with "Total (N files)" row instead of separate header-only view
+  - Diff output shows diff values (+added/-removed/net) in each cell, matching count layout
+  - Diff CSV format now matches count CSV structure with context columns
+- **Added**:
+  - `CellValue` enum in library to represent both count and diff values uniformly
+  - `StatsRow` struct for unified display row representation
+  - `LocStatsDiff::to_stats_row()` for converting diff stats to unified format
+
 ## [0.4.0] - 2026-01-11
 
 - **Added**:
