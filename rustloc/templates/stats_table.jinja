@@ -1,0 +1,12 @@
+{# Template for stats table (counts and diffs) #}
+{{ header }}
+{{ separator }}
+{%- for row in rows -%}
+{%- if not (row.total_net == 0 and row.is_count) %}
+{{ row.name }}{% for cell in row.cells %} {{ cell }}{% endfor %}
+{%- endif -%}
+{%- endfor %}
+{%- if rows %}
+{{ separator }}
+{% endif -%}
+{{ total.name }}{% for cell in total.cells %} {{ cell }}{% endfor %}

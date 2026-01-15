@@ -47,14 +47,15 @@
 //! The parsing logic is adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc)
 //! by Maxim Gritsenko. This CLI wraps rustloclib to provide a user-friendly interface.
 
+mod render;
+
 use std::path::Path;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use rustloclib::{
-    count_workspace, diff_commits, diff_workdir, Aggregation, CellValue, Contexts, CountOptions,
-    CountResult, DiffOptions, DiffResult, FilterConfig, LocStats, LocStatsDiff, StatsRow,
-    WorkdirDiffMode,
+    count_workspace, diff_commits, diff_workdir, Aggregation, Contexts, CountOptions, CountResult,
+    DiffOptions, DiffResult, FilterConfig, LocStats, LocStatsDiff, StatsRow, WorkdirDiffMode,
 };
 
 /// Rust-aware lines of code counter with test/code separation
@@ -178,11 +179,6 @@ fn to_contexts(types: &[ContextType]) -> Contexts {
             .with_tests(types.contains(&ContextType::Tests))
             .with_examples(types.contains(&ContextType::Examples))
     }
-}
-
-/// Format a cell value for display
-fn format_cell(cell: &CellValue, width: usize) -> String {
-    format!("{:>width$}", cell, width = width)
 }
 
 /// Convert a path to a relative path from the base directory.
@@ -350,7 +346,7 @@ fn parse_commit_range(
 // Unified output helpers
 // ============================================================================
 
-/// Print a stats table with rows of StatsRow
+/// Print a stats table with rows of StatsRow using template rendering
 fn print_stats_table(
     rows: &[StatsRow],
     total: &StatsRow,
@@ -358,66 +354,10 @@ fn print_stats_table(
     name_width: usize,
     ctx: &Contexts,
 ) {
-    // Build dynamic header based on which contexts are enabled
-    let mut header_parts = Vec::new();
-    if ctx.code {
-        header_parts.push("Code");
+    match render::render_stats_table(rows, total, name_header, name_width, ctx) {
+        Ok(output) => print!("{}", output),
+        Err(e) => eprintln!("Template error: {}", e),
     }
-    if ctx.tests {
-        header_parts.push("Tests");
-    }
-    if ctx.examples {
-        header_parts.push("Examples");
-    }
-    header_parts.push("Total");
-
-    // Determine cell width based on whether we're showing diffs or counts
-    let cell_width = if total.is_diff() { 16 } else { 10 };
-
-    // Print header
-    print!("{:<width$}", name_header, width = name_width);
-    for part in &header_parts {
-        print!(" {:>width$}", part, width = cell_width);
-    }
-    println!();
-    println!(
-        "{}",
-        "-".repeat(name_width + (cell_width + 1) * header_parts.len())
-    );
-
-    // Helper to print a single row
-    let print_row = |row: &StatsRow| {
-        let truncated = truncate_name(&row.name, name_width - 2);
-        print!("{:<width$}", truncated, width = name_width);
-        if ctx.code {
-            print!(" {}", format_cell(&row.code, cell_width));
-        }
-        if ctx.tests {
-            print!(" {}", format_cell(&row.tests, cell_width));
-        }
-        if ctx.examples {
-            print!(" {}", format_cell(&row.examples, cell_width));
-        }
-        println!(" {}", format_cell(&row.total, cell_width));
-    };
-
-    // Print data rows
-    for row in rows {
-        // Skip rows with 0 total (for counts) or no changes (for diffs)
-        if row.total.net() == 0 && row.is_count() {
-            continue;
-        }
-        print_row(row);
-    }
-
-    // Print separator and total if there are data rows
-    if !rows.is_empty() {
-        println!(
-            "{}",
-            "-".repeat(name_width + (cell_width + 1) * header_parts.len())
-        );
-    }
-    print_row(total);
 }
 
 // ============================================================================
@@ -483,15 +423,6 @@ fn print_count_table(
     );
 
     print_stats_table(&rows, &total, name_header, name_width, ctx);
-}
-
-/// Truncate a name to fit within max_len, adding ".." prefix if needed
-fn truncate_name(name: &str, max_len: usize) -> String {
-    if name.len() > max_len {
-        format!("..{}", &name[name.len() - max_len + 2..])
-    } else {
-        name.to_string()
-    }
 }
 
 fn print_count_json(result: &CountResult) -> Result<(), serde_json::Error> {
