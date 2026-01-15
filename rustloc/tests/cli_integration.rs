@@ -91,8 +91,8 @@ fn test_by_module_output() {
 
     assert!(success);
     assert!(stdout.contains("Module"));
-    assert!(stdout.contains("rustloclib::counter"));
-    assert!(stdout.contains("rustloclib::diff"));
+    assert!(stdout.contains("rustloclib::data::counter"));
+    assert!(stdout.contains("rustloclib::data::diff"));
     assert!(stdout.contains("rustloc"));
     assert!(stdout.contains("Total ("));
 }

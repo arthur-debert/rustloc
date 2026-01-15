@@ -14,7 +14,7 @@
 //! because that's the meaningful distinction. A blank is a blank, a comment is
 //! a comment - where they appear doesn't matter for most analysis.
 
-use crate::options::LineTypes;
+use crate::query::options::LineTypes;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::path::PathBuf;

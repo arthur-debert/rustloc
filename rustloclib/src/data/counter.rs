@@ -7,12 +7,13 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::error::RustlocError;
-use crate::filter::{discover_files, discover_files_in_dirs, FilterConfig};
-use crate::options::{Aggregation, LineTypes};
-use crate::stats::{CrateStats, FileStats, Locs, ModuleStats};
-use crate::visitor::gather_stats_for_path;
-use crate::workspace::{CrateInfo, WorkspaceInfo};
+use crate::query::options::{Aggregation, LineTypes};
+use crate::source::filter::{discover_files, discover_files_in_dirs, FilterConfig};
+use crate::source::workspace::{CrateInfo, WorkspaceInfo};
 use crate::Result;
+
+use super::stats::{CrateStats, FileStats, Locs, ModuleStats};
+use super::visitor::gather_stats_for_path;
 
 /// Options for counting LOC.
 #[derive(Debug, Clone)]

@@ -20,12 +20,13 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::RustlocError;
-use crate::filter::FilterConfig;
-use crate::options::{Aggregation, LineTypes};
-use crate::stats::Locs;
-use crate::visitor::{gather_stats, VisitorContext};
-use crate::workspace::WorkspaceInfo;
+use crate::query::options::{Aggregation, LineTypes};
+use crate::source::filter::FilterConfig;
+use crate::source::workspace::WorkspaceInfo;
 use crate::Result;
+
+use super::stats::Locs;
+use super::visitor::{gather_stats, VisitorContext};
 
 /// Lines of code diff (added vs removed).
 ///
