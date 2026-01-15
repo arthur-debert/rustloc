@@ -34,7 +34,7 @@ impl Default for CountOptions {
             crate_filter: Vec::new(),
             file_filter: FilterConfig::new(),
             aggregation: Aggregation::Total,
-            line_types: LineTypes::all(),
+            line_types: LineTypes::default(),
         }
     }
 }

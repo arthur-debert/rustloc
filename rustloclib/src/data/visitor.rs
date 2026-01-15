@@ -368,6 +368,9 @@ impl<T: Read> Visitor<T> {
         let line = self.curr_line_no;
         self.curr_line_no += 1;
 
+        // Always increment all (total line count)
+        self.stats.all += 1;
+
         if line_context.has_code {
             // Logic lines depend on context
             match context {

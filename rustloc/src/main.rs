@@ -305,7 +305,7 @@ fn extract_line_types(matches: &ArgMatches) -> LineTypes {
         .unwrap_or_default();
 
     if types.is_empty() {
-        LineTypes::all()
+        LineTypes::default()
     } else {
         LineTypes {
             code: types.contains(&"code"),
@@ -314,6 +314,7 @@ fn extract_line_types(matches: &ArgMatches) -> LineTypes {
             docs: types.contains(&"docs"),
             comments: types.contains(&"comments"),
             blanks: types.contains(&"blanks"),
+            all: types.contains(&"all") || types.is_empty(),
         }
     }
 }

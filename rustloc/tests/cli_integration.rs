@@ -44,11 +44,11 @@ fn test_table_output() {
     let (stdout, _, success) = run_rustloc(&["."]);
 
     assert!(success);
-    // Check for context column headers in default view
+    // Check for context column headers in default view (code, tests, docs, all)
     assert!(stdout.contains("Code"));
     assert!(stdout.contains("Tests"));
-    assert!(stdout.contains("Examples"));
-    assert!(stdout.contains("Total"));
+    assert!(stdout.contains("Docs"));
+    assert!(stdout.contains("All"));
     // Total row shows file count in row name
     assert!(stdout.contains("Total (") && stdout.contains("files)"));
 }
@@ -63,7 +63,8 @@ fn test_json_output() {
     assert!(stdout.contains("\"footer\""));
     assert!(stdout.contains("\"Code\""));
     assert!(stdout.contains("\"Tests\""));
-    assert!(stdout.contains("\"Examples\""));
+    assert!(stdout.contains("\"Docs\""));
+    assert!(stdout.contains("\"All\""));
 
     // Verify it's valid JSON with LOCTable structure
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON output");
@@ -140,7 +141,8 @@ fn test_diff_table_output() {
     assert!(stdout.contains("Total (") && stdout.contains("files)"));
     assert!(stdout.contains("Code"));
     assert!(stdout.contains("Tests"));
-    assert!(stdout.contains("Examples"));
+    assert!(stdout.contains("Docs"));
+    assert!(stdout.contains("All"));
     // Check for the +x/-y/z format
     assert!(stdout.contains("+") && stdout.contains("/-"));
 }

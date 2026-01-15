@@ -102,7 +102,7 @@
 //! let queryset = CountQuerySet::from_result(
 //!     &result,
 //!     Aggregation::ByCrate,
-//!     LineTypes::all(),
+//!     LineTypes::everything(),
 //!     Ordering::by_code(),
 //! );
 //!

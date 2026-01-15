@@ -19,13 +19,14 @@ use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::path::PathBuf;
 
-/// Lines of code counts with 6 line types.
+/// Lines of code counts with 7 line types.
 ///
 /// This is the fundamental unit of measurement in rustloc. Each field counts
 /// a specific type of line:
 ///
 /// - `code`, `tests`, `examples`: Actual executable/logic lines, distinguished by context
 /// - `docs`, `comments`, `blanks`: Metadata lines, counted regardless of location
+/// - `all`: Precomputed sum of all line types (total line count)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Locs {
     /// Logic lines in production code (src/, not in test blocks)
@@ -40,6 +41,8 @@ pub struct Locs {
     pub comments: u64,
     /// Blank lines (whitespace only)
     pub blanks: u64,
+    /// Total line count (sum of all types)
+    pub all: u64,
 }
 
 impl Locs {
@@ -48,9 +51,9 @@ impl Locs {
         Self::default()
     }
 
-    /// Total lines (sum of all 6 types).
+    /// Total lines (returns precomputed `all` field).
     pub fn total(&self) -> u64 {
-        self.code + self.tests + self.examples + self.docs + self.comments + self.blanks
+        self.all
     }
 
     /// Total logic lines (code + tests + examples).
@@ -58,8 +61,14 @@ impl Locs {
         self.code + self.tests + self.examples
     }
 
+    /// Recompute the `all` field from individual line types.
+    /// Call this after manually setting individual fields.
+    pub fn recompute_all(&mut self) {
+        self.all = self.code + self.tests + self.examples + self.docs + self.comments + self.blanks;
+    }
+
     /// Return a filtered copy with only the specified line types included.
-    /// Unselected types are zeroed out.
+    /// Unselected types are zeroed out. The `all` field is always preserved.
     pub fn filter(&self, types: LineTypes) -> Self {
         Self {
             code: if types.code { self.code } else { 0 },
@@ -68,6 +77,7 @@ impl Locs {
             docs: if types.docs { self.docs } else { 0 },
             comments: if types.comments { self.comments } else { 0 },
             blanks: if types.blanks { self.blanks } else { 0 },
+            all: self.all, // Always preserved
         }
     }
 }
@@ -83,6 +93,7 @@ impl Add for Locs {
             docs: self.docs + other.docs,
             comments: self.comments + other.comments,
             blanks: self.blanks + other.blanks,
+            all: self.all + other.all,
         }
     }
 }
@@ -95,6 +106,7 @@ impl AddAssign for Locs {
         self.docs += other.docs;
         self.comments += other.comments;
         self.blanks += other.blanks;
+        self.all += other.all;
     }
 }
 
@@ -109,6 +121,7 @@ impl Sub for Locs {
             docs: self.docs.saturating_sub(other.docs),
             comments: self.comments.saturating_sub(other.comments),
             blanks: self.blanks.saturating_sub(other.blanks),
+            all: self.all.saturating_sub(other.all),
         }
     }
 }
@@ -121,6 +134,7 @@ impl SubAssign for Locs {
         self.docs = self.docs.saturating_sub(other.docs);
         self.comments = self.comments.saturating_sub(other.comments);
         self.blanks = self.blanks.saturating_sub(other.blanks);
+        self.all = self.all.saturating_sub(other.all);
     }
 }
 
@@ -243,6 +257,7 @@ mod tests {
         assert_eq!(locs.docs, 0);
         assert_eq!(locs.comments, 0);
         assert_eq!(locs.blanks, 0);
+        assert_eq!(locs.all, 0);
         assert_eq!(locs.total(), 0);
     }
 
@@ -255,6 +270,7 @@ mod tests {
             docs: 30,
             comments: 10,
             blanks: 15,
+            all: 225,
         };
         assert_eq!(locs.total(), 225);
         assert_eq!(locs.total_logic(), 170);
@@ -269,6 +285,7 @@ mod tests {
             docs: 30,
             comments: 10,
             blanks: 15,
+            all: 225,
         };
         let b = Locs {
             code: 50,
@@ -277,6 +294,7 @@ mod tests {
             docs: 15,
             comments: 5,
             blanks: 10,
+            all: 115,
         };
         let sum = a + b;
         assert_eq!(sum.code, 150);
@@ -285,6 +303,7 @@ mod tests {
         assert_eq!(sum.docs, 45);
         assert_eq!(sum.comments, 15);
         assert_eq!(sum.blanks, 25);
+        assert_eq!(sum.all, 340);
     }
 
     #[test]
@@ -296,9 +315,10 @@ mod tests {
             docs: 30,
             comments: 10,
             blanks: 15,
+            all: 225,
         };
 
-        // Filter to only code
+        // Filter to only code - all is preserved
         let code_only = locs.filter(LineTypes::new().with_code());
         assert_eq!(code_only.code, 100);
         assert_eq!(code_only.tests, 0);
@@ -306,11 +326,28 @@ mod tests {
         assert_eq!(code_only.docs, 0);
         assert_eq!(code_only.comments, 0);
         assert_eq!(code_only.blanks, 0);
+        assert_eq!(code_only.all, 225); // Preserved
 
         // Filter to code + tests
         let code_tests = locs.filter(LineTypes::new().with_code().with_tests());
         assert_eq!(code_tests.code, 100);
         assert_eq!(code_tests.tests, 50);
         assert_eq!(code_tests.examples, 0);
+        assert_eq!(code_tests.all, 225); // Preserved
+    }
+
+    #[test]
+    fn test_recompute_all() {
+        let mut locs = Locs {
+            code: 100,
+            tests: 50,
+            examples: 20,
+            docs: 30,
+            comments: 10,
+            blanks: 15,
+            all: 0, // Intentionally wrong
+        };
+        locs.recompute_all();
+        assert_eq!(locs.all, 225);
     }
 }
