@@ -194,6 +194,8 @@ enum OutputFormat {
     Table,
     Json,
     Csv,
+    /// Debug output showing style tags as literals
+    TermDebug,
 }
 
 fn main() -> ExitCode {
@@ -256,6 +258,16 @@ fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
             args.by_module,
             &contexts,
             &base_path,
+            render::OutputMode::Term,
+        ),
+        OutputFormat::TermDebug => print_count_table(
+            &result,
+            args.by_crate,
+            args.by_file,
+            args.by_module,
+            &contexts,
+            &base_path,
+            render::OutputMode::TermDebug,
         ),
         OutputFormat::Json => print_count_json(&result)?,
         OutputFormat::Csv => print_count_csv(
@@ -310,9 +322,22 @@ fn run_diff(args: DiffArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     match args.common.output {
-        OutputFormat::Table => {
-            print_diff_table(&result, args.by_crate, args.by_file, &contexts, &base_path)
-        }
+        OutputFormat::Table => print_diff_table(
+            &result,
+            args.by_crate,
+            args.by_file,
+            &contexts,
+            &base_path,
+            render::OutputMode::Term,
+        ),
+        OutputFormat::TermDebug => print_diff_table(
+            &result,
+            args.by_crate,
+            args.by_file,
+            &contexts,
+            &base_path,
+            render::OutputMode::TermDebug,
+        ),
         OutputFormat::Json => print_diff_json(&result)?,
         OutputFormat::Csv => {
             print_diff_csv(&result, args.by_crate, args.by_file, &contexts, &base_path)
@@ -353,8 +378,9 @@ fn print_stats_table(
     name_header: &str,
     name_width: usize,
     ctx: &Contexts,
+    output_mode: render::OutputMode,
 ) {
-    match render::render_stats_table(rows, total, name_header, name_width, ctx) {
+    match render::render_stats_table(rows, total, name_header, name_width, ctx, output_mode) {
         Ok(output) => print!("{}", output),
         Err(e) => eprintln!("Template error: {}", e),
     }
@@ -371,6 +397,7 @@ fn print_count_table(
     by_module: bool,
     ctx: &Contexts,
     base_path: &Path,
+    output_mode: render::OutputMode,
 ) {
     // Determine column header based on aggregation level
     let (name_header, name_width) = if by_file {
@@ -422,7 +449,7 @@ fn print_count_table(
         &result.total,
     );
 
-    print_stats_table(&rows, &total, name_header, name_width, ctx);
+    print_stats_table(&rows, &total, name_header, name_width, ctx, output_mode);
 }
 
 fn print_count_json(result: &CountResult) -> Result<(), serde_json::Error> {
@@ -510,6 +537,7 @@ fn print_diff_table(
     by_file: bool,
     ctx: &Contexts,
     base_path: &Path,
+    output_mode: render::OutputMode,
 ) {
     println!("Diff: {} → {}", result.from_commit, result.to_commit);
     println!();
@@ -548,7 +576,7 @@ fn print_diff_table(
         .total
         .to_stats_row(format!("Total ({} files)", result.total.file_count));
 
-    print_stats_table(&rows, &total, name_header, name_width, ctx);
+    print_stats_table(&rows, &total, name_header, name_width, ctx, output_mode);
 }
 
 fn print_diff_json(result: &DiffResult) -> Result<(), serde_json::Error> {

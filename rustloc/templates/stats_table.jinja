@@ -1,5 +1,6 @@
 {# Template for stats table (counts and diffs) #}
-{{ header }}
+{{ name_header_formatted }}{% for col in columns %} [category]{{ col.formatted }}[/category]{% endfor %}
+
 {{ separator }}
 {% for row in rows -%}
 {%- if not (row.total_net == 0 and row.is_count) %}

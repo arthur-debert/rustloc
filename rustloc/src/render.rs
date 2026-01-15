@@ -1,11 +1,24 @@
 //! Template rendering for CLI output
 
-use outstanding::{render, Theme};
+use console::Style;
+use outstanding::{render_with_output, Theme};
 use rustloclib::{Contexts, StatsRow};
 use serde::Serialize;
 
 /// Include template at compile time
 const STATS_TABLE_TEMPLATE: &str = include_str!("../templates/stats_table.jinja");
+
+/// Re-export OutputMode for callers
+pub use outstanding::OutputMode;
+
+/// Column data for template rendering
+#[derive(Debug, Serialize)]
+struct TemplateColumn {
+    /// Column name (e.g., "Code", "Tests", "Total")
+    name: String,
+    /// Pre-formatted with padding
+    formatted: String,
+}
 
 /// Row data for template rendering (pre-formatted)
 #[derive(Debug, Serialize)]
@@ -23,8 +36,12 @@ struct TemplateRow {
 /// Data context for stats table template
 #[derive(Debug, Serialize)]
 struct StatsTableContext {
-    /// Pre-padded header
-    header: String,
+    /// Name column header (e.g., "File", "Crate")
+    name_header: String,
+    /// Pre-padded name column header
+    name_header_formatted: String,
+    /// Column definitions
+    columns: Vec<TemplateColumn>,
     /// Separator line (dashes)
     separator: String,
     /// Data rows
@@ -71,6 +88,11 @@ fn to_template_row(
     }
 }
 
+/// Create the theme with styles
+fn create_theme() -> Theme {
+    Theme::new().add("category", Style::new().bold())
+}
+
 /// Render a stats table to string using outstanding
 pub fn render_stats_table(
     rows: &[StatsRow],
@@ -78,32 +100,35 @@ pub fn render_stats_table(
     name_header: &str,
     name_width: usize,
     ctx: &Contexts,
+    output_mode: OutputMode,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    // Create empty theme (no styling yet)
-    let theme = Theme::new();
+    let theme = create_theme();
 
     // Build columns list based on enabled contexts
-    let mut columns = Vec::new();
+    let mut column_names = Vec::new();
     if ctx.code {
-        columns.push("Code");
+        column_names.push("Code");
     }
     if ctx.tests {
-        columns.push("Tests");
+        column_names.push("Tests");
     }
     if ctx.examples {
-        columns.push("Examples");
+        column_names.push("Examples");
     }
-    columns.push("Total");
+    column_names.push("Total");
 
     // Determine cell width based on whether we're showing diffs or counts
     let is_diff = total.is_diff();
     let cell_width = if is_diff { 16 } else { 10 };
 
-    // Build pre-formatted header line
-    let mut header = format!("{:<width$}", name_header, width = name_width);
-    for col in &columns {
-        header.push_str(&format!(" {:>width$}", col, width = cell_width));
-    }
+    // Build column objects
+    let columns: Vec<TemplateColumn> = column_names
+        .iter()
+        .map(|name| TemplateColumn {
+            name: name.to_string(),
+            formatted: format!("{:>width$}", name, width = cell_width),
+        })
+        .collect();
 
     // Build separator line
     let separator = "-".repeat(name_width + (cell_width + 1) * columns.len());
@@ -117,14 +142,16 @@ pub fn render_stats_table(
     let total_row = to_template_row(total, ctx, name_width, cell_width);
 
     let context = StatsTableContext {
-        header,
+        name_header: name_header.to_string(),
+        name_header_formatted: format!("{:<width$}", name_header, width = name_width),
+        columns,
         separator,
         rows: template_rows,
         total: total_row,
     };
 
-    // Use outstanding's render function
-    let rendered = render(STATS_TABLE_TEMPLATE, &context, &theme)?;
+    // Use outstanding's render_with_output function
+    let rendered = render_with_output(STATS_TABLE_TEMPLATE, &context, &theme, output_mode)?;
 
     Ok(rendered)
 }

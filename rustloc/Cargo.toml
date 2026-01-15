@@ -17,6 +17,7 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 outstanding.workspace = true
+console.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
