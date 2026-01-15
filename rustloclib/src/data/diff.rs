@@ -901,6 +901,7 @@ fn compute_locs_diff(old: &Locs, new: &Locs) -> LocsDiff {
             docs: new.docs.saturating_sub(old.docs),
             comments: new.comments.saturating_sub(old.comments),
             blanks: new.blanks.saturating_sub(old.blanks),
+            all: new.all.saturating_sub(old.all),
         },
         removed: Locs {
             code: old.code.saturating_sub(new.code),
@@ -909,6 +910,7 @@ fn compute_locs_diff(old: &Locs, new: &Locs) -> LocsDiff {
             docs: old.docs.saturating_sub(new.docs),
             comments: old.comments.saturating_sub(new.comments),
             blanks: old.blanks.saturating_sub(new.blanks),
+            all: old.all.saturating_sub(new.all),
         },
     }
 }
@@ -949,6 +951,7 @@ mod tests {
                 docs: 10,
                 comments: 5,
                 blanks: 15,
+                all: 200,
             },
             removed: Locs {
                 code: 30,
@@ -957,6 +960,7 @@ mod tests {
                 docs: 2,
                 comments: 1,
                 blanks: 5,
+                all: 68,
             },
         };
 
@@ -979,6 +983,7 @@ mod tests {
                 docs: 1,
                 comments: 1,
                 blanks: 1,
+                all: 20,
             },
             removed: Locs {
                 code: 5,
@@ -987,6 +992,7 @@ mod tests {
                 docs: 0,
                 comments: 0,
                 blanks: 0,
+                all: 8,
             },
         };
         let b = LocsDiff {
@@ -997,6 +1003,7 @@ mod tests {
                 docs: 2,
                 comments: 2,
                 blanks: 2,
+                all: 40,
             },
             removed: Locs {
                 code: 10,
@@ -1005,6 +1012,7 @@ mod tests {
                 docs: 1,
                 comments: 1,
                 blanks: 1,
+                all: 20,
             },
         };
 
@@ -1034,6 +1042,7 @@ mod tests {
             docs: 10,
             comments: 5,
             blanks: 20,
+            all: 135,
         };
 
         let diff = compute_locs_diff(&old, &new);
@@ -1052,6 +1061,7 @@ mod tests {
             docs: 5,
             comments: 2,
             blanks: 10,
+            all: 67,
         };
         let new = Locs::new();
 
@@ -1069,6 +1079,7 @@ mod tests {
             docs: 10,
             comments: 5,
             blanks: 20,
+            all: 135,
         };
         let new = Locs {
             code: 120,
@@ -1077,6 +1088,7 @@ mod tests {
             docs: 8,
             comments: 5,
             blanks: 25,
+            all: 158,
         };
 
         let diff = compute_locs_diff(&old, &new);
