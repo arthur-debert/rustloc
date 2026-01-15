@@ -53,7 +53,7 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use outstanding::cli::{App, CommandContext, HandlerResult, Output, RunResult};
 use rustloclib::{
     count_workspace, diff_commits, diff_workdir, Aggregation, Contexts, CountOptions, DiffOptions,
-    FilterConfig, LOCTable, WorkdirDiffMode,
+    FilterConfig, LOCTable, Ordering, WorkdirDiffMode,
 };
 
 /// Include template at compile time
@@ -312,7 +312,7 @@ fn count_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<L
         .contexts(contexts);
 
     let result = count_workspace(path, options)?;
-    let table = LOCTable::from_count(&result, aggregation, contexts);
+    let table = LOCTable::from_count(&result, aggregation, contexts, Ordering::default());
     Ok(Output::Render(table))
 }
 
@@ -366,7 +366,7 @@ fn diff_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<LO
         diff_commits(path, &from_commit, &to_commit, options)?
     };
 
-    let table = LOCTable::from_diff(&result, aggregation, contexts);
+    let table = LOCTable::from_diff(&result, aggregation, contexts, Ordering::default());
     Ok(Output::Render(table))
 }
 

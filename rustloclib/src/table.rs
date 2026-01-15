@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Aggregation, Contexts, CountResult, DiffResult};
+use crate::{Aggregation, Contexts, CountResult, DiffResult, OrderBy, OrderDirection, Ordering};
 
 /// A single row in the table (data row or footer).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,11 +41,16 @@ pub struct LOCTable {
 impl LOCTable {
     /// Create a LOCTable from a CountResult.
     ///
-    /// Applies aggregation level and category filters to produce
+    /// Applies aggregation level, category filters, and ordering to produce
     /// a table-ready structure.
-    pub fn from_count(result: &CountResult, aggregation: Aggregation, contexts: Contexts) -> Self {
+    pub fn from_count(
+        result: &CountResult,
+        aggregation: Aggregation,
+        contexts: Contexts,
+        ordering: Ordering,
+    ) -> Self {
         let headers = build_headers(&aggregation, &contexts);
-        let rows = build_count_rows(result, &aggregation, &contexts);
+        let rows = build_count_rows(result, &aggregation, &contexts, &ordering);
         let footer = build_count_footer(result, &contexts);
 
         LOCTable {
@@ -58,11 +63,16 @@ impl LOCTable {
 
     /// Create a LOCTable from a DiffResult.
     ///
-    /// Applies aggregation level and category filters to produce
+    /// Applies aggregation level, category filters, and ordering to produce
     /// a table-ready structure with diff formatting (+added/-removed/net).
-    pub fn from_diff(result: &DiffResult, aggregation: Aggregation, contexts: Contexts) -> Self {
+    pub fn from_diff(
+        result: &DiffResult,
+        aggregation: Aggregation,
+        contexts: Contexts,
+        ordering: Ordering,
+    ) -> Self {
         let headers = build_headers(&aggregation, &contexts);
-        let rows = build_diff_rows(result, &aggregation, &contexts);
+        let rows = build_diff_rows(result, &aggregation, &contexts, &ordering);
         let footer = build_diff_footer(result, &contexts);
         let title = Some(format!(
             "Diff: {} → {}",
@@ -141,46 +151,81 @@ fn count_values(stats: &crate::LocStats, contexts: &Contexts) -> Vec<String> {
     values
 }
 
+/// Get sort key for LocStats based on OrderBy.
+fn count_sort_key(stats: &crate::LocStats, order_by: &OrderBy, contexts: &Contexts) -> u64 {
+    match order_by {
+        OrderBy::Label => 0, // Label sorting handled separately
+        OrderBy::Code => locs_total(&stats.code),
+        OrderBy::Tests => locs_total(&stats.tests),
+        OrderBy::Examples => locs_total(&stats.examples),
+        OrderBy::Total => loc_stats_total(stats, contexts),
+    }
+}
+
 /// Build data rows from CountResult based on aggregation level.
 fn build_count_rows(
     result: &CountResult,
     aggregation: &Aggregation,
     contexts: &Contexts,
+    ordering: &Ordering,
 ) -> Vec<TableRow> {
-    match aggregation {
-        Aggregation::Total => vec![],
+    // Collect items with their labels and stats for sorting
+    let mut items: Vec<(String, &crate::LocStats)> = match aggregation {
+        Aggregation::Total => return vec![],
         Aggregation::ByCrate => result
             .crates
             .iter()
             .filter(|c| loc_stats_total(&c.stats, contexts) > 0)
-            .map(|c| TableRow {
-                label: c.name.clone(),
-                values: count_values(&c.stats, contexts),
-            })
+            .map(|c| (c.name.clone(), &c.stats))
             .collect(),
         Aggregation::ByModule => result
             .modules
             .iter()
             .filter(|m| loc_stats_total(&m.stats, contexts) > 0)
-            .map(|m| TableRow {
-                label: if m.name.is_empty() {
+            .map(|m| {
+                let label = if m.name.is_empty() {
                     "(root)".to_string()
                 } else {
                     m.name.clone()
-                },
-                values: count_values(&m.stats, contexts),
+                };
+                (label, &m.stats)
             })
             .collect(),
         Aggregation::ByFile => result
             .files
             .iter()
             .filter(|f| loc_stats_total(&f.stats, contexts) > 0)
-            .map(|f| TableRow {
-                label: f.path.to_string_lossy().to_string(),
-                values: count_values(&f.stats, contexts),
-            })
+            .map(|f| (f.path.to_string_lossy().to_string(), &f.stats))
             .collect(),
+    };
+
+    // Sort based on ordering
+    match ordering.by {
+        OrderBy::Label => {
+            items.sort_by(|a, b| a.0.cmp(&b.0));
+        }
+        _ => {
+            items.sort_by(|a, b| {
+                let key_a = count_sort_key(a.1, &ordering.by, contexts);
+                let key_b = count_sort_key(b.1, &ordering.by, contexts);
+                key_a.cmp(&key_b)
+            });
+        }
     }
+
+    // Reverse if descending
+    if ordering.direction == OrderDirection::Descending {
+        items.reverse();
+    }
+
+    // Map to TableRows
+    items
+        .into_iter()
+        .map(|(label, stats)| TableRow {
+            label,
+            values: count_values(stats, contexts),
+        })
+        .collect()
 }
 
 /// Build footer row from CountResult.
@@ -255,34 +300,81 @@ fn has_net_change(stats: &crate::LocStatsDiff, contexts: &Contexts) -> bool {
     added != removed
 }
 
+/// Get sort key for LocStatsDiff based on OrderBy (uses net change).
+fn diff_sort_key(stats: &crate::LocStatsDiff, order_by: &OrderBy, contexts: &Contexts) -> i64 {
+    match order_by {
+        OrderBy::Label => 0, // Label sorting handled separately
+        OrderBy::Code => {
+            let (a, r) = locs_diff_total(&stats.code);
+            a as i64 - r as i64
+        }
+        OrderBy::Tests => {
+            let (a, r) = locs_diff_total(&stats.tests);
+            a as i64 - r as i64
+        }
+        OrderBy::Examples => {
+            let (a, r) = locs_diff_total(&stats.examples);
+            a as i64 - r as i64
+        }
+        OrderBy::Total => {
+            let (a, r) = loc_stats_diff_total(stats, contexts);
+            a as i64 - r as i64
+        }
+    }
+}
+
 /// Build data rows from DiffResult based on aggregation level.
 fn build_diff_rows(
     result: &DiffResult,
     aggregation: &Aggregation,
     contexts: &Contexts,
+    ordering: &Ordering,
 ) -> Vec<TableRow> {
-    match aggregation {
-        Aggregation::Total => vec![],
+    // Collect items with their labels and diff stats for sorting
+    let mut items: Vec<(String, &crate::LocStatsDiff)> = match aggregation {
+        Aggregation::Total => return vec![],
         Aggregation::ByCrate => result
             .crates
             .iter()
             .filter(|c| has_net_change(&c.diff, contexts))
-            .map(|c| TableRow {
-                label: c.name.clone(),
-                values: diff_values(&c.diff, contexts),
-            })
+            .map(|c| (c.name.clone(), &c.diff))
             .collect(),
-        Aggregation::ByModule => vec![], // Diff doesn't support by-module currently
+        Aggregation::ByModule => return vec![], // Diff doesn't support by-module currently
         Aggregation::ByFile => result
             .files
             .iter()
             .filter(|f| has_net_change(&f.diff, contexts))
-            .map(|f| TableRow {
-                label: f.path.to_string_lossy().to_string(),
-                values: diff_values(&f.diff, contexts),
-            })
+            .map(|f| (f.path.to_string_lossy().to_string(), &f.diff))
             .collect(),
+    };
+
+    // Sort based on ordering
+    match ordering.by {
+        OrderBy::Label => {
+            items.sort_by(|a, b| a.0.cmp(&b.0));
+        }
+        _ => {
+            items.sort_by(|a, b| {
+                let key_a = diff_sort_key(a.1, &ordering.by, contexts);
+                let key_b = diff_sort_key(b.1, &ordering.by, contexts);
+                key_a.cmp(&key_b)
+            });
+        }
     }
+
+    // Reverse if descending
+    if ordering.direction == OrderDirection::Descending {
+        items.reverse();
+    }
+
+    // Map to TableRows
+    items
+        .into_iter()
+        .map(|(label, diff)| TableRow {
+            label,
+            values: diff_values(diff, contexts),
+        })
+        .collect()
 }
 
 /// Build footer row from DiffResult.
@@ -314,6 +406,28 @@ mod tests {
             code: sample_locs(code),
             tests: sample_locs(tests),
             examples: sample_locs(0),
+        }
+    }
+
+    fn sample_count_result() -> CountResult {
+        CountResult {
+            total: sample_stats(200, 100),
+            crates: vec![
+                CrateStats {
+                    name: "alpha".to_string(),
+                    path: PathBuf::from("/alpha"),
+                    stats: sample_stats(50, 25),
+                    files: vec![],
+                },
+                CrateStats {
+                    name: "beta".to_string(),
+                    path: PathBuf::from("/beta"),
+                    stats: sample_stats(150, 75),
+                    files: vec![],
+                },
+            ],
+            files: vec![],
+            modules: vec![],
         }
     }
 
@@ -349,34 +463,96 @@ mod tests {
 
     #[test]
     fn test_loc_table_from_count() {
-        let result = CountResult {
-            total: sample_stats(200, 100),
-            crates: vec![
-                CrateStats {
-                    name: "foo".to_string(),
-                    path: PathBuf::from("/foo"),
-                    stats: sample_stats(150, 75),
-                    files: vec![],
-                },
-                CrateStats {
-                    name: "bar".to_string(),
-                    path: PathBuf::from("/bar"),
-                    stats: sample_stats(50, 25),
-                    files: vec![],
-                },
-            ],
-            files: vec![],
-            modules: vec![],
-        };
-
-        let table = LOCTable::from_count(&result, Aggregation::ByCrate, Contexts::all());
+        let result = sample_count_result();
+        let table = LOCTable::from_count(
+            &result,
+            Aggregation::ByCrate,
+            Contexts::all(),
+            Ordering::default(),
+        );
 
         assert!(table.title.is_none());
         assert_eq!(table.headers[0], "Crate");
         assert_eq!(table.rows.len(), 2);
-        assert_eq!(table.rows[0].label, "foo");
-        assert_eq!(table.rows[0].values[0], "150");
+        // Default ordering is by label ascending: alpha before beta
+        assert_eq!(table.rows[0].label, "alpha");
+        assert_eq!(table.rows[1].label, "beta");
         assert_eq!(table.footer.label, "Total (1 files)");
+    }
+
+    #[test]
+    fn test_ordering_by_label_ascending() {
+        let result = sample_count_result();
+        let table = LOCTable::from_count(
+            &result,
+            Aggregation::ByCrate,
+            Contexts::all(),
+            Ordering::by_label(),
+        );
+
+        assert_eq!(table.rows[0].label, "alpha");
+        assert_eq!(table.rows[1].label, "beta");
+    }
+
+    #[test]
+    fn test_ordering_by_label_descending() {
+        let result = sample_count_result();
+        let table = LOCTable::from_count(
+            &result,
+            Aggregation::ByCrate,
+            Contexts::all(),
+            Ordering::by_label().descending(),
+        );
+
+        assert_eq!(table.rows[0].label, "beta");
+        assert_eq!(table.rows[1].label, "alpha");
+    }
+
+    #[test]
+    fn test_ordering_by_code_descending() {
+        let result = sample_count_result();
+        let table = LOCTable::from_count(
+            &result,
+            Aggregation::ByCrate,
+            Contexts::all(),
+            Ordering::by_code(), // Descending by default
+        );
+
+        // beta has 150 code, alpha has 50
+        assert_eq!(table.rows[0].label, "beta");
+        assert_eq!(table.rows[0].values[0], "150");
+        assert_eq!(table.rows[1].label, "alpha");
+        assert_eq!(table.rows[1].values[0], "50");
+    }
+
+    #[test]
+    fn test_ordering_by_code_ascending() {
+        let result = sample_count_result();
+        let table = LOCTable::from_count(
+            &result,
+            Aggregation::ByCrate,
+            Contexts::all(),
+            Ordering::by_code().ascending(),
+        );
+
+        // alpha has 50 code, beta has 150
+        assert_eq!(table.rows[0].label, "alpha");
+        assert_eq!(table.rows[1].label, "beta");
+    }
+
+    #[test]
+    fn test_ordering_by_total_descending() {
+        let result = sample_count_result();
+        let table = LOCTable::from_count(
+            &result,
+            Aggregation::ByCrate,
+            Contexts::all(),
+            Ordering::by_total(),
+        );
+
+        // beta has 225 total, alpha has 75
+        assert_eq!(table.rows[0].label, "beta");
+        assert_eq!(table.rows[1].label, "alpha");
     }
 
     #[test]
