@@ -4,6 +4,10 @@
 
 set -e
 
+# Disable incremental compilation to ensure consistent results with CI
+# Without this, cached artifacts may cause clippy to miss issues
+export CARGO_INCREMENTAL=0
+
 echo "Running pre-commit checks..."
 
 # Format check
