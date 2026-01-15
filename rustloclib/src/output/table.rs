@@ -263,6 +263,7 @@ mod tests {
 
     fn sample_count_result() -> CountResult {
         CountResult {
+            root: PathBuf::from("/workspace"),
             file_count: 4,
             total: sample_locs(200, 100),
             crates: vec![
