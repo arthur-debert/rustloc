@@ -1,26 +1,17 @@
 {#- Table template for LOCTable - just iterate and format, no computation -#}
-
-{#- Title (e.g., "Diff: HEAD~5 → HEAD") -#}
-{%- if title %}
+{%- set label_width = 40 -%}
+{%- set value_width = 16 -%}
+{%- set line_width = label_width + (value_width + 1) * (headers | length - 1) -%}
+{% if title %}
 {{ title }}
 
 {% endif -%}
-
-{#- Column widths - first column wider for labels -#}
-{%- set label_width = 40 -%}
-{%- set value_width = 16 -%}
-
-{#- Headers -#}
 {{ headers[0] | col(label_width, align='center') }}{% for h in headers[1:] %} {{ h | col(value_width, align='center') }}{% endfor %}
-
-{{ "-" * (label_width + (value_width + 1) * (headers | length - 1)) }}
-{#- Data rows -#}
-{%- for row in rows %}
+{{ "-" * line_width }}
+{% for row in rows -%}
 {{ row.label | col(label_width, truncate='start') }}{% for v in row.values %} {{ v | col(value_width, align='right') }}{% endfor %}
-{%- endfor %}
-{#- Separator before footer if we had rows -#}
-{%- if rows | length > 0 %}
-{{ "-" * (label_width + (value_width + 1) * (headers | length - 1)) }}
-{%- endif %}
-{#- Footer/summary row -#}
+{% endfor -%}
+{%- if rows | length > 0 -%}
+{{ "-" * line_width }}
+{% endif -%}
 {{ footer.label | col(label_width) }}{% for v in footer.values %} {{ v | col(value_width, align='right') }}{% endfor %}
