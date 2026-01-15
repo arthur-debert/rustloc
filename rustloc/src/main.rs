@@ -53,7 +53,7 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use outstanding::cli::{App, CommandContext, HandlerResult, Output, RunResult};
 use rustloclib::{
     count_workspace, diff_commits, diff_workdir, Aggregation, Contexts, CountOptions, DiffOptions,
-    FilterConfig, LOCTable, Ordering, WorkdirDiffMode,
+    FilterConfig, LOCTable, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
 };
 
 /// Include template at compile time
@@ -119,6 +119,13 @@ fn build_command() -> Command {
                 .action(ArgAction::SetTrue)
                 .help("Show breakdown by module"),
         )
+        .arg(
+            Arg::new("ordering")
+                .short('o')
+                .long("ordering")
+                .value_name("FIELD")
+                .help("Order by field: label, code, tests, examples, total (prefix with - for descending)"),
+        )
         .subcommand(
             Command::new("count")
                 .about("Count lines of code (default command)")
@@ -171,6 +178,13 @@ fn build_command() -> Command {
                         .long("by-module")
                         .action(ArgAction::SetTrue)
                         .help("Show breakdown by module"),
+                )
+                .arg(
+                    Arg::new("ordering")
+                        .short('o')
+                        .long("ordering")
+                        .value_name("FIELD")
+                        .help("Order by field: label, code, tests, examples, total (prefix with - for descending)"),
                 ),
         )
         .subcommand(
@@ -233,8 +247,50 @@ fn build_command() -> Command {
                         .long("by-file")
                         .action(ArgAction::SetTrue)
                         .help("Show breakdown by file"),
+                )
+                .arg(
+                    Arg::new("ordering")
+                        .short('o')
+                        .long("ordering")
+                        .value_name("FIELD")
+                        .help("Order by field: label, code, tests, examples, total (prefix with - for descending)"),
                 ),
         )
+}
+
+/// Parse ordering from string (e.g., "code", "-code", "+total").
+fn parse_ordering(s: &str) -> Result<Ordering, String> {
+    let (direction, field) = if let Some(stripped) = s.strip_prefix('-') {
+        (OrderDirection::Descending, stripped)
+    } else if let Some(stripped) = s.strip_prefix('+') {
+        (OrderDirection::Ascending, stripped)
+    } else {
+        // Default direction depends on field: label ascending, others descending
+        let order_by: OrderBy = s.parse()?;
+        let direction = if order_by == OrderBy::Label {
+            OrderDirection::Ascending
+        } else {
+            OrderDirection::Descending
+        };
+        return Ok(Ordering {
+            by: order_by,
+            direction,
+        });
+    };
+
+    let order_by: OrderBy = field.parse()?;
+    Ok(Ordering {
+        by: order_by,
+        direction,
+    })
+}
+
+/// Extract ordering from matches.
+fn extract_ordering(matches: &ArgMatches) -> Ordering {
+    matches
+        .get_one::<String>("ordering")
+        .map(|s| parse_ordering(s).unwrap_or_default())
+        .unwrap_or_default()
 }
 
 /// Extract contexts from matches
@@ -290,6 +346,7 @@ fn count_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<L
     let filter = build_filter(matches)?;
     let contexts = extract_contexts(matches);
     let crates = extract_crates(matches);
+    let ordering = extract_ordering(matches);
 
     let by_file = matches.get_flag("by-file");
     let by_module = matches.get_flag("by-module");
@@ -312,7 +369,7 @@ fn count_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<L
         .contexts(contexts);
 
     let result = count_workspace(path, options)?;
-    let table = LOCTable::from_count(&result, aggregation, contexts, Ordering::default());
+    let table = LOCTable::from_count(&result, aggregation, contexts, ordering);
     Ok(Output::Render(table))
 }
 
@@ -325,6 +382,7 @@ fn diff_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<LO
     let filter = build_filter(matches)?;
     let contexts = extract_contexts(matches);
     let crates = extract_crates(matches);
+    let ordering = extract_ordering(matches);
     let staged = matches.get_flag("staged");
 
     let by_file = matches.get_flag("by-file");
@@ -366,7 +424,7 @@ fn diff_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<LO
         diff_commits(path, &from_commit, &to_commit, options)?
     };
 
-    let table = LOCTable::from_diff(&result, aggregation, contexts, Ordering::default());
+    let table = LOCTable::from_diff(&result, aggregation, contexts, ordering);
     Ok(Output::Render(table))
 }
 
