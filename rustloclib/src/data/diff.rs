@@ -184,6 +184,8 @@ impl CrateDiffStats {
 /// Result of a diff operation between two commits.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiffResult {
+    /// Root path of the repository analyzed.
+    pub root: PathBuf,
     /// Base commit (from).
     pub from_commit: String,
     /// Target commit (to).
@@ -200,6 +202,7 @@ impl DiffResult {
     /// Return a filtered copy with only the specified line types included.
     pub fn filter(&self, types: LineTypes) -> Self {
         Self {
+            root: self.root.clone(),
             from_commit: self.from_commit.clone(),
             to_commit: self.to_commit.clone(),
             total: self.total.filter(types),
@@ -396,6 +399,7 @@ pub fn diff_workdir(
     };
 
     let result = DiffResult {
+        root: repo_root,
         from_commit: from_label.to_string(),
         to_commit: to_label.to_string(),
         total,
@@ -739,6 +743,7 @@ pub fn diff_commits(
     let crates: Vec<CrateDiffStats> = crate_stats.into_values().collect();
 
     let result = DiffResult {
+        root: repo_root,
         from_commit: from.to_string(),
         to_commit: to.to_string(),
         total,

@@ -85,6 +85,14 @@ impl CountQuerySet {
     }
 }
 
+/// Compute a relative path label for a file.
+/// Returns the path relative to the workspace root, falling back to the full path if strip fails.
+fn relative_path_label(path: &std::path::Path, root: &std::path::Path) -> String {
+    path.strip_prefix(root)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.to_string_lossy().to_string())
+}
+
 impl DiffQuerySet {
     /// Create a QuerySet from a DiffResult.
     ///
@@ -182,7 +190,7 @@ fn build_count_items(
             .filter(|f| locs_filtered_total(&f.stats, line_types) > 0)
             .map(|f| {
                 (
-                    f.path.to_string_lossy().to_string(),
+                    relative_path_label(&f.path, &result.root),
                     f.stats.filter(*line_types),
                 )
             })
@@ -320,6 +328,7 @@ mod tests {
 
     fn sample_count_result() -> CountResult {
         CountResult {
+            root: PathBuf::from("/workspace"),
             file_count: 4,
             total: sample_locs(200, 100),
             crates: vec![
@@ -405,5 +414,40 @@ mod tests {
         // Stats should be filtered
         assert_eq!(qs.items[0].stats.code, 50);
         assert_eq!(qs.items[0].stats.tests, 0); // Filtered out
+    }
+
+    #[test]
+    fn test_count_queryset_by_file_relative_paths() {
+        use crate::data::stats::FileStats;
+
+        let result = CountResult {
+            root: PathBuf::from("/workspace"),
+            file_count: 2,
+            total: sample_locs(100, 50),
+            crates: vec![],
+            files: vec![
+                FileStats::new(PathBuf::from("/workspace/src/main.rs"), sample_locs(50, 25)),
+                FileStats::new(
+                    PathBuf::from("/workspace/crate-a/src/lib.rs"),
+                    sample_locs(50, 25),
+                ),
+            ],
+            modules: vec![],
+        };
+
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByFile,
+            LineTypes::everything(),
+            Ordering::default(),
+        );
+
+        // Labels should be relative to workspace root
+        assert_eq!(qs.items.len(), 2);
+        assert!(qs.items.iter().any(|item| item.label == "src/main.rs"));
+        assert!(qs
+            .items
+            .iter()
+            .any(|item| item.label == "crate-a/src/lib.rs"));
     }
 }

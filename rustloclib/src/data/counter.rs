@@ -4,7 +4,7 @@
 //! in Rust projects, with support for workspace filtering and glob patterns.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::RustlocError;
 use crate::query::options::{Aggregation, LineTypes};
@@ -73,6 +73,8 @@ impl CountOptions {
 /// Result of counting LOC in a workspace or directory.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct CountResult {
+    /// Root path of the workspace or directory analyzed
+    pub root: PathBuf,
     /// Total number of files analyzed
     pub file_count: usize,
     /// Aggregated statistics across all files
@@ -94,6 +96,7 @@ impl CountResult {
     /// Return a filtered copy with only the specified line types included.
     pub fn filter(&self, types: LineTypes) -> Self {
         Self {
+            root: self.root.clone(),
             file_count: self.file_count,
             total: self.total.filter(types),
             crates: self.crates.iter().map(|c| c.filter(types)).collect(),
@@ -153,6 +156,7 @@ pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<
     };
 
     let mut result = CountResult::new();
+    result.root = workspace.root.clone();
 
     // Determine what to include based on aggregation level
     let include_files = matches!(options.aggregation, Aggregation::ByFile);
@@ -320,6 +324,7 @@ pub fn count_directory(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<
     let files = discover_files(path, filter)?;
 
     let mut result = CountResult::new();
+    result.root = path.to_path_buf();
 
     for file_path in files {
         let stats = gather_stats_for_path(&file_path)?;
