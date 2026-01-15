@@ -347,7 +347,7 @@ mod tests {
         let qs = CountQuerySet::from_result(
             &result,
             Aggregation::ByCrate,
-            LineTypes::all(),
+            LineTypes::everything(),
             Ordering::default(),
         );
 
@@ -364,7 +364,7 @@ mod tests {
         let qs = CountQuerySet::from_result(
             &result,
             Aggregation::ByCrate,
-            LineTypes::all(),
+            LineTypes::everything(),
             Ordering::by_code(), // Descending by default
         );
 
@@ -381,7 +381,7 @@ mod tests {
         let qs = CountQuerySet::from_result(
             &result,
             Aggregation::Total,
-            LineTypes::all(),
+            LineTypes::everything(),
             Ordering::default(),
         );
 

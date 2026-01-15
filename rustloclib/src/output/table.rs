@@ -110,6 +110,7 @@ struct LineTypesView {
     docs: bool,
     comments: bool,
     blanks: bool,
+    all: bool,
 }
 
 impl From<&crate::query::options::LineTypes> for LineTypesView {
@@ -121,6 +122,7 @@ impl From<&crate::query::options::LineTypes> for LineTypesView {
             docs: lt.docs,
             comments: lt.comments,
             blanks: lt.blanks,
+            all: lt.all,
         }
     }
 }
@@ -158,7 +160,9 @@ fn build_headers(
     if lt.blanks {
         headers.push("Blanks".to_string());
     }
-    headers.push("Total".to_string());
+    if lt.all {
+        headers.push("All".to_string());
+    }
 
     headers
 }
@@ -186,10 +190,10 @@ fn format_locs(locs: &Locs, line_types: &crate::query::options::LineTypes) -> Ve
     if lt.blanks {
         values.push(locs.blanks.to_string());
     }
-
-    // Total is sum of all included types
-    let total = locs.total();
-    values.push(total.to_string());
+    if lt.all {
+        // Use the precomputed all field
+        values.push(locs.all.to_string());
+    }
 
     values
 }
@@ -229,11 +233,10 @@ fn format_locs_diff(diff: &LocsDiff, line_types: &crate::query::options::LineTyp
     if lt.blanks {
         values.push(format_diff_value(diff.added.blanks, diff.removed.blanks));
     }
-
-    // Total is sum of all included types
-    let total_added = diff.added.total();
-    let total_removed = diff.removed.total();
-    values.push(format_diff_value(total_added, total_removed));
+    if lt.all {
+        // Use the precomputed all fields
+        values.push(format_diff_value(diff.added.all, diff.removed.all));
+    }
 
     values
 }
@@ -283,7 +286,7 @@ mod tests {
 
     #[test]
     fn test_headers_by_crate() {
-        let headers = build_headers(&Aggregation::ByCrate, &LineTypes::all());
+        let headers = build_headers(&Aggregation::ByCrate, &LineTypes::everything());
         assert_eq!(headers[0], "Crate");
         assert_eq!(headers[1], "Code");
         assert_eq!(headers[2], "Tests");
@@ -291,30 +294,30 @@ mod tests {
         assert_eq!(headers[4], "Docs");
         assert_eq!(headers[5], "Comments");
         assert_eq!(headers[6], "Blanks");
-        assert_eq!(headers[7], "Total");
+        assert_eq!(headers[7], "All");
     }
 
     #[test]
     fn test_headers_filtered_line_types() {
         let line_types = LineTypes::new().with_code();
         let headers = build_headers(&Aggregation::ByFile, &line_types);
-        assert_eq!(headers.len(), 3); // File, Code, Total
+        assert_eq!(headers.len(), 3); // File, Code, All
         assert_eq!(headers[0], "File");
         assert_eq!(headers[1], "Code");
-        assert_eq!(headers[2], "Total");
+        assert_eq!(headers[2], "All");
     }
 
     #[test]
     fn test_format_locs() {
         let locs = sample_locs(100, 50);
-        let values = format_locs(&locs, &LineTypes::all());
+        let values = format_locs(&locs, &LineTypes::everything());
         assert_eq!(values[0], "100"); // Code
         assert_eq!(values[1], "50"); // Tests
         assert_eq!(values[2], "0"); // Examples
         assert_eq!(values[3], "0"); // Docs
         assert_eq!(values[4], "0"); // Comments
         assert_eq!(values[5], "0"); // Blanks
-        assert_eq!(values[6], "150"); // Total
+        assert_eq!(values[6], "150"); // All
     }
 
     #[test]
@@ -323,7 +326,7 @@ mod tests {
         let qs = CountQuerySet::from_result(
             &result,
             Aggregation::ByCrate,
-            LineTypes::all(),
+            LineTypes::everything(),
             Ordering::default(),
         );
         let table = LOCTable::from_count_queryset(&qs);
@@ -343,7 +346,7 @@ mod tests {
         let qs = CountQuerySet::from_result(
             &result,
             Aggregation::ByCrate,
-            LineTypes::all(),
+            LineTypes::everything(),
             Ordering::by_label(),
         );
         let table = LOCTable::from_count_queryset(&qs);
@@ -358,7 +361,7 @@ mod tests {
         let qs = CountQuerySet::from_result(
             &result,
             Aggregation::ByCrate,
-            LineTypes::all(),
+            LineTypes::everything(),
             Ordering::by_label().descending(),
         );
         let table = LOCTable::from_count_queryset(&qs);
@@ -373,7 +376,7 @@ mod tests {
         let qs = CountQuerySet::from_result(
             &result,
             Aggregation::ByCrate,
-            LineTypes::all(),
+            LineTypes::everything(),
             Ordering::by_code(), // Descending by default
         );
         let table = LOCTable::from_count_queryset(&qs);
@@ -391,7 +394,7 @@ mod tests {
         let qs = CountQuerySet::from_result(
             &result,
             Aggregation::ByCrate,
-            LineTypes::all(),
+            LineTypes::everything(),
             Ordering::by_code().ascending(),
         );
         let table = LOCTable::from_count_queryset(&qs);
@@ -407,7 +410,7 @@ mod tests {
         let qs = CountQuerySet::from_result(
             &result,
             Aggregation::ByCrate,
-            LineTypes::all(),
+            LineTypes::everything(),
             Ordering::by_total(),
         );
         let table = LOCTable::from_count_queryset(&qs);

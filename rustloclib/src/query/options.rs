@@ -8,13 +8,14 @@ use std::str::FromStr;
 
 /// Filter for which line types to include in results.
 ///
-/// The 6 line types are:
+/// The 7 line types are:
 /// - `code`: Production code logic lines
 /// - `tests`: Test code logic lines
 /// - `examples`: Example code logic lines
 /// - `docs`: Documentation comments (anywhere)
 /// - `comments`: Regular comments (anywhere)
 /// - `blanks`: Blank lines (anywhere)
+/// - `all`: Total line count (precomputed sum of all types)
 ///
 /// When a line type is disabled, it will be zeroed in returned stats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,22 +32,42 @@ pub struct LineTypes {
     pub comments: bool,
     /// Include blank lines
     pub blanks: bool,
+    /// Include total line count (precomputed)
+    pub all: bool,
 }
 
 impl Default for LineTypes {
     fn default() -> Self {
-        Self::all()
+        // Default shows code, tests, docs, and all (total)
+        Self {
+            code: true,
+            tests: true,
+            examples: false,
+            docs: true,
+            comments: false,
+            blanks: false,
+            all: true,
+        }
     }
 }
 
 impl LineTypes {
-    /// Create with no types enabled (for building up)
+    /// Create with no types enabled (for building up).
+    /// Note: `all` defaults to true since it's always useful to see totals.
     pub fn new() -> Self {
-        Self::none()
+        Self {
+            code: false,
+            tests: false,
+            examples: false,
+            docs: false,
+            comments: false,
+            blanks: false,
+            all: true, // All is on by default
+        }
     }
 
-    /// Include all line types (default)
-    pub fn all() -> Self {
+    /// Include all line types
+    pub fn everything() -> Self {
         Self {
             code: true,
             tests: true,
@@ -54,10 +75,11 @@ impl LineTypes {
             docs: true,
             comments: true,
             blanks: true,
+            all: true,
         }
     }
 
-    /// Include no line types
+    /// Include no line types at all (not even all)
     pub fn none() -> Self {
         Self {
             code: false,
@@ -66,25 +88,26 @@ impl LineTypes {
             docs: false,
             comments: false,
             blanks: false,
+            all: false,
         }
     }
 
-    /// Include only production code
+    /// Include only production code (plus all)
     pub fn code_only() -> Self {
-        Self::none().with_code()
+        Self::new().with_code()
     }
 
-    /// Include only test code
+    /// Include only test code (plus all)
     pub fn tests_only() -> Self {
-        Self::none().with_tests()
+        Self::new().with_tests()
     }
 
-    /// Include only example code
+    /// Include only example code (plus all)
     pub fn examples_only() -> Self {
-        Self::none().with_examples()
+        Self::new().with_examples()
     }
 
-    /// Include all logic lines (code + tests + examples)
+    /// Include all logic lines (code + tests + examples + all)
     pub fn logic_only() -> Self {
         Self {
             code: true,
@@ -93,6 +116,7 @@ impl LineTypes {
             docs: false,
             comments: false,
             blanks: false,
+            all: true,
         }
     }
 
@@ -129,6 +153,18 @@ impl LineTypes {
     /// Builder: enable blanks
     pub fn with_blanks(mut self) -> Self {
         self.blanks = true;
+        self
+    }
+
+    /// Builder: enable all (total)
+    pub fn with_all(mut self) -> Self {
+        self.all = true;
+        self
+    }
+
+    /// Builder: disable all (total)
+    pub fn without_all(mut self) -> Self {
+        self.all = false;
         self
     }
 }
@@ -269,10 +305,11 @@ mod tests {
         let lt = LineTypes::default();
         assert!(lt.code);
         assert!(lt.tests);
-        assert!(lt.examples);
+        assert!(!lt.examples); // Not in default
         assert!(lt.docs);
-        assert!(lt.comments);
-        assert!(lt.blanks);
+        assert!(!lt.comments); // Not in default
+        assert!(!lt.blanks); // Not in default
+        assert!(lt.all);
     }
 
     #[test]
@@ -284,6 +321,19 @@ mod tests {
         assert!(!lt.docs);
         assert!(!lt.comments);
         assert!(!lt.blanks);
+        assert!(!lt.all);
+    }
+
+    #[test]
+    fn test_line_types_everything() {
+        let lt = LineTypes::everything();
+        assert!(lt.code);
+        assert!(lt.tests);
+        assert!(lt.examples);
+        assert!(lt.docs);
+        assert!(lt.comments);
+        assert!(lt.blanks);
+        assert!(lt.all);
     }
 
     #[test]
@@ -295,6 +345,7 @@ mod tests {
         assert!(!lt.docs);
         assert!(!lt.comments);
         assert!(!lt.blanks);
+        assert!(lt.all); // All is on by default with new()
     }
 
     #[test]
@@ -306,6 +357,7 @@ mod tests {
         assert!(!lt.docs);
         assert!(!lt.comments);
         assert!(!lt.blanks);
+        assert!(lt.all); // All is on by default
     }
 
     #[test]
@@ -317,6 +369,7 @@ mod tests {
         assert!(!lt.docs);
         assert!(!lt.comments);
         assert!(!lt.blanks);
+        assert!(lt.all);
     }
 
     #[test]
