@@ -8,9 +8,9 @@ use std::path::Path;
 
 use crate::error::RustlocError;
 use crate::filter::{discover_files, discover_files_in_dirs, FilterConfig};
-use crate::options::{Aggregation, Contexts};
-use crate::stats::{CrateStats, FileStats, LocStats, ModuleStats};
-use crate::visitor::parse_file;
+use crate::options::{Aggregation, LineTypes};
+use crate::stats::{CrateStats, FileStats, Locs, ModuleStats};
+use crate::visitor::gather_stats_for_path;
 use crate::workspace::{CrateInfo, WorkspaceInfo};
 use crate::Result;
 
@@ -23,8 +23,8 @@ pub struct CountOptions {
     pub file_filter: FilterConfig,
     /// Aggregation level for results
     pub aggregation: Aggregation,
-    /// Which contexts to include in results (main, tests, examples)
-    pub contexts: Contexts,
+    /// Which line types to include in results
+    pub line_types: LineTypes,
 }
 
 impl Default for CountOptions {
@@ -33,7 +33,7 @@ impl Default for CountOptions {
             crate_filter: Vec::new(),
             file_filter: FilterConfig::new(),
             aggregation: Aggregation::Total,
-            contexts: Contexts::all(),
+            line_types: LineTypes::all(),
         }
     }
 }
@@ -62,9 +62,9 @@ impl CountOptions {
         self
     }
 
-    /// Set which contexts to include.
-    pub fn contexts(mut self, contexts: Contexts) -> Self {
-        self.contexts = contexts;
+    /// Set which line types to include.
+    pub fn line_types(mut self, types: LineTypes) -> Self {
+        self.line_types = types;
         self
     }
 }
@@ -72,8 +72,10 @@ impl CountOptions {
 /// Result of counting LOC in a workspace or directory.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct CountResult {
+    /// Total number of files analyzed
+    pub file_count: usize,
     /// Aggregated statistics across all files
-    pub total: LocStats,
+    pub total: Locs,
     /// Per-crate statistics (if workspace)
     pub crates: Vec<CrateStats>,
     /// Per-file statistics (if requested)
@@ -88,13 +90,14 @@ impl CountResult {
         Self::default()
     }
 
-    /// Return a filtered copy with only the specified contexts included.
-    pub fn filter(&self, contexts: Contexts) -> Self {
+    /// Return a filtered copy with only the specified line types included.
+    pub fn filter(&self, types: LineTypes) -> Self {
         Self {
-            total: self.total.filter(contexts),
-            crates: self.crates.iter().map(|c| c.filter(contexts)).collect(),
-            files: self.files.iter().map(|f| f.filter(contexts)).collect(),
-            modules: self.modules.iter().map(|m| m.filter(contexts)).collect(),
+            file_count: self.file_count,
+            total: self.total.filter(types),
+            crates: self.crates.iter().map(|c| c.filter(types)).collect(),
+            files: self.files.iter().map(|f| f.filter(types)).collect(),
+            modules: self.modules.iter().map(|m| m.filter(types)).collect(),
         }
     }
 }
@@ -127,7 +130,7 @@ impl CountResult {
 /// // Count all crates in the workspace
 /// let result = count_workspace(dir.path(), CountOptions::new()).unwrap();
 /// assert_eq!(result.crates.len(), 0); // Total aggregation doesn't include crate breakdown
-/// assert!(result.total.code.logic >= 1);
+/// assert!(result.total.code >= 1);
 ///
 /// // Exclude test files with filter
 /// let filter = FilterConfig::new().exclude("**/tests/**").unwrap();
@@ -160,7 +163,8 @@ pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<
 
     for crate_info in &crates {
         let crate_stats = count_crate(crate_info, &options)?;
-        result.total += crate_stats.stats.clone();
+        result.total += crate_stats.stats;
+        result.file_count += crate_stats.files.len();
 
         if include_files {
             result.files.extend(crate_stats.files.clone());
@@ -182,8 +186,8 @@ pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<
         result.modules.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
-    // Apply context filter
-    Ok(result.filter(options.contexts))
+    // Apply line type filter
+    Ok(result.filter(options.line_types))
 }
 
 /// Compute the module name for a file path relative to a source root.
@@ -261,7 +265,7 @@ fn aggregate_modules(
             .entry(full_module_name.clone())
             .or_insert_with(|| ModuleStats::new(full_module_name));
 
-        module.add_file(file.path.clone(), file.stats.clone());
+        module.add_file(file.path.clone(), file.stats);
     }
 
     module_map.into_values().collect()
@@ -275,7 +279,7 @@ fn count_crate(crate_info: &CrateInfo, options: &CountOptions) -> Result<CrateSt
     let mut crate_stats = CrateStats::new(crate_info.name.clone(), crate_info.root.clone());
 
     for file_path in files {
-        let stats = parse_file(&file_path)?;
+        let stats = gather_stats_for_path(&file_path)?;
         let file_stats = FileStats::new(file_path, stats);
         crate_stats.add_file(file_stats);
     }
@@ -317,8 +321,9 @@ pub fn count_directory(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<
     let mut result = CountResult::new();
 
     for file_path in files {
-        let stats = parse_file(&file_path)?;
-        result.total += stats.clone();
+        let stats = gather_stats_for_path(&file_path)?;
+        result.total += stats;
+        result.file_count += 1;
         result.files.push(FileStats::new(file_path, stats));
     }
 
@@ -339,10 +344,10 @@ pub fn count_directory(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<
 /// fs::write(&file_path, "fn main() {\n    println!(\"Hello\");\n}\n").unwrap();
 ///
 /// let stats = count_file(&file_path).unwrap();
-/// assert_eq!(stats.code.logic, 3);
+/// assert_eq!(stats.code, 3);
 /// ```
-pub fn count_file(path: impl AsRef<Path>) -> Result<LocStats> {
-    parse_file(path)
+pub fn count_file(path: impl AsRef<Path>) -> Result<Locs> {
+    gather_stats_for_path(path)
 }
 
 #[cfg(test)]
@@ -468,8 +473,8 @@ edition = "2021"
         let filter = FilterConfig::new();
         let result = count_directory(&src, &filter).unwrap();
 
-        assert_eq!(result.total.file_count, 1);
-        assert_eq!(result.total.code.logic, 3);
+        assert_eq!(result.files.len(), 1);
+        assert_eq!(result.total.code, 3);
     }
 
     #[test]
@@ -489,10 +494,9 @@ fn foo() {
 
         let stats = count_file(&file).unwrap();
 
-        assert_eq!(stats.file_count, 1);
-        assert_eq!(stats.code.docs, 1);
-        assert_eq!(stats.code.logic, 3); // fn, let, }
-        assert_eq!(stats.code.comments, 1);
+        assert_eq!(stats.docs, 1);
+        assert_eq!(stats.code, 3); // fn, let, }
+        assert_eq!(stats.comments, 1);
     }
 
     #[test]
@@ -507,7 +511,6 @@ fn foo() {
         .unwrap();
 
         assert_eq!(result.crates.len(), 2);
-        assert_eq!(result.total.file_count, 2);
     }
 
     #[test]
@@ -522,7 +525,6 @@ fn foo() {
 
         assert_eq!(result.crates.len(), 1);
         assert_eq!(result.crates[0].name, "crate-a");
-        assert_eq!(result.total.file_count, 1);
     }
 
     #[test]
@@ -545,8 +547,8 @@ fn foo() {
 
         // main.rs has 3 production code lines + test block
         // lib.rs has doc comment + code
-        assert!(result.total.code.logic > 0);
-        assert!(result.total.tests.logic > 0);
-        assert!(result.total.code.docs > 0);
+        assert!(result.total.code > 0);
+        assert!(result.total.tests > 0);
+        assert!(result.total.docs > 0);
     }
 }

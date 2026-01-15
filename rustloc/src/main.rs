@@ -10,7 +10,7 @@
 //!
 //! ## Features
 //!
-//! - **Rust-aware**: Distinguishes code, tests, examples, comments, and blank lines
+//! - **Rust-aware**: Distinguishes code, tests, examples, comments, docs, and blanks
 //! - **Cargo workspace support**: Filter by crate with `--crate` or `-c`
 //! - **Glob filtering**: Include/exclude files with glob patterns
 //! - **Multiple output formats**: Table (default), JSON
@@ -30,6 +30,9 @@
 //!
 //! # Filter files with glob patterns
 //! rustloc . --include "src/**/*.rs" --exclude "**/generated/**"
+//!
+//! # Show only code and tests (exclude docs, comments, blanks)
+//! rustloc . --type code,tests
 //!
 //! # Diff between commits
 //! rustloc diff HEAD~5..HEAD
@@ -52,8 +55,8 @@ use std::process::ExitCode;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use outstanding::cli::{App, CommandContext, HandlerResult, Output, RunResult};
 use rustloclib::{
-    count_workspace, diff_commits, diff_workdir, Aggregation, Contexts, CountOptions, DiffOptions,
-    FilterConfig, LOCTable, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
+    count_workspace, diff_commits, diff_workdir, Aggregation, CountOptions, DiffOptions,
+    FilterConfig, LOCTable, LineTypes, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
 };
 
 /// Include template at compile time
@@ -96,8 +99,8 @@ fn build_command() -> Command {
                 .short('t')
                 .long("type")
                 .value_delimiter(',')
-                .value_parser(["code", "tests", "examples"])
-                .help("Filter code contexts (comma-separated: code,tests,examples)"),
+                .value_parser(["code", "tests", "examples", "docs", "comments", "blanks"])
+                .help("Filter line types (comma-separated: code,tests,examples,docs,comments,blanks)"),
         )
         .arg(
             Arg::new("by-crate")
@@ -124,7 +127,7 @@ fn build_command() -> Command {
                 .short('o')
                 .long("ordering")
                 .value_name("FIELD")
-                .help("Order by field: label, code, tests, examples, total (prefix with - for descending)"),
+                .help("Order by field: label, code, tests, examples, docs, comments, blanks, total (prefix with - for descending)"),
         )
         .subcommand(
             Command::new("count")
@@ -156,8 +159,8 @@ fn build_command() -> Command {
                         .short('t')
                         .long("type")
                         .value_delimiter(',')
-                        .value_parser(["code", "tests", "examples"])
-                        .help("Filter code contexts"),
+                        .value_parser(["code", "tests", "examples", "docs", "comments", "blanks"])
+                        .help("Filter line types"),
                 )
                 .arg(
                     Arg::new("by-crate")
@@ -184,7 +187,7 @@ fn build_command() -> Command {
                         .short('o')
                         .long("ordering")
                         .value_name("FIELD")
-                        .help("Order by field: label, code, tests, examples, total (prefix with - for descending)"),
+                        .help("Order by field: label, code, tests, examples, docs, comments, blanks, total (prefix with - for descending)"),
                 ),
         )
         .subcommand(
@@ -232,8 +235,8 @@ fn build_command() -> Command {
                         .short('t')
                         .long("type")
                         .value_delimiter(',')
-                        .value_parser(["code", "tests", "examples"])
-                        .help("Filter code contexts"),
+                        .value_parser(["code", "tests", "examples", "docs", "comments", "blanks"])
+                        .help("Filter line types"),
                 )
                 .arg(
                     Arg::new("by-crate")
@@ -253,7 +256,7 @@ fn build_command() -> Command {
                         .short('o')
                         .long("ordering")
                         .value_name("FIELD")
-                        .help("Order by field: label, code, tests, examples, total (prefix with - for descending)"),
+                        .help("Order by field: label, code, tests, examples, docs, comments, blanks, total (prefix with - for descending)"),
                 ),
         )
 }
@@ -293,20 +296,24 @@ fn extract_ordering(matches: &ArgMatches) -> Ordering {
         .unwrap_or_default()
 }
 
-/// Extract contexts from matches
-fn extract_contexts(matches: &ArgMatches) -> Contexts {
+/// Extract line types from matches
+fn extract_line_types(matches: &ArgMatches) -> LineTypes {
     let types: Vec<&str> = matches
         .get_many::<String>("type")
         .map(|v| v.map(|s| s.as_str()).collect())
         .unwrap_or_default();
 
     if types.is_empty() {
-        Contexts::all()
+        LineTypes::all()
     } else {
-        Contexts::none()
-            .with_code(types.contains(&"code"))
-            .with_tests(types.contains(&"tests"))
-            .with_examples(types.contains(&"examples"))
+        LineTypes {
+            code: types.contains(&"code"),
+            tests: types.contains(&"tests"),
+            examples: types.contains(&"examples"),
+            docs: types.contains(&"docs"),
+            comments: types.contains(&"comments"),
+            blanks: types.contains(&"blanks"),
+        }
     }
 }
 
@@ -344,7 +351,7 @@ fn count_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<L
         .map(|s| s.as_str())
         .unwrap_or(".");
     let filter = build_filter(matches)?;
-    let contexts = extract_contexts(matches);
+    let line_types = extract_line_types(matches);
     let crates = extract_crates(matches);
     let ordering = extract_ordering(matches);
 
@@ -366,10 +373,10 @@ fn count_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<L
         .crates(crates)
         .filter(filter)
         .aggregation(aggregation)
-        .contexts(contexts);
+        .line_types(line_types);
 
     let result = count_workspace(path, options)?;
-    let table = LOCTable::from_count(&result, aggregation, contexts, ordering);
+    let table = LOCTable::from_count(&result, aggregation, line_types, ordering);
     Ok(Output::Render(table))
 }
 
@@ -380,7 +387,7 @@ fn diff_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<LO
         .map(|s| s.as_str())
         .unwrap_or(".");
     let filter = build_filter(matches)?;
-    let contexts = extract_contexts(matches);
+    let line_types = extract_line_types(matches);
     let crates = extract_crates(matches);
     let ordering = extract_ordering(matches);
     let staged = matches.get_flag("staged");
@@ -400,7 +407,7 @@ fn diff_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<LO
         .crates(crates)
         .filter(filter)
         .aggregation(aggregation)
-        .contexts(contexts);
+        .line_types(line_types);
 
     let from = matches.get_one::<String>("from");
     let to = matches.get_one::<String>("to");
@@ -424,7 +431,7 @@ fn diff_handler(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<LO
         diff_workdir(path, mode, options)?
     };
 
-    let table = LOCTable::from_diff(&result, aggregation, contexts, ordering);
+    let table = LOCTable::from_diff(&result, aggregation, line_types, ordering);
     Ok(Output::Render(table))
 }
 
