@@ -226,10 +226,10 @@ fn build_filter(common: &CommonArgs) -> Result<FilterConfig, Box<dyn std::error:
     Ok(filter)
 }
 
-fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
+/// Core handler logic for count command - returns data without rendering
+fn handle_count(args: &CountArgs) -> Result<CountResult, Box<dyn std::error::Error>> {
     let filter = build_filter(&args.common)?;
     let contexts = to_contexts(&args.common.types);
-    let base_path = std::fs::canonicalize(&args.path)?;
 
     // Determine aggregation level from flags
     let aggregation = if args.by_file {
@@ -248,7 +248,14 @@ fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
         .aggregation(aggregation)
         .contexts(contexts);
 
-    let result = count_workspace(&args.path, options)?;
+    Ok(count_workspace(&args.path, options)?)
+}
+
+fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let contexts = to_contexts(&args.common.types);
+    let base_path = std::fs::canonicalize(&args.path)?;
+
+    let result = handle_count(&args)?;
 
     match args.common.output {
         OutputFormat::Table => print_count_table(
@@ -283,10 +290,10 @@ fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn run_diff(args: DiffArgs) -> Result<(), Box<dyn std::error::Error>> {
+/// Core handler logic for diff command - returns data without rendering
+fn handle_diff(args: &DiffArgs) -> Result<DiffResult, Box<dyn std::error::Error>> {
     let filter = build_filter(&args.common)?;
     let contexts = to_contexts(&args.common.types);
-    let base_path = std::fs::canonicalize(&args.path)?;
 
     // Determine aggregation level from flags
     let aggregation = if args.by_file {
@@ -304,22 +311,29 @@ fn run_diff(args: DiffArgs) -> Result<(), Box<dyn std::error::Error>> {
         .contexts(contexts);
 
     // Determine if this is a working directory diff or commit diff
-    let result = if args.from.is_none() {
+    if args.from.is_none() {
         // No commit args - diff working directory
         let mode = if args.staged {
             WorkdirDiffMode::Staged
         } else {
             WorkdirDiffMode::All
         };
-        diff_workdir(&args.path, mode, options)?
+        Ok(diff_workdir(&args.path, mode, options)?)
     } else {
         // Commit args provided - diff between commits
         if args.staged {
             return Err("--staged/--cached can only be used without commit arguments".into());
         }
         let (from, to) = parse_commit_range(args.from.as_deref().unwrap(), args.to.as_deref())?;
-        diff_commits(&args.path, &from, &to, options)?
-    };
+        Ok(diff_commits(&args.path, &from, &to, options)?)
+    }
+}
+
+fn run_diff(args: DiffArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let contexts = to_contexts(&args.common.types);
+    let base_path = std::fs::canonicalize(&args.path)?;
+
+    let result = handle_diff(&args)?;
 
     match args.common.output {
         OutputFormat::Table => print_diff_table(
