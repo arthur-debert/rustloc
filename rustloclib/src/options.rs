@@ -4,6 +4,7 @@
 //! the library computes and returns.
 
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 /// Filter for which code contexts to include in results.
 ///
@@ -105,6 +106,108 @@ pub enum Aggregation {
     ByFile,
 }
 
+/// Field to order results by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum OrderBy {
+    /// Order by label/path (lexicographical)
+    #[default]
+    Label,
+    /// Order by code line count
+    Code,
+    /// Order by test line count
+    Tests,
+    /// Order by example line count
+    Examples,
+    /// Order by total line count
+    Total,
+}
+
+impl FromStr for OrderBy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "label" | "name" | "path" => Ok(OrderBy::Label),
+            "code" => Ok(OrderBy::Code),
+            "tests" | "test" => Ok(OrderBy::Tests),
+            "examples" | "example" => Ok(OrderBy::Examples),
+            "total" => Ok(OrderBy::Total),
+            _ => Err(format!("Unknown order field: {}", s)),
+        }
+    }
+}
+
+/// Sort direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum OrderDirection {
+    /// Ascending (A-Z, smallest first)
+    #[default]
+    Ascending,
+    /// Descending (Z-A, largest first)
+    Descending,
+}
+
+/// Ordering configuration for results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ordering {
+    /// Field to order by
+    pub by: OrderBy,
+    /// Sort direction
+    pub direction: OrderDirection,
+}
+
+impl Default for Ordering {
+    fn default() -> Self {
+        Self {
+            by: OrderBy::Label,
+            direction: OrderDirection::Ascending,
+        }
+    }
+}
+
+impl Ordering {
+    /// Create ordering by label ascending (default)
+    pub fn by_label() -> Self {
+        Self::default()
+    }
+
+    /// Create ordering by code count
+    pub fn by_code() -> Self {
+        Self {
+            by: OrderBy::Code,
+            direction: OrderDirection::Descending,
+        }
+    }
+
+    /// Create ordering by test count
+    pub fn by_tests() -> Self {
+        Self {
+            by: OrderBy::Tests,
+            direction: OrderDirection::Descending,
+        }
+    }
+
+    /// Create ordering by total count
+    pub fn by_total() -> Self {
+        Self {
+            by: OrderBy::Total,
+            direction: OrderDirection::Descending,
+        }
+    }
+
+    /// Set sort direction to ascending
+    pub fn ascending(mut self) -> Self {
+        self.direction = OrderDirection::Ascending;
+        self
+    }
+
+    /// Set sort direction to descending
+    pub fn descending(mut self) -> Self {
+        self.direction = OrderDirection::Descending;
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +242,35 @@ mod tests {
         assert!(ctx.code);
         assert!(!ctx.tests);
         assert!(!ctx.examples);
+    }
+
+    #[test]
+    fn test_ordering_default() {
+        let ordering = Ordering::default();
+        assert_eq!(ordering.by, OrderBy::Label);
+        assert_eq!(ordering.direction, OrderDirection::Ascending);
+    }
+
+    #[test]
+    fn test_ordering_by_code() {
+        let ordering = Ordering::by_code();
+        assert_eq!(ordering.by, OrderBy::Code);
+        assert_eq!(ordering.direction, OrderDirection::Descending);
+    }
+
+    #[test]
+    fn test_ordering_direction_builder() {
+        let ordering = Ordering::by_total().ascending();
+        assert_eq!(ordering.by, OrderBy::Total);
+        assert_eq!(ordering.direction, OrderDirection::Ascending);
+    }
+
+    #[test]
+    fn test_order_by_from_str() {
+        assert_eq!(OrderBy::from_str("code").unwrap(), OrderBy::Code);
+        assert_eq!(OrderBy::from_str("tests").unwrap(), OrderBy::Tests);
+        assert_eq!(OrderBy::from_str("total").unwrap(), OrderBy::Total);
+        assert_eq!(OrderBy::from_str("label").unwrap(), OrderBy::Label);
+        assert!(OrderBy::from_str("invalid").is_err());
     }
 }

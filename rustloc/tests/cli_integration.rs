@@ -58,26 +58,21 @@ fn test_json_output() {
     let (stdout, _, success) = run_rustloc(&[".", "--output", "json"]);
 
     assert!(success);
-    assert!(stdout.contains("\"file_count\""));
-    assert!(stdout.contains("\"total\""));
-    assert!(stdout.contains("\"code\""));
-    assert!(stdout.contains("\"tests\""));
-    assert!(stdout.contains("\"examples\""));
+    assert!(stdout.contains("\"headers\""));
+    assert!(stdout.contains("\"rows\""));
+    assert!(stdout.contains("\"footer\""));
+    assert!(stdout.contains("\"Code\""));
+    assert!(stdout.contains("\"Tests\""));
+    assert!(stdout.contains("\"Examples\""));
 
-    // Verify it's valid JSON
+    // Verify it's valid JSON with LOCTable structure
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON output");
-    assert!(parsed.get("total").is_some());
-    assert!(parsed["total"].get("file_count").is_some());
+    assert!(parsed.get("headers").is_some());
+    assert!(parsed.get("footer").is_some());
+    assert!(parsed["footer"].get("label").is_some());
 }
 
-#[test]
-fn test_csv_output() {
-    let (stdout, _, success) = run_rustloc(&[".", "--output", "csv"]);
-
-    assert!(success);
-    assert!(stdout.contains("name,code,tests,examples,total,files"));
-    assert!(stdout.contains("\"total\","));
-}
+// CSV output removed - using outstanding's built-in JSON/table output
 
 #[test]
 fn test_by_crate_output() {
@@ -166,29 +161,21 @@ fn test_diff_json_output() {
     let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--output", "json"]);
 
     assert!(success);
-    assert!(stdout.contains("\"from_commit\""));
-    assert!(stdout.contains("\"to_commit\""));
-    assert!(stdout.contains("\"total\""));
-    assert!(stdout.contains("\"added\""));
-    assert!(stdout.contains("\"removed\""));
+    assert!(stdout.contains("\"title\""));
+    assert!(stdout.contains("\"headers\""));
+    assert!(stdout.contains("\"footer\""));
+    // Diff title contains commit range
+    assert!(stdout.contains("HEAD~5"));
+    assert!(stdout.contains("HEAD"));
 
-    // Verify it's valid JSON
+    // Verify it's valid JSON with LOCTable structure
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON output");
-    assert!(parsed.get("from_commit").is_some());
-    assert!(parsed.get("to_commit").is_some());
-    assert!(parsed["total"].get("file_count").is_some());
+    assert!(parsed.get("title").is_some());
+    assert!(parsed.get("headers").is_some());
+    assert!(parsed.get("footer").is_some());
 }
 
-#[test]
-fn test_diff_csv_output() {
-    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--output", "csv"]);
-
-    assert!(success);
-    // New unified CSV format with context columns
-    assert!(stdout.contains("name,code_added,code_removed,code_net"));
-    assert!(stdout.contains("total_added,total_removed,total_net"));
-    assert!(stdout.contains("\"total\","));
-}
+// CSV output removed - using outstanding's built-in JSON/table output
 
 #[test]
 fn test_diff_by_file() {
@@ -263,15 +250,17 @@ fn test_diff_workdir_json() {
     let (stdout, _, success) = run_rustloc(&["diff", "--output", "json"]);
 
     assert!(success);
-    assert!(stdout.contains("\"from_commit\""));
-    assert!(stdout.contains("\"to_commit\""));
-    assert!(stdout.contains("\"HEAD\""));
-    assert!(stdout.contains("\"working tree\""));
+    assert!(stdout.contains("\"title\""));
+    assert!(stdout.contains("\"headers\""));
+    assert!(stdout.contains("\"footer\""));
+    // Title contains HEAD and working tree
+    assert!(stdout.contains("HEAD"));
+    assert!(stdout.contains("working tree"));
 
-    // Verify it's valid JSON
+    // Verify it's valid JSON with LOCTable structure
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON output");
-    assert_eq!(parsed["from_commit"], "HEAD");
-    assert_eq!(parsed["to_commit"], "working tree");
+    assert!(parsed.get("title").is_some());
+    assert!(parsed["title"].as_str().unwrap().contains("HEAD"));
 }
 
 #[test]
