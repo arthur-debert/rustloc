@@ -49,13 +49,12 @@
 
 mod render;
 
-use std::path::Path;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use rustloclib::{
     count_workspace, diff_commits, diff_workdir, Aggregation, Contexts, CountOptions, CountResult,
-    DiffOptions, DiffResult, FilterConfig, LocStats, LocStatsDiff, StatsRow, WorkdirDiffMode,
+    DiffOptions, DiffResult, FilterConfig, WorkdirDiffMode,
 };
 
 /// Rust-aware lines of code counter with test/code separation
@@ -181,14 +180,6 @@ fn to_contexts(types: &[ContextType]) -> Contexts {
     }
 }
 
-/// Convert a path to a relative path from the base directory.
-/// Falls back to the original path if it can't be made relative.
-fn make_relative(path: &Path, base: &Path) -> String {
-    path.strip_prefix(base)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| path.to_string_lossy().to_string())
-}
-
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutputFormat {
     Table,
@@ -254,11 +245,11 @@ fn handle_count(args: &CountArgs) -> Result<CountResult, Box<dyn std::error::Err
 fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
     let contexts = to_contexts(&args.common.types);
     let base_path = std::fs::canonicalize(&args.path)?;
-
     let result = handle_count(&args)?;
 
-    match args.common.output {
-        OutputFormat::Table => print_count_table(
+    // Map CLI output format to outstanding OutputMode
+    let output = match args.common.output {
+        OutputFormat::Table => render::render_count(
             &result,
             args.by_crate,
             args.by_file,
@@ -266,8 +257,8 @@ fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
             &contexts,
             &base_path,
             render::OutputMode::Term,
-        ),
-        OutputFormat::TermDebug => print_count_table(
+        )?,
+        OutputFormat::TermDebug => render::render_count(
             &result,
             args.by_crate,
             args.by_file,
@@ -275,9 +266,17 @@ fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
             &contexts,
             &base_path,
             render::OutputMode::TermDebug,
-        ),
-        OutputFormat::Json => print_count_json(&result)?,
-        OutputFormat::Csv => print_count_csv(
+        )?,
+        OutputFormat::Json => render::render_count(
+            &result,
+            args.by_crate,
+            args.by_file,
+            args.by_module,
+            &contexts,
+            &base_path,
+            render::OutputMode::Json,
+        )?,
+        OutputFormat::Csv => render::render_count_csv(
             &result,
             args.by_crate,
             args.by_file,
@@ -285,8 +284,8 @@ fn run_count(args: CountArgs) -> Result<(), Box<dyn std::error::Error>> {
             &contexts,
             &base_path,
         ),
-    }
-
+    };
+    print!("{}", output);
     Ok(())
 }
 
@@ -332,32 +331,39 @@ fn handle_diff(args: &DiffArgs) -> Result<DiffResult, Box<dyn std::error::Error>
 fn run_diff(args: DiffArgs) -> Result<(), Box<dyn std::error::Error>> {
     let contexts = to_contexts(&args.common.types);
     let base_path = std::fs::canonicalize(&args.path)?;
-
     let result = handle_diff(&args)?;
 
-    match args.common.output {
-        OutputFormat::Table => print_diff_table(
+    // Map CLI output format to outstanding OutputMode
+    let output = match args.common.output {
+        OutputFormat::Table => render::render_diff(
             &result,
             args.by_crate,
             args.by_file,
             &contexts,
             &base_path,
             render::OutputMode::Term,
-        ),
-        OutputFormat::TermDebug => print_diff_table(
+        )?,
+        OutputFormat::TermDebug => render::render_diff(
             &result,
             args.by_crate,
             args.by_file,
             &contexts,
             &base_path,
             render::OutputMode::TermDebug,
-        ),
-        OutputFormat::Json => print_diff_json(&result)?,
+        )?,
+        OutputFormat::Json => render::render_diff(
+            &result,
+            args.by_crate,
+            args.by_file,
+            &contexts,
+            &base_path,
+            render::OutputMode::Json,
+        )?,
         OutputFormat::Csv => {
-            print_diff_csv(&result, args.by_crate, args.by_file, &contexts, &base_path)
+            render::render_diff_csv(&result, args.by_crate, args.by_file, &contexts, &base_path)
         }
-    }
-
+    };
+    print!("{}", output);
     Ok(())
 }
 
@@ -379,297 +385,4 @@ fn parse_commit_range(
         // Single argument without range - assume comparing to HEAD
         Ok((from.to_string(), "HEAD".to_string()))
     }
-}
-
-// ============================================================================
-// Unified output helpers
-// ============================================================================
-
-/// Print a stats table with rows of StatsRow using template rendering
-fn print_stats_table(
-    rows: &[StatsRow],
-    total: &StatsRow,
-    name_header: &str,
-    name_width: usize,
-    ctx: &Contexts,
-    output_mode: render::OutputMode,
-) {
-    match render::render_stats_table(rows, total, name_header, name_width, ctx, output_mode) {
-        Ok(output) => print!("{}", output),
-        Err(e) => eprintln!("Template error: {}", e),
-    }
-}
-
-// ============================================================================
-// Count output functions
-// ============================================================================
-
-fn print_count_table(
-    result: &CountResult,
-    by_crate: bool,
-    by_file: bool,
-    by_module: bool,
-    ctx: &Contexts,
-    base_path: &Path,
-    output_mode: render::OutputMode,
-) {
-    // Determine column header based on aggregation level
-    let (name_header, name_width) = if by_file {
-        ("File", 60)
-    } else if by_module {
-        ("Module", 40)
-    } else if by_crate {
-        ("Crate", 40)
-    } else {
-        ("", 40) // Total-only view still has name column
-    };
-
-    // Build rows from result based on aggregation level
-    let rows: Vec<StatsRow> = if by_file && !result.files.is_empty() {
-        result
-            .files
-            .iter()
-            .map(|f| {
-                let path_str = make_relative(&f.path, base_path);
-                StatsRow::from_count(path_str, &f.stats)
-            })
-            .collect()
-    } else if by_module && !result.modules.is_empty() {
-        result
-            .modules
-            .iter()
-            .map(|m| {
-                let name = if m.name.is_empty() {
-                    "(root)".to_string()
-                } else {
-                    m.name.clone()
-                };
-                StatsRow::from_count(name, &m.stats)
-            })
-            .collect()
-    } else if by_crate && !result.crates.is_empty() {
-        result
-            .crates
-            .iter()
-            .map(|c| StatsRow::from_count(&c.name, &c.stats))
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    // Build total row
-    let total = StatsRow::from_count(
-        format!("Total ({} files)", result.total.file_count),
-        &result.total,
-    );
-
-    print_stats_table(&rows, &total, name_header, name_width, ctx, output_mode);
-}
-
-fn print_count_json(result: &CountResult) -> Result<(), serde_json::Error> {
-    println!("{}", serde_json::to_string_pretty(result)?);
-    Ok(())
-}
-
-fn print_count_csv(
-    result: &CountResult,
-    by_crate: bool,
-    by_file: bool,
-    by_module: bool,
-    ctx: &Contexts,
-    base_path: &Path,
-) {
-    // Build dynamic header based on which contexts are enabled
-    let mut header = String::from("name");
-    if ctx.code {
-        header.push_str(",code");
-    }
-    if ctx.tests {
-        header.push_str(",tests");
-    }
-    if ctx.examples {
-        header.push_str(",examples");
-    }
-    header.push_str(",total,files");
-    println!("{}", header);
-
-    let format_stats = |name: &str, stats: &LocStats| {
-        let mut row = format!("\"{}\"", name);
-        if ctx.code {
-            row.push_str(&format!(",{}", stats.code.total()));
-        }
-        if ctx.tests {
-            row.push_str(&format!(",{}", stats.tests.total()));
-        }
-        if ctx.examples {
-            row.push_str(&format!(",{}", stats.examples.total()));
-        }
-        row.push_str(&format!(",{},{}", stats.total(), stats.file_count));
-        row
-    };
-
-    if by_file {
-        for file in &result.files {
-            if file.stats.total() == 0 {
-                continue;
-            }
-            let path_str = make_relative(&file.path, base_path);
-            println!("{}", format_stats(&path_str, &file.stats));
-        }
-    } else if by_module {
-        for module in &result.modules {
-            if module.stats.total() == 0 {
-                continue;
-            }
-            let name = if module.name.is_empty() {
-                "(root)"
-            } else {
-                &module.name
-            };
-            println!("{}", format_stats(name, &module.stats));
-        }
-    } else if by_crate {
-        for crate_stats in &result.crates {
-            if crate_stats.stats.total() == 0 {
-                continue;
-            }
-            println!("{}", format_stats(&crate_stats.name, &crate_stats.stats));
-        }
-    }
-
-    // Always print total
-    println!("{}", format_stats("total", &result.total));
-}
-
-// ============================================================================
-// Diff output functions
-// ============================================================================
-
-fn print_diff_table(
-    result: &DiffResult,
-    by_crate: bool,
-    by_file: bool,
-    ctx: &Contexts,
-    base_path: &Path,
-    output_mode: render::OutputMode,
-) {
-    println!("Diff: {} → {}", result.from_commit, result.to_commit);
-    println!();
-
-    // Determine column header based on aggregation level (same as counts)
-    let (name_header, name_width) = if by_file {
-        ("File", 60)
-    } else if by_crate {
-        ("Crate", 40)
-    } else {
-        ("", 40) // Total-only view still has name column
-    };
-
-    // Build rows from result based on aggregation level
-    let rows: Vec<StatsRow> = if by_file && !result.files.is_empty() {
-        result
-            .files
-            .iter()
-            .map(|f| {
-                let path_str = make_relative(&f.path, base_path);
-                f.diff.to_stats_row(path_str)
-            })
-            .collect()
-    } else if by_crate && !result.crates.is_empty() {
-        result
-            .crates
-            .iter()
-            .map(|c| c.diff.to_stats_row(&c.name))
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    // Build total row
-    let total = result
-        .total
-        .to_stats_row(format!("Total ({} files)", result.total.file_count));
-
-    print_stats_table(&rows, &total, name_header, name_width, ctx, output_mode);
-}
-
-fn print_diff_json(result: &DiffResult) -> Result<(), serde_json::Error> {
-    println!("{}", serde_json::to_string_pretty(result)?);
-    Ok(())
-}
-
-fn print_diff_csv(
-    result: &DiffResult,
-    by_crate: bool,
-    by_file: bool,
-    ctx: &Contexts,
-    base_path: &Path,
-) {
-    // Build dynamic header matching count CSV format but with diff columns
-    let mut header = String::from("name");
-    if ctx.code {
-        header.push_str(",code_added,code_removed,code_net");
-    }
-    if ctx.tests {
-        header.push_str(",tests_added,tests_removed,tests_net");
-    }
-    if ctx.examples {
-        header.push_str(",examples_added,examples_removed,examples_net");
-    }
-    header.push_str(",total_added,total_removed,total_net,files");
-    println!("{}", header);
-
-    // Helper to format a row
-    let format_stats = |name: &str, diff: &LocStatsDiff| {
-        let mut row = format!("\"{}\"", name);
-        if ctx.code {
-            let net = diff.code.added.total() as i64 - diff.code.removed.total() as i64;
-            row.push_str(&format!(
-                ",{},{},{}",
-                diff.code.added.total(),
-                diff.code.removed.total(),
-                net
-            ));
-        }
-        if ctx.tests {
-            let net = diff.tests.added.total() as i64 - diff.tests.removed.total() as i64;
-            row.push_str(&format!(
-                ",{},{},{}",
-                diff.tests.added.total(),
-                diff.tests.removed.total(),
-                net
-            ));
-        }
-        if ctx.examples {
-            let net = diff.examples.added.total() as i64 - diff.examples.removed.total() as i64;
-            row.push_str(&format!(
-                ",{},{},{}",
-                diff.examples.added.total(),
-                diff.examples.removed.total(),
-                net
-            ));
-        }
-        let total_added = diff.total_added().total();
-        let total_removed = diff.total_removed().total();
-        let total_net = total_added as i64 - total_removed as i64;
-        row.push_str(&format!(
-            ",{},{},{},{}",
-            total_added, total_removed, total_net, diff.file_count
-        ));
-        row
-    };
-
-    if by_file {
-        for file in &result.files {
-            let path_str = make_relative(&file.path, base_path);
-            println!("{}", format_stats(&path_str, &file.diff));
-        }
-    } else if by_crate {
-        for crate_stats in &result.crates {
-            println!("{}", format_stats(&crate_stats.name, &crate_stats.diff));
-        }
-    }
-
-    // Always print total
-    println!("{}", format_stats("total", &result.total));
 }
