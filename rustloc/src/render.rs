@@ -1,6 +1,6 @@
 //! Template rendering for CLI output
 
-use minijinja::{Environment, Value};
+use outstanding::{render, Theme};
 use rustloclib::{Contexts, StatsRow};
 use serde::Serialize;
 
@@ -71,7 +71,7 @@ fn to_template_row(
     }
 }
 
-/// Render a stats table to string using minijinja
+/// Render a stats table to string using outstanding
 pub fn render_stats_table(
     rows: &[StatsRow],
     total: &StatsRow,
@@ -79,8 +79,8 @@ pub fn render_stats_table(
     name_width: usize,
     ctx: &Contexts,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let mut env = Environment::new();
-    env.add_template("stats_table", STATS_TABLE_TEMPLATE)?;
+    // Create empty theme (no styling yet)
+    let theme = Theme::new();
 
     // Build columns list based on enabled contexts
     let mut columns = Vec::new();
@@ -123,8 +123,8 @@ pub fn render_stats_table(
         total: total_row,
     };
 
-    let tmpl = env.get_template("stats_table")?;
-    let rendered = tmpl.render(Value::from_serialize(&context))?;
+    // Use outstanding's render function
+    let rendered = render(STATS_TABLE_TEMPLATE, &context, &theme)?;
 
     Ok(rendered)
 }
