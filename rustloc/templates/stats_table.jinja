@@ -1,4 +1,7 @@
 {# Template for stats table (counts and diffs) #}
+{% if diff_header %}{{ diff_header }}
+
+{% endif %}
 {{ name_header_formatted }}{% for col in columns %} [category]{{ col.formatted }}[/category]{% endfor %}
 
 {{ separator }}

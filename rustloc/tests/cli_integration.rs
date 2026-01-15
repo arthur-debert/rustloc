@@ -70,14 +70,7 @@ fn test_json_output() {
     assert!(parsed["total"].get("file_count").is_some());
 }
 
-#[test]
-fn test_csv_output() {
-    let (stdout, _, success) = run_rustloc(&[".", "--output", "csv"]);
-
-    assert!(success);
-    assert!(stdout.contains("name,code,tests,examples,total,files"));
-    assert!(stdout.contains("\"total\","));
-}
+// CSV output removed - using outstanding's built-in JSON/table output
 
 #[test]
 fn test_by_crate_output() {
@@ -179,16 +172,7 @@ fn test_diff_json_output() {
     assert!(parsed["total"].get("file_count").is_some());
 }
 
-#[test]
-fn test_diff_csv_output() {
-    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--output", "csv"]);
-
-    assert!(success);
-    // New unified CSV format with context columns
-    assert!(stdout.contains("name,code_added,code_removed,code_net"));
-    assert!(stdout.contains("total_added,total_removed,total_net"));
-    assert!(stdout.contains("\"total\","));
-}
+// CSV output removed - using outstanding's built-in JSON/table output
 
 #[test]
 fn test_diff_by_file() {
