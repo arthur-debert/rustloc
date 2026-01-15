@@ -13,10 +13,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::counter::CountResult;
-use crate::diff::{DiffResult, LocsDiff};
-use crate::options::{Aggregation, LineTypes, OrderBy, OrderDirection, Ordering};
-use crate::stats::Locs;
+use crate::data::counter::CountResult;
+use crate::data::diff::{DiffResult, LocsDiff};
+use crate::data::stats::Locs;
+
+use super::options::{Aggregation, LineTypes, OrderBy, OrderDirection, Ordering};
 
 /// A single item in a query set (one row of data before string formatting).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,7 +303,7 @@ fn build_diff_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stats::CrateStats;
+    use crate::data::stats::CrateStats;
     use std::path::PathBuf;
 
     fn sample_locs(code: u64, tests: u64) -> Locs {

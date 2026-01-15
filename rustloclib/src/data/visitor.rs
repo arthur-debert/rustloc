@@ -25,8 +25,9 @@ use std::path::Path;
 use utf8_chars::BufReadCharsExt;
 
 use crate::error::RustlocError;
-use crate::stats::Locs;
 use crate::Result;
+
+use super::stats::Locs;
 
 /// A visitor that parses Rust source files and counts lines of code.
 ///
@@ -521,7 +522,7 @@ impl<T: Read> Visitor<T> {
 /// # Example
 ///
 /// ```rust
-/// use rustloclib::visitor::gather_stats_for_path;
+/// use rustloclib::gather_stats_for_path;
 /// use std::fs;
 /// use tempfile::tempdir;
 ///
@@ -549,7 +550,7 @@ pub fn gather_stats_for_path(path: impl AsRef<Path>) -> Result<Locs> {
 /// # Example
 ///
 /// ```rust
-/// use rustloclib::visitor::{gather_stats, VisitorContext};
+/// use rustloclib::{gather_stats, VisitorContext};
 ///
 /// let source = r#"
 /// fn main() {

@@ -13,10 +13,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::diff::LocsDiff;
-use crate::options::Aggregation;
-use crate::queryset::{CountQuerySet, DiffQuerySet};
-use crate::stats::Locs;
+use crate::data::diff::LocsDiff;
+use crate::data::stats::Locs;
+use crate::query::options::Aggregation;
+use crate::query::queryset::{CountQuerySet, DiffQuerySet};
 
 /// A single row in the table (data row or footer).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,8 +112,8 @@ struct LineTypesView {
     blanks: bool,
 }
 
-impl From<&crate::options::LineTypes> for LineTypesView {
-    fn from(lt: &crate::options::LineTypes) -> Self {
+impl From<&crate::query::options::LineTypes> for LineTypesView {
+    fn from(lt: &crate::query::options::LineTypes) -> Self {
         LineTypesView {
             code: lt.code,
             tests: lt.tests,
@@ -126,7 +126,10 @@ impl From<&crate::options::LineTypes> for LineTypesView {
 }
 
 /// Build column headers based on aggregation level and enabled line types.
-fn build_headers(aggregation: &Aggregation, line_types: &crate::options::LineTypes) -> Vec<String> {
+fn build_headers(
+    aggregation: &Aggregation,
+    line_types: &crate::query::options::LineTypes,
+) -> Vec<String> {
     let label_header = match aggregation {
         Aggregation::Total => "Name".to_string(),
         Aggregation::ByCrate => "Crate".to_string(),
@@ -161,7 +164,7 @@ fn build_headers(aggregation: &Aggregation, line_types: &crate::options::LineTyp
 }
 
 /// Format Locs values as strings for display.
-fn format_locs(locs: &Locs, line_types: &crate::options::LineTypes) -> Vec<String> {
+fn format_locs(locs: &Locs, line_types: &crate::query::options::LineTypes) -> Vec<String> {
     let lt = LineTypesView::from(line_types);
     let mut values = Vec::new();
 
@@ -198,7 +201,7 @@ fn format_diff_value(added: u64, removed: u64) -> String {
 }
 
 /// Format LocsDiff values as strings for display.
-fn format_locs_diff(diff: &LocsDiff, line_types: &crate::options::LineTypes) -> Vec<String> {
+fn format_locs_diff(diff: &LocsDiff, line_types: &crate::query::options::LineTypes) -> Vec<String> {
     let lt = LineTypesView::from(line_types);
     let mut values = Vec::new();
 
@@ -238,9 +241,9 @@ fn format_locs_diff(diff: &LocsDiff, line_types: &crate::options::LineTypes) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::counter::CountResult;
-    use crate::options::{LineTypes, Ordering};
-    use crate::stats::CrateStats;
+    use crate::data::counter::CountResult;
+    use crate::data::stats::CrateStats;
+    use crate::query::options::{LineTypes, Ordering};
     use std::path::PathBuf;
 
     fn sample_locs(code: u64, tests: u64) -> Locs {

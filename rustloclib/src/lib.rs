@@ -18,19 +18,42 @@
 //! The key insight: only actual code lines need context (code/tests/examples).
 //! A blank is a blank, a comment is a comment - where they appear doesn't matter.
 //!
-//! ## Features
+//! ## Data Pipeline
 //!
-//! - **Rust-aware parsing**: Properly handles #[cfg(test)], #[test] attributes
-//! - **Cargo workspace support**: Can filter by crate within a workspace
-//! - **Glob filtering**: Filter files/directories with glob patterns
-//! - **Git diff support**: Compare LOC changes between commits
-//! - **Pure Rust data types**: Returns structured data, no I/O side effects
+//! The library is organized into four stages that form a clear data pipeline:
 //!
-//! ## Origins
+//! ```text
+//! ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+//! │  source  │ -> │   data   │ -> │  query   │ -> │  output  │
+//! └──────────┘    └──────────┘    └──────────┘    └──────────┘
+//!   Discover       Parse &         Filter,         Format
+//!   files          collect         sort            strings
+//! ```
 //!
-//! The parsing logic is adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc)
-//! by Maxim Gritsenko. We thank the original author for the excellent parsing implementation.
-//! cargo-warloc is MIT licensed.
+//! ### Stage 1: Source Discovery ([`source`])
+//!
+//! Find what files to analyze:
+//! - [`WorkspaceInfo`]: Discover Cargo workspace structure
+//! - [`FilterConfig`]: Include/exclude files with glob patterns
+//!
+//! ### Stage 2: Data Collection ([`data`])
+//!
+//! Parse files and collect statistics:
+//! - [`gather_stats`]: Parse a single file into [`Locs`]
+//! - [`count_workspace`]: Count all files, returns [`CountResult`]
+//! - [`diff_commits`]: Compare commits, returns [`DiffResult`]
+//!
+//! ### Stage 3: Query Processing ([`query`])
+//!
+//! Filter, aggregate, and sort the collected data:
+//! - [`CountQuerySet`]: Processed count data ready for display
+//! - [`LineTypes`]: Which line types to include
+//! - [`Ordering`]: How to sort results
+//!
+//! ### Stage 4: Output Formatting ([`output`])
+//!
+//! Format data for presentation:
+//! - [`LOCTable`]: Table with headers, rows, footer (all strings)
 //!
 //! ## Example
 //!
@@ -63,31 +86,59 @@
 //! let filter = FilterConfig::new().exclude("**/generated/**").unwrap();
 //! let result = count_workspace(dir.path(), CountOptions::new().filter(filter)).unwrap();
 //! ```
+//!
+//! ## Full Pipeline Example
+//!
+//! ```rust,ignore
+//! use rustloclib::{
+//!     count_workspace, CountOptions, CountQuerySet, LOCTable,
+//!     Aggregation, LineTypes, Ordering,
+//! };
+//!
+//! // Stage 1-2: Discover and collect
+//! let result = count_workspace(".", CountOptions::new())?;
+//!
+//! // Stage 3: Query (filter, aggregate, sort)
+//! let queryset = CountQuerySet::from_result(
+//!     &result,
+//!     Aggregation::ByCrate,
+//!     LineTypes::all(),
+//!     Ordering::by_code(),
+//! );
+//!
+//! // Stage 4: Format for output
+//! let table = LOCTable::from_count_queryset(&queryset);
+//! ```
+//!
+//! ## Origins
+//!
+//! The parsing logic is adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc)
+//! by Maxim Gritsenko. We thank the original author for the excellent parsing implementation.
+//! cargo-warloc is MIT licensed.
 
-pub mod counter;
-pub mod diff;
+// Pipeline modules (in order)
+pub mod data;
+pub mod output;
+pub mod query;
+pub mod source;
+
+// Infrastructure
 pub mod error;
-pub mod filter;
-pub mod options;
-pub mod queryset;
-pub mod stats;
-pub mod table;
-pub mod visitor;
-pub mod workspace;
 
-pub use counter::{count_directory, count_file, count_workspace, CountOptions, CountResult};
-pub use diff::{
-    diff_commits, diff_workdir, CrateDiffStats, DiffOptions, DiffResult, FileChangeType,
-    FileDiffStats, LocsDiff, WorkdirDiffMode,
+// Re-export all public types at crate root for convenience
+pub use data::{
+    count_directory, count_file, count_workspace, diff_commits, diff_workdir, gather_stats,
+    gather_stats_for_path, CountOptions, CountResult, CrateDiffStats, CrateStats, DiffOptions,
+    DiffResult, FileChangeType, FileDiffStats, FileStats, Locs, LocsDiff, ModuleStats,
+    VisitorContext, WorkdirDiffMode,
 };
 pub use error::RustlocError;
-pub use filter::FilterConfig;
-pub use options::{Aggregation, LineTypes, OrderBy, OrderDirection, Ordering};
-pub use queryset::{CountQuerySet, DiffQuerySet, QueryItem};
-pub use stats::{CrateStats, FileStats, Locs, ModuleStats};
-pub use table::{LOCTable, TableRow};
-pub use visitor::{gather_stats, gather_stats_for_path, VisitorContext};
-pub use workspace::{CrateInfo, WorkspaceInfo};
+pub use output::{LOCTable, TableRow};
+pub use query::{
+    Aggregation, CountQuerySet, DiffQuerySet, LineTypes, OrderBy, OrderDirection, Ordering,
+    QueryItem,
+};
+pub use source::{CrateInfo, FilterConfig, WorkspaceInfo};
 
 /// Result type for rustloclib operations
 pub type Result<T> = std::result::Result<T, RustlocError>;
