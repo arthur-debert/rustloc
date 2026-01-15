@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Changed**:
+  - File paths in `--by-file` output now display relative to workspace root instead of absolute paths
+  - Table values are now center-aligned to match column headers
+  - Updated `outstanding` dependency to v2.2.0
+- **Added**:
+  - Bold styling for table headers (using outstanding's theme support)
+  - `root` field in `CountResult` and `DiffResult` for workspace root path
+
 ## [0.6.0] - 2026-01-15
 
 - **Added**:
