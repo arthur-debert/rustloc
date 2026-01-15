@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Added**:
+  - Precomputed `all` field in `Locs` struct storing total line count (sum of all types)
+  - `all` toggle in `LineTypes` to control showing the "All" column
+  - `LineTypes::everything()` method to include all 7 line types
+  - `with_all()` and `without_all()` builder methods for `LineTypes`
+  - `recompute_all()` method on `Locs` for manual field updates
+- **Changed**:
+  - Default columns changed from all 6 types to: Code, Tests, Docs, All
+  - Table column "Total" renamed to "All" and now uses precomputed field
+  - `LineTypes::new()` now enables `all` by default
+  - Renamed `LineTypes::all()` to `LineTypes::everything()`
+
 ## [0.5.0] - 2026-01-15
 
 - **Changed**:
