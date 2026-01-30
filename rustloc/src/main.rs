@@ -54,13 +54,13 @@ use std::process::ExitCode;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use console::Style;
-use outstanding::cli::{App, CommandContext, HandlerResult, Output, RunResult};
-use outstanding::Theme;
 use rustloclib::{
     count_workspace, diff_commits, diff_workdir, Aggregation, CountOptions, CountQuerySet,
     DiffOptions, DiffQuerySet, FilterConfig, LOCTable, LineTypes, OrderBy, OrderDirection,
     Ordering, WorkdirDiffMode,
 };
+use standout::cli::{App, CommandContext, HandlerResult, Output, RunResult, ThreadSafe};
+use standout::Theme;
 
 /// Include template at compile time
 const STATS_TABLE_TEMPLATE: &str = include_str!("../templates/stats_table.jinja");
@@ -457,36 +457,47 @@ fn parse_commit_range(from: &str, to: Option<&str>) -> Result<(String, String), 
     }
 }
 
-fn main() -> ExitCode {
+fn run() -> Result<RunResult, anyhow::Error> {
     let cmd = build_command();
 
     // Build theme with bold headers
     let theme = Theme::new().add("header", Style::new().bold());
 
-    // Build the outstanding app with command handlers and run
+    // Build the standout app with command handlers and run
     // default_command("count") means `rustloc .` is treated as `rustloc count .`
-    let result = App::builder()
+    let app = App::<ThreadSafe>::builder()
         .theme(theme)
         .default_command("count")
-        .command("count", count_handler, STATS_TABLE_TEMPLATE)
-        .command("diff", diff_handler, STATS_TABLE_TEMPLATE)
-        .run_to_string(cmd, std::env::args());
+        .command("count", count_handler, STATS_TABLE_TEMPLATE)?
+        .command("diff", diff_handler, STATS_TABLE_TEMPLATE)?
+        .build()?;
 
-    match result {
-        RunResult::Handled(output) => {
-            if !output.is_empty() {
-                if output.starts_with("Error:") {
-                    eprintln!("{}", output);
-                    return ExitCode::FAILURE;
+    Ok(app.run_to_string(cmd, std::env::args()))
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(result) => match result {
+            RunResult::Handled(output) => {
+                if !output.is_empty() {
+                    if output.starts_with("Error:") {
+                        eprintln!("{}", output);
+                        return ExitCode::FAILURE;
+                    }
+                    print!("{}", output);
                 }
-                print!("{}", output);
+                ExitCode::SUCCESS
             }
-            ExitCode::SUCCESS
-        }
-        RunResult::Binary(_, _) => ExitCode::SUCCESS,
-        RunResult::NoMatch(_) => {
-            // Should not happen with default_command set
-            eprintln!("Error: Unknown command");
+            RunResult::Binary(_, _) => ExitCode::SUCCESS,
+            RunResult::Silent => ExitCode::SUCCESS,
+            RunResult::NoMatch(_) => {
+                // Should not happen with default_command set
+                eprintln!("Error: Unknown command");
+                ExitCode::FAILURE
+            }
+        },
+        Err(e) => {
+            eprintln!("Error: {}", e);
             ExitCode::FAILURE
         }
     }
