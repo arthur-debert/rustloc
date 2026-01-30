@@ -1,0 +1,5 @@
+# Default stylesheet for rustloc CLI
+
+# Bold styling for table headers
+header:
+  bold: true

@@ -53,17 +53,13 @@
 use std::process::ExitCode;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use console::Style;
 use rustloclib::{
     count_workspace, diff_commits, diff_workdir, Aggregation, CountOptions, CountQuerySet,
     DiffOptions, DiffQuerySet, FilterConfig, LOCTable, LineTypes, OrderBy, OrderDirection,
     Ordering, WorkdirDiffMode,
 };
 use standout::cli::{App, CommandContext, HandlerResult, Output, RunResult, ThreadSafe};
-use standout::Theme;
-
-/// Include template at compile time
-const STATS_TABLE_TEMPLATE: &str = include_str!("../templates/stats_table.jinja");
+use standout::{embed_styles, embed_templates};
 
 /// Build the clap Command structure
 fn build_command() -> Command {
@@ -460,16 +456,15 @@ fn parse_commit_range(from: &str, to: Option<&str>) -> Result<(String, String), 
 fn run() -> Result<RunResult, anyhow::Error> {
     let cmd = build_command();
 
-    // Build theme with bold headers
-    let theme = Theme::new().add("header", Style::new().bold());
-
     // Build the standout app with command handlers and run
     // default_command("count") means `rustloc .` is treated as `rustloc count .`
     let app = App::<ThreadSafe>::builder()
-        .theme(theme)
+        .templates(embed_templates!("templates"))
+        .styles(embed_styles!("styles"))
+        .default_theme("default")
         .default_command("count")
-        .command("count", count_handler, STATS_TABLE_TEMPLATE)?
-        .command("diff", diff_handler, STATS_TABLE_TEMPLATE)?
+        .command("count", count_handler, "stats_table")?
+        .command("diff", diff_handler, "stats_table")?
         .build()?;
 
     Ok(app.run_to_string(cmd, std::env::args()))
