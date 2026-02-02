@@ -370,11 +370,15 @@ mod handlers {
 }
 
 fn run() -> Result<RunResult, anyhow::Error> {
+    // Load theme from stylesheet
+    use standout::StylesheetRegistry;
+    let mut registry: StylesheetRegistry = embed_styles!("styles").into();
+    let theme = registry.get("default")?;
+
     // Build the standout app with derive-based dispatch
     let app = App::<ThreadSafe>::builder()
         .templates(embed_templates!("templates"))
-        .styles(embed_styles!("styles"))
-        .default_theme("default")
+        .theme(theme)
         .commands(Commands::dispatch_config())?
         .build()?;
 

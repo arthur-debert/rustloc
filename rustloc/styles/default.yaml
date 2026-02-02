@@ -2,4 +2,5 @@
 
 # Bold styling for table headers
 header:
+  fg: cyan
   bold: true
