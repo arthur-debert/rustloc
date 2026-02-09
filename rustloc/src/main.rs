@@ -395,6 +395,9 @@ fn main() -> ExitCode {
                         return ExitCode::FAILURE;
                     }
                     print!("{}", output);
+                    if !output.ends_with('\n') {
+                        println!();
+                    }
                 }
                 ExitCode::SUCCESS
             }
