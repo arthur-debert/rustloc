@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Changed**:
+  - Rewritten README: tighter intro, real output examples, usage split by counting/diffs/output
+  - Improved CLI `--help` text: clearer arg descriptions, inline usage hints, examples footer
+  - Added examples section to `rustloc --help` and `rustloc diff --help`
+  - Removed redundant value listings from `--type` help (clap already appends possible values)
+
 ## [0.8.1] - 2026-02-09
 
 ## [0.8.0] - 2026-02-03

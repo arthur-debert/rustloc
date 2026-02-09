@@ -60,6 +60,16 @@ use standout::{embed_styles, embed_templates};
 #[derive(Parser)]
 #[command(name = "rustloc")]
 #[command(version, author = "Arthur Debert")]
+#[command(after_help = "\
+Examples:
+  rustloc                              Totals for current directory
+  rustloc --by-crate                   Group by crate
+  rustloc --by-module                  Group by module
+  rustloc --by-file                    Group by file
+  rustloc -t code,tests               Only code and test lines
+  rustloc -c my-lib                    Only a specific crate
+  rustloc diff                         Changes since last commit
+  rustloc diff HEAD~5..HEAD --by-file  Per-file diff between commits")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -78,46 +88,53 @@ enum Commands {
 
     /// Show LOC differences between git commits
     #[dispatch(template = "stats_table")]
+    #[command(after_help = "\
+Examples:
+  rustloc diff                         All uncommitted changes
+  rustloc diff --staged                Only staged changes
+  rustloc diff HEAD~5..HEAD            Between two commits
+  rustloc diff main..feature --by-file Per-file breakdown
+  rustloc diff -t code                 Only code line changes")]
     Diff(DiffArgs),
 }
 
 /// Shared arguments for count command and top-level
 #[derive(Args, Clone, Default)]
 struct CountArgs {
-    /// Path to analyze (defaults to current directory)
+    /// Path to analyze
     #[arg(default_value = ".")]
     path: String,
 
-    /// Filter by crate name (can be specified multiple times)
+    /// Only count specific crate(s) [-c my-lib -c my-cli]
     #[arg(short = 'c', long = "crate", action = clap::ArgAction::Append)]
     crates: Vec<String>,
 
-    /// Include files matching glob pattern
+    /// Only include files matching a glob [-i "src/**/*.rs"]
     #[arg(short = 'i', long = "include", action = clap::ArgAction::Append)]
     include: Vec<String>,
 
-    /// Exclude files matching glob pattern
+    /// Exclude files matching a glob [-e "**/generated/**"]
     #[arg(short = 'e', long = "exclude", action = clap::ArgAction::Append)]
     exclude: Vec<String>,
 
-    /// Filter line types (comma-separated: code,tests,examples,docs,comments,blanks)
+    /// Line types to show (comma-separated)
     #[arg(short = 't', long = "type", value_delimiter = ',')]
     #[arg(value_parser = ["code", "tests", "examples", "docs", "comments", "blanks"])]
     line_types: Vec<String>,
 
-    /// Show breakdown by crate
+    /// Group results by crate
     #[arg(long = "by-crate")]
     by_crate: bool,
 
-    /// Show breakdown by file
+    /// Group results by file
     #[arg(short = 'f', long = "by-file")]
     by_file: bool,
 
-    /// Show breakdown by module
+    /// Group results by module
     #[arg(short = 'm', long = "by-module")]
     by_module: bool,
 
-    /// Order by field: label, code, tests, examples, docs, comments, blanks, total (prefix with - for descending)
+    /// Sort by: label, code, tests, docs, total, ... (prefix - for desc)
     #[arg(short = 'o', long = "ordering", value_name = "FIELD")]
     ordering: Option<String>,
 }
@@ -125,46 +142,46 @@ struct CountArgs {
 /// Arguments for diff command
 #[derive(Args, Clone)]
 struct DiffArgs {
-    /// Commit range (e.g., HEAD~5..HEAD) or base commit
+    /// Base commit or range [HEAD~5..HEAD, main..feature, main]
     from: Option<String>,
 
-    /// Target commit (optional if using range syntax)
+    /// Target commit (when not using .. range syntax)
     to: Option<String>,
 
-    /// Path to repository
+    /// Path to the repository
     #[arg(short = 'p', long = "path", default_value = ".")]
     path: String,
 
-    /// Show only staged changes
+    /// Only staged changes (like git diff --cached)
     #[arg(long = "staged", visible_alias = "cached")]
     staged: bool,
 
-    /// Filter by crate name
+    /// Only count specific crate(s)
     #[arg(short = 'c', long = "crate", action = clap::ArgAction::Append)]
     crates: Vec<String>,
 
-    /// Include files matching glob pattern
+    /// Only include files matching a glob
     #[arg(short = 'i', long = "include", action = clap::ArgAction::Append)]
     include: Vec<String>,
 
-    /// Exclude files matching glob pattern
+    /// Exclude files matching a glob
     #[arg(short = 'e', long = "exclude", action = clap::ArgAction::Append)]
     exclude: Vec<String>,
 
-    /// Filter line types
+    /// Line types to show (comma-separated)
     #[arg(short = 't', long = "type", value_delimiter = ',')]
     #[arg(value_parser = ["code", "tests", "examples", "docs", "comments", "blanks"])]
     line_types: Vec<String>,
 
-    /// Show breakdown by crate
+    /// Group results by crate
     #[arg(long = "by-crate")]
     by_crate: bool,
 
-    /// Show breakdown by file
+    /// Group results by file
     #[arg(short = 'f', long = "by-file")]
     by_file: bool,
 
-    /// Order by field
+    /// Sort rows by field (prefix - for descending)
     #[arg(short = 'o', long = "ordering", value_name = "FIELD")]
     ordering: Option<String>,
 }

@@ -125,7 +125,7 @@ fn test_diff_help() {
 
     assert!(success);
     assert!(stdout.contains("diff"));
-    assert!(stdout.contains("Commit range"));
+    assert!(stdout.contains("Base commit or range"));
     assert!(stdout.contains("--by-file"));
     assert!(stdout.contains("--by-crate"));
 }
