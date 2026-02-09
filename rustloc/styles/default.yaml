@@ -4,3 +4,7 @@
 header:
   fg: cyan
   bold: true
+
+# Alternating row styling
+row_alt:
+  dim: true

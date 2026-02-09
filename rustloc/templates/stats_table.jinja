@@ -6,12 +6,14 @@
 {{ title }}
 
 {% endif -%}
-[header]{{ headers[0] | col(label_width, align='center') }}{% for h in headers[1:] %} {{ h | col(value_width, align='center') }}{% endfor %}[/header]
-{{ "-" * line_width }}
+[header]{{ headers[0] | col(label_width, align='center') }}{% for h in headers[1:] %} {{ h | col(value_width, align='right') }}{% endfor %}[/header]
+{{ "─" * line_width }}
 {% for row in rows -%}
-{{ row.label | col(label_width, truncate='start') }}{% for v in row.values %} {{ v | col(value_width, align='center') }}{% endfor %}
+{% if loop.index is even %}[row_alt]{{ row.label | col(label_width, truncate='start') }}{% for v in row.values %} {{ v | col(value_width, align='right') }}{% endfor %}[/row_alt]
+{% else %}{{ row.label | col(label_width, truncate='start') }}{% for v in row.values %} {{ v | col(value_width, align='right') }}{% endfor %}
+{% endif -%}
 {% endfor -%}
 {%- if rows | length > 0 -%}
-{{ "-" * line_width }}
+{{ "─" * line_width }}
 {% endif -%}
-{{ footer.label | col(label_width) }}{% for v in footer.values %} {{ v | col(value_width, align='center') }}{% endfor %}
+{{ footer.label | col(label_width) }}{% for v in footer.values %} {{ v | col(value_width, align='right') }}{% endfor %}

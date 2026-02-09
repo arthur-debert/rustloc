@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Improved CLI `--help` text: clearer arg descriptions, inline usage hints, examples footer
   - Added examples section to `rustloc --help` and `rustloc diff --help`
   - Removed redundant value listings from `--type` help (clap already appends possible values)
+  - Right-aligned numeric columns and headers for easier scanning
+  - Alternating dim rows for visual contrast in long listings
+  - Continuous line separators (`─`) instead of dashes
 
 ## [0.8.1] - 2026-02-09
 
