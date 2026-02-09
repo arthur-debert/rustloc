@@ -51,7 +51,7 @@ impl LOCTable {
     /// This method just formats it into displayable strings.
     pub fn from_count_queryset(qs: &CountQuerySet) -> Self {
         let headers = build_headers(&qs.aggregation, &qs.line_types);
-        let rows = qs
+        let rows: Vec<TableRow> = qs
             .items
             .iter()
             .map(|item| TableRow {
@@ -60,7 +60,7 @@ impl LOCTable {
             })
             .collect();
         let footer = TableRow {
-            label: format!("Total ({} files)", qs.file_count),
+            label: build_footer_label(&qs.aggregation, rows.len(), qs.file_count),
             values: format_locs(&qs.total, &qs.line_types),
         };
 
@@ -78,7 +78,7 @@ impl LOCTable {
     /// This method just formats it into displayable strings with diff notation.
     pub fn from_diff_queryset(qs: &DiffQuerySet) -> Self {
         let headers = build_headers(&qs.aggregation, &qs.line_types);
-        let rows = qs
+        let rows: Vec<TableRow> = qs
             .items
             .iter()
             .map(|item| TableRow {
@@ -87,7 +87,7 @@ impl LOCTable {
             })
             .collect();
         let footer = TableRow {
-            label: format!("Total ({} files)", qs.file_count),
+            label: build_footer_label(&qs.aggregation, rows.len(), qs.file_count),
             values: format_locs_diff(&qs.total, &qs.line_types),
         };
         let title = Some(format!("Diff: {} → {}", qs.from_commit, qs.to_commit));
@@ -124,6 +124,19 @@ impl From<&crate::query::options::LineTypes> for LineTypesView {
             blanks: lt.blanks,
             all: lt.all,
         }
+    }
+}
+
+/// Build footer label based on aggregation level.
+///
+/// For Total aggregation (no item rows), reports the total file count.
+/// For other aggregations, reports the number of displayed items with the matching unit.
+fn build_footer_label(aggregation: &Aggregation, items_count: usize, file_count: usize) -> String {
+    match aggregation {
+        Aggregation::Total => format!("Total ({} files)", file_count),
+        Aggregation::ByCrate => format!("Total ({} crates)", items_count),
+        Aggregation::ByModule => format!("Total ({} modules)", items_count),
+        Aggregation::ByFile => format!("Total ({} files)", items_count),
     }
 }
 
@@ -338,7 +351,7 @@ mod tests {
         // Default ordering is by label ascending: alpha before beta
         assert_eq!(table.rows[0].label, "alpha");
         assert_eq!(table.rows[1].label, "beta");
-        assert_eq!(table.footer.label, "Total (4 files)");
+        assert_eq!(table.footer.label, "Total (2 crates)");
     }
 
     #[test]
