@@ -211,10 +211,13 @@ fn format_locs(locs: &Locs, line_types: &crate::query::options::LineTypes) -> Ve
     values
 }
 
-/// Format a diff value as "+added/-removed/net".
+/// Format a diff value as "+added/-removed/net" with standout style tags.
 fn format_diff_value(added: u64, removed: u64) -> String {
     let net = added as i64 - removed as i64;
-    format!("+{}/-{}/{}", added, removed, net)
+    format!(
+        "[additions]+{}[/additions]/[deletions]-{}[/deletions]/{}",
+        added, removed, net
+    )
 }
 
 /// Format LocsDiff values as strings for display.
@@ -436,8 +439,17 @@ mod tests {
 
     #[test]
     fn test_format_diff_value() {
-        assert_eq!(format_diff_value(10, 5), "+10/-5/5");
-        assert_eq!(format_diff_value(5, 10), "+5/-10/-5");
-        assert_eq!(format_diff_value(0, 0), "+0/-0/0");
+        assert_eq!(
+            format_diff_value(10, 5),
+            "[additions]+10[/additions]/[deletions]-5[/deletions]/5"
+        );
+        assert_eq!(
+            format_diff_value(5, 10),
+            "[additions]+5[/additions]/[deletions]-10[/deletions]/-5"
+        );
+        assert_eq!(
+            format_diff_value(0, 0),
+            "[additions]+0[/additions]/[deletions]-0[/deletions]/0"
+        );
     }
 }

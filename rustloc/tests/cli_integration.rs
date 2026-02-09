@@ -143,8 +143,8 @@ fn test_diff_table_output() {
     assert!(stdout.contains("Tests"));
     assert!(stdout.contains("Docs"));
     assert!(stdout.contains("All"));
-    // Check for the +x/-y/z format
-    assert!(stdout.contains("+") && stdout.contains("/-"));
+    // Check for diff format (additions and deletions present)
+    assert!(stdout.contains("+") && stdout.contains("-"));
 }
 
 #[test]
@@ -188,8 +188,8 @@ fn test_diff_by_file() {
     assert!(stdout.contains("File"));
     assert!(stdout.contains("Code"));
     assert!(stdout.contains("Total"));
-    // Should show diff format (+x/-y/z)
-    assert!(stdout.contains("+") && stdout.contains("/-"));
+    // Should show diff format (additions and deletions present)
+    assert!(stdout.contains("+") && stdout.contains("-"));
 }
 
 #[test]

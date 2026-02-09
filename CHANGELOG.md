@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - **Changed**:
+  - Upgraded standout dependency from 3.8 to 6.0.1
   - Rewritten README: tighter intro, real output examples, usage split by counting/diffs/output
   - Improved CLI `--help` text: clearer arg descriptions, inline usage hints, examples footer
   - Added examples section to `rustloc --help` and `rustloc diff --help`
@@ -15,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Right-aligned numeric columns and headers for easier scanning
   - Alternating dim rows for visual contrast in long listings
   - Continuous line separators (`─`) instead of dashes
+- **Added**:
+  - Colored diff output: additions in green, deletions in red
+- **Fixed**:
+  - `--type all` now accepted as a valid filter value (was rejected by clap despite the "All" column being shown)
 
 ## [0.8.1] - 2026-02-09
 

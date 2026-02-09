@@ -119,7 +119,7 @@ struct CountArgs {
 
     /// Line types to show (comma-separated)
     #[arg(short = 't', long = "type", value_delimiter = ',')]
-    #[arg(value_parser = ["code", "tests", "examples", "docs", "comments", "blanks"])]
+    #[arg(value_parser = ["code", "tests", "examples", "docs", "comments", "blanks", "all"])]
     line_types: Vec<String>,
 
     /// Group results by crate
@@ -170,7 +170,7 @@ struct DiffArgs {
 
     /// Line types to show (comma-separated)
     #[arg(short = 't', long = "type", value_delimiter = ',')]
-    #[arg(value_parser = ["code", "tests", "examples", "docs", "comments", "blanks"])]
+    #[arg(value_parser = ["code", "tests", "examples", "docs", "comments", "blanks", "all"])]
     line_types: Vec<String>,
 
     /// Group results by crate
