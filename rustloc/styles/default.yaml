@@ -8,3 +8,11 @@ header:
 # Alternating row styling
 row_alt:
   dim: true
+
+# Diff additions (green)
+additions:
+  fg: green
+
+# Diff deletions (red)
+deletions:
+  fg: red
