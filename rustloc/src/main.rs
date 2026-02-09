@@ -53,7 +53,7 @@
 use std::process::ExitCode;
 
 use clap::{Args, CommandFactory, Parser, Subcommand};
-use standout::cli::{App, Dispatch, RunResult, ThreadSafe};
+use standout::cli::{App, Dispatch, RunResult};
 use standout::{embed_styles, embed_templates};
 
 /// Rust-aware lines of code counter with test/code separation
@@ -393,7 +393,7 @@ fn run() -> Result<RunResult, anyhow::Error> {
     let theme = registry.get("default")?;
 
     // Build the standout app with derive-based dispatch
-    let app = App::<ThreadSafe>::builder()
+    let app = App::builder()
         .templates(embed_templates!("templates"))
         .theme(theme)
         .commands(Commands::dispatch_config())?
