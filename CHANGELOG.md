@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-02-10
+
 ## [0.8.2] - 2026-02-09
 
 - **Changed**:
@@ -137,7 +139,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Acknowledgments**:
   - Parsing logic adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc) by Maxim Gritsenko
 
-[Unreleased]: https://github.com/arthur-debert/rustloc/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/arthur-debert/rustloc/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/arthur-debert/rustloc/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/arthur-debert/rustloc/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/arthur-debert/rustloc/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/arthur-debert/rustloc/compare/v0.7.2...v0.8.0
