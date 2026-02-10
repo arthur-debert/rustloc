@@ -44,11 +44,11 @@ fn test_table_output() {
     let (stdout, _, success) = run_rustloc(&["."]);
 
     assert!(success);
-    // Check for context column headers in default view (code, tests, docs, all)
+    // Check for context column headers in default view (code, tests, docs, total)
     assert!(stdout.contains("Code"));
     assert!(stdout.contains("Tests"));
     assert!(stdout.contains("Docs"));
-    assert!(stdout.contains("All"));
+    assert!(stdout.contains("Total"));
     // Total row shows file count in row name
     assert!(stdout.contains("Total (") && stdout.contains("files)"));
 }
@@ -70,7 +70,7 @@ fn test_json_output() {
     assert!(total["code"].is_u64(), "code should be a number");
     assert!(total["tests"].is_u64(), "tests should be a number");
     assert!(total["docs"].is_u64(), "docs should be a number");
-    assert!(total["all"].is_u64(), "all should be a number");
+    assert!(total["total"].is_u64(), "total should be a number");
     assert!(total["blanks"].is_u64(), "blanks should be a number");
     assert!(total["comments"].is_u64(), "comments should be a number");
     assert!(total["examples"].is_u64(), "examples should be a number");
@@ -145,7 +145,7 @@ fn test_diff_table_output() {
     assert!(stdout.contains("Code"));
     assert!(stdout.contains("Tests"));
     assert!(stdout.contains("Docs"));
-    assert!(stdout.contains("All"));
+    assert!(stdout.contains("Total"));
     // Check for diff format (additions and deletions present)
     assert!(stdout.contains("+") && stdout.contains("-"));
 }

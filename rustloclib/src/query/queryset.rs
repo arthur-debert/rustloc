@@ -322,7 +322,7 @@ mod tests {
             docs: 0,
             comments: 0,
             blanks: 0,
-            all: code + tests,
+            total: code + tests,
         }
     }
 

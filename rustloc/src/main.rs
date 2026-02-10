@@ -120,7 +120,7 @@ struct CountArgs {
 
     /// Line types to show (comma-separated)
     #[arg(short = 't', long = "type", value_delimiter = ',')]
-    #[arg(value_parser = ["code", "tests", "examples", "docs", "comments", "blanks", "all"])]
+    #[arg(value_parser = ["code", "tests", "examples", "docs", "comments", "blanks", "total"])]
     line_types: Vec<String>,
 
     /// Group results by crate
@@ -176,7 +176,7 @@ struct DiffArgs {
 
     /// Line types to show (comma-separated)
     #[arg(short = 't', long = "type", value_delimiter = ',')]
-    #[arg(value_parser = ["code", "tests", "examples", "docs", "comments", "blanks", "all"])]
+    #[arg(value_parser = ["code", "tests", "examples", "docs", "comments", "blanks", "total"])]
     line_types: Vec<String>,
 
     /// Group results by crate
@@ -382,7 +382,7 @@ mod handlers {
                 docs: types.contains(&"docs"),
                 comments: types.contains(&"comments"),
                 blanks: types.contains(&"blanks"),
-                all: types.contains(&"all") || types.is_empty(),
+                total: types.contains(&"total") || types.is_empty(),
             }
         }
     }

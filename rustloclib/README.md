@@ -107,7 +107,7 @@ let table = LOCTable::from_count_queryset(&queryset);
 
 | Type | Description |
 |------|-------------|
-| `Locs` | Counts for a single item: `code`, `tests`, `examples`, `docs`, `comments`, `blanks`, `all` |
+| `Locs` | Counts for a single item: `code`, `tests`, `examples`, `docs`, `comments`, `blanks`, `total` |
 | `CountResult` | Result from counting: `total`, `crates`, `modules`, `files` |
 | `DiffResult` | Result from diffing: `total`, `crates`, `files` (each with `LocsDiff`) |
 | `LocsDiff` | Added/removed `Locs` with `net_*()` helpers |

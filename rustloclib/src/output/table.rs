@@ -110,7 +110,7 @@ struct LineTypesView {
     docs: bool,
     comments: bool,
     blanks: bool,
-    all: bool,
+    total: bool,
 }
 
 impl From<&crate::query::options::LineTypes> for LineTypesView {
@@ -122,7 +122,7 @@ impl From<&crate::query::options::LineTypes> for LineTypesView {
             docs: lt.docs,
             comments: lt.comments,
             blanks: lt.blanks,
-            all: lt.all,
+            total: lt.total,
         }
     }
 }
@@ -173,8 +173,8 @@ fn build_headers(
     if lt.blanks {
         headers.push("Blanks".to_string());
     }
-    if lt.all {
-        headers.push("All".to_string());
+    if lt.total {
+        headers.push("Total".to_string());
     }
 
     headers
@@ -203,9 +203,9 @@ fn format_locs(locs: &Locs, line_types: &crate::query::options::LineTypes) -> Ve
     if lt.blanks {
         values.push(locs.blanks.to_string());
     }
-    if lt.all {
+    if lt.total {
         // Use the precomputed all field
-        values.push(locs.all.to_string());
+        values.push(locs.total.to_string());
     }
 
     values
@@ -249,9 +249,9 @@ fn format_locs_diff(diff: &LocsDiff, line_types: &crate::query::options::LineTyp
     if lt.blanks {
         values.push(format_diff_value(diff.added.blanks, diff.removed.blanks));
     }
-    if lt.all {
+    if lt.total {
         // Use the precomputed all fields
-        values.push(format_diff_value(diff.added.all, diff.removed.all));
+        values.push(format_diff_value(diff.added.total, diff.removed.total));
     }
 
     values
@@ -273,7 +273,7 @@ mod tests {
             docs: 0,
             comments: 0,
             blanks: 0,
-            all: code + tests,
+            total: code + tests,
         }
     }
 
@@ -311,7 +311,7 @@ mod tests {
         assert_eq!(headers[4], "Docs");
         assert_eq!(headers[5], "Comments");
         assert_eq!(headers[6], "Blanks");
-        assert_eq!(headers[7], "All");
+        assert_eq!(headers[7], "Total");
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
         assert_eq!(headers.len(), 3); // File, Code, All
         assert_eq!(headers[0], "File");
         assert_eq!(headers[1], "Code");
-        assert_eq!(headers[2], "All");
+        assert_eq!(headers[2], "Total");
     }
 
     #[test]
