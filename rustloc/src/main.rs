@@ -180,12 +180,16 @@ struct DiffArgs {
     line_types: Vec<String>,
 
     /// Group results by crate
-    #[arg(long = "by-crate", conflicts_with = "by_file")]
+    #[arg(long = "by-crate", conflicts_with_all = ["by_file", "by_module"])]
     by_crate: bool,
 
     /// Group results by file
-    #[arg(short = 'f', long = "by-file", conflicts_with = "by_crate")]
+    #[arg(short = 'f', long = "by-file", conflicts_with_all = ["by_crate", "by_module"])]
     by_file: bool,
+
+    /// Group results by module
+    #[arg(short = 'm', long = "by-module", conflicts_with_all = ["by_crate", "by_file"])]
+    by_module: bool,
 
     /// Sort by field [use -o=FIELD or --ordering=FIELD, prefix - for desc: -o=-code]
     #[arg(
@@ -281,10 +285,13 @@ mod handlers {
         let staged = matches.get_flag("staged");
 
         let by_file = matches.get_flag("by_file");
+        let by_module = matches.get_flag("by_module");
         let by_crate = matches.get_flag("by_crate");
 
         let aggregation = if by_file {
             Aggregation::ByFile
+        } else if by_module {
+            Aggregation::ByModule
         } else if by_crate {
             Aggregation::ByCrate
         } else {

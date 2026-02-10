@@ -13,7 +13,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::data::counter::CountResult;
+use std::collections::HashMap;
+
+use crate::data::counter::{compute_module_name, CountResult};
 use crate::data::diff::{DiffResult, LocsDiff};
 use crate::data::stats::Locs;
 
@@ -268,7 +270,31 @@ fn build_diff_items(
             .filter(|c| has_net_change(&c.diff, line_types))
             .map(|c| (c.name.clone(), c.diff.filter(*line_types)))
             .collect(),
-        Aggregation::ByModule => return vec![], // Diff doesn't support by-module currently
+        Aggregation::ByModule => {
+            let mut module_map: HashMap<String, LocsDiff> = HashMap::new();
+            for crate_diff in &result.crates {
+                let src_root = crate_diff.path.join("src");
+                let effective_root = if src_root.exists() {
+                    src_root
+                } else {
+                    crate_diff.path.clone()
+                };
+                for file in &crate_diff.files {
+                    let local_module = compute_module_name(&file.path, &effective_root);
+                    let full_name = if local_module.is_empty() {
+                        crate_diff.name.clone()
+                    } else {
+                        format!("{}::{}", crate_diff.name, local_module)
+                    };
+                    let entry = module_map.entry(full_name).or_default();
+                    *entry += file.diff.filter(*line_types);
+                }
+            }
+            module_map
+                .into_iter()
+                .filter(|(_, diff)| has_net_change(diff, line_types))
+                .collect()
+        }
         Aggregation::ByFile => result
             .files
             .iter()
