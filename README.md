@@ -40,16 +40,13 @@ rustloc --crate my-lib               # filter to a specific crate
 rustloc --exclude "**/generated/**"  # exclude by glob
 ```
 
-Example output with `--by-crate`:
+`--by-module`:
 
-```
-                 Crate                         Code            Tests             Docs             All
-------------------------------------------------------------------------------------------------------------
-rustloc                                        276              198               81              701
-rustloclib                                     2490             1204             812              5271
-------------------------------------------------------------------------------------------------------------
-Total (2 crates)                               2766             1402             893              5972
-```
+![by-module output](assets/output-by-module.png)
+
+`--by-file`:
+
+![by-file output](assets/output-by-file.png)
 
 ### Diffs
 
@@ -60,18 +57,7 @@ rustloc diff main..feature --by-file # per-file diff breakdown
 rustloc diff --staged                # staged changes only
 ```
 
-Example output with `--by-file`:
-
-```
-Diff: HEAD~3 → HEAD
-
-                  File                         Code            Tests             Docs             All
-------------------------------------------------------------------------------------------------------------
-rustloc/src/main.rs                          +3/-0/3          +0/-0/0          +0/-0/0          +3/-0/3
-rustloclib/src/output/table.rs               +8/-0/8          +0/-0/0          +4/-0/4         +13/-0/13
-------------------------------------------------------------------------------------------------------------
-Total (2 files)                             +11/-0/11         +0/-0/0          +4/-0/4         +16/-0/16
-```
+![diff output](assets/output-diff.png)
 
 ### Output formats
 
