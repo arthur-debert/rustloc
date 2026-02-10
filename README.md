@@ -6,7 +6,7 @@ A Rust-aware lines-of-code counter. Unlike generic LOC tools, rustloc understand
 [![Crates.io](https://img.shields.io/crates/v/rustloc.svg)](https://crates.io/crates/rustloc)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-![Rust Aware](assets/output-by-module.png)
+![Rust Aware](https://raw.githubusercontent.com/arthur-debert/rustloc/main/assets/output-by-module.png)
 
 ## Features
 
@@ -42,7 +42,7 @@ rustloc --crate my-lib               # filter to a specific crate
 rustloc --exclude "**/generated/**"  # exclude by glob
 ```
 
-![by-file output](assets/output-by-file.png)
+![by-file output](https://raw.githubusercontent.com/arthur-debert/rustloc/main/assets/output-by-file.png)
 
 ### Diffs
 
@@ -53,7 +53,7 @@ rustloc diff main..feature --by-file # per-file diff breakdown
 rustloc diff --staged                # staged changes only
 ```
 
-![diff output](assets/output-diff.png)
+![diff output](https://raw.githubusercontent.com/arthur-debert/rustloc/main/assets/output-diff.png)
 
 ### Output formats
 
