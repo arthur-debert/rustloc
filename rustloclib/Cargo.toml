@@ -1,11 +1,15 @@
 [package]
 name = "rustloclib"
-description = "A Rust-aware lines of code counter that separates code, tests, comments, and blanks"
+description = "Rust-aware LOC counter that separates production code from tests — even in the same file"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage = "https://github.com/arthur-debert/rustloc"
+documentation = "https://docs.rs/rustloclib"
+keywords = ["loc", "lines-of-code", "code-counter", "rust", "test-separation"]
+categories = ["development-tools"]
 
 [dependencies]
 glob.workspace = true
