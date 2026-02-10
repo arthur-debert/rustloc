@@ -60,7 +60,14 @@ use standout::{embed_styles, embed_templates};
 #[derive(Parser)]
 #[command(name = "rustloc")]
 #[command(version, author = "Arthur Debert")]
-#[command(after_help = "\
+#[command(long_about = "\
+Rust-aware lines of code counter with test/code separation.
+
+Parses Rust source files and categorizes each line as code, tests, examples,
+docs, comments, or blanks. Understands #[cfg(test)] blocks, doc comments,
+and Cargo workspace structure.")]
+#[command(after_help = "Use --help for examples")]
+#[command(after_long_help = "\
 Examples:
   rustloc                              Totals for current directory
   rustloc --by-crate                   Group by crate
@@ -89,7 +96,13 @@ enum Commands {
 
     /// Show LOC differences between git commits
     #[dispatch(template = "stats_table")]
-    #[command(after_help = "\
+    #[command(long_about = "\
+Show LOC differences between git commits.
+
+Compares line counts between two commits, or between the working directory
+and HEAD. Shows additions, removals, and net change per line type.")]
+    #[command(after_help = "Use --help for examples")]
+    #[command(after_long_help = "\
 Examples:
   rustloc diff                         All uncommitted changes
   rustloc diff --staged                Only staged changes
@@ -121,6 +134,14 @@ struct CountArgs {
     /// Line types to show (comma-separated)
     #[arg(short = 't', long = "type", value_delimiter = ',')]
     #[arg(value_parser = ["code", "tests", "examples", "docs", "comments", "blanks", "total"])]
+    #[arg(long_help = "\
+Line types to show (comma-separated).
+
+By default all types are shown. Use this to filter to specific types.
+Values: code, tests, examples, docs, comments, blanks, total
+
+  -t code,tests       Show only code and test lines
+  -t code             Show only code lines")]
     line_types: Vec<String>,
 
     /// Group results by crate
@@ -135,13 +156,23 @@ struct CountArgs {
     #[arg(short = 'm', long = "by-module", conflicts_with_all = ["by_crate", "by_file"])]
     by_module: bool,
 
-    /// Sort by field [use -o=FIELD or --ordering=FIELD, prefix - for desc: -o=-code]
+    /// Sort by field [-o FIELD, prefix - for desc: -o -code]
     #[arg(
         short = 'o',
         long = "ordering",
         value_name = "FIELD",
         allow_hyphen_values = true
     )]
+    #[arg(long_help = "\
+Sort by field. Prefix with - for descending, + for ascending.
+
+Fields: label, code, tests, examples, docs, comments, blanks, total
+Default direction: descending for numeric fields, ascending for label.
+
+  -o code         Sort by code lines (descending)
+  -o -code        Sort by code lines (descending, explicit)
+  -o +code        Sort by code lines (ascending)
+  -o label        Sort by name (ascending)")]
     ordering: Option<String>,
 }
 
@@ -149,6 +180,11 @@ struct CountArgs {
 #[derive(Args, Clone)]
 struct DiffArgs {
     /// Base commit or range [HEAD~5..HEAD, main..feature, main]
+    #[arg(long_help = "\
+Base commit or range.
+
+Accepts commit ranges (HEAD~5..HEAD, main..feature) or a single commit
+(compared against HEAD). Without arguments, diffs the working directory.")]
     from: Option<String>,
 
     /// Target commit (when not using .. range syntax)
@@ -177,6 +213,14 @@ struct DiffArgs {
     /// Line types to show (comma-separated)
     #[arg(short = 't', long = "type", value_delimiter = ',')]
     #[arg(value_parser = ["code", "tests", "examples", "docs", "comments", "blanks", "total"])]
+    #[arg(long_help = "\
+Line types to show (comma-separated).
+
+By default all types are shown. Use this to filter to specific types.
+Values: code, tests, examples, docs, comments, blanks, total
+
+  -t code,tests       Show only code and test lines
+  -t code             Show only code lines")]
     line_types: Vec<String>,
 
     /// Group results by crate
@@ -191,13 +235,23 @@ struct DiffArgs {
     #[arg(short = 'm', long = "by-module", conflicts_with_all = ["by_crate", "by_file"])]
     by_module: bool,
 
-    /// Sort by field [use -o=FIELD or --ordering=FIELD, prefix - for desc: -o=-code]
+    /// Sort by field [-o FIELD, prefix - for desc: -o -code]
     #[arg(
         short = 'o',
         long = "ordering",
         value_name = "FIELD",
         allow_hyphen_values = true
     )]
+    #[arg(long_help = "\
+Sort by field. Prefix with - for descending, + for ascending.
+
+Fields: label, code, tests, examples, docs, comments, blanks, total
+Default direction: descending for numeric fields, ascending for label.
+
+  -o code         Sort by code lines (descending)
+  -o -code        Sort by code lines (descending, explicit)
+  -o +code        Sort by code lines (ascending)
+  -o label        Sort by name (ascending)")]
     ordering: Option<String>,
 }
 
