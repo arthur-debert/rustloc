@@ -196,8 +196,18 @@ mod handlers {
     };
     use standout::cli::{CommandContext, HandlerResult, Output};
 
-    /// Handler for count command - returns LOCTable
-    pub fn count(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<LOCTable> {
+    /// Check if the output mode is a structured data format (json, yaml, xml, csv).
+    fn is_structured_output(matches: &ArgMatches) -> bool {
+        matches!(
+            matches
+                .get_one::<String>("_output_mode")
+                .map(|s| s.as_str()),
+            Some("json" | "yaml" | "xml" | "csv")
+        )
+    }
+
+    /// Handler for count command
+    pub fn count(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
         let path = matches
             .get_one::<String>("path")
             .map(|s| s.as_str())
@@ -221,20 +231,34 @@ mod handlers {
             Aggregation::Total
         };
 
+        let structured = is_structured_output(matches);
+        let effective_line_types = if structured {
+            LineTypes::everything()
+        } else {
+            line_types
+        };
+
         let options = CountOptions::new()
             .crates(crates)
             .filter(filter)
             .aggregation(aggregation)
-            .line_types(line_types);
+            .line_types(effective_line_types);
 
         let result = count_workspace(path, options)?;
-        let queryset = CountQuerySet::from_result(&result, aggregation, line_types, ordering);
-        let table = LOCTable::from_count_queryset(&queryset);
-        Ok(Output::Render(table))
+
+        if structured {
+            let queryset =
+                CountQuerySet::from_result(&result, aggregation, LineTypes::everything(), ordering);
+            Ok(Output::Render(serde_json::to_value(queryset)?))
+        } else {
+            let queryset = CountQuerySet::from_result(&result, aggregation, line_types, ordering);
+            let table = LOCTable::from_count_queryset(&queryset);
+            Ok(Output::Render(serde_json::to_value(table)?))
+        }
     }
 
-    /// Handler for diff command - returns LOCTable
-    pub fn diff(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<LOCTable> {
+    /// Handler for diff command
+    pub fn diff(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
         let path = matches
             .get_one::<String>("path")
             .map(|s| s.as_str())
@@ -256,11 +280,18 @@ mod handlers {
             Aggregation::Total
         };
 
+        let structured = is_structured_output(matches);
+        let effective_line_types = if structured {
+            LineTypes::everything()
+        } else {
+            line_types
+        };
+
         let options = DiffOptions::new()
             .crates(crates)
             .filter(filter)
             .aggregation(aggregation)
-            .line_types(line_types);
+            .line_types(effective_line_types);
 
         let from = matches.get_one::<String>("from");
         let to = matches.get_one::<String>("to");
@@ -284,9 +315,15 @@ mod handlers {
             diff_workdir(path, mode, options)?
         };
 
-        let queryset = DiffQuerySet::from_result(&result, aggregation, line_types, ordering);
-        let table = LOCTable::from_diff_queryset(&queryset);
-        Ok(Output::Render(table))
+        if structured {
+            let queryset =
+                DiffQuerySet::from_result(&result, aggregation, LineTypes::everything(), ordering);
+            Ok(Output::Render(serde_json::to_value(queryset)?))
+        } else {
+            let queryset = DiffQuerySet::from_result(&result, aggregation, line_types, ordering);
+            let table = LOCTable::from_diff_queryset(&queryset);
+            Ok(Output::Render(serde_json::to_value(table)?))
+        }
     }
 
     // Helper functions

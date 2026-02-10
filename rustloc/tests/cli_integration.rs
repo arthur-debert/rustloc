@@ -58,19 +58,22 @@ fn test_json_output() {
     let (stdout, _, success) = run_rustloc(&[".", "--output", "json"]);
 
     assert!(success);
-    assert!(stdout.contains("\"headers\""));
-    assert!(stdout.contains("\"rows\""));
-    assert!(stdout.contains("\"footer\""));
-    assert!(stdout.contains("\"Code\""));
-    assert!(stdout.contains("\"Tests\""));
-    assert!(stdout.contains("\"Docs\""));
-    assert!(stdout.contains("\"All\""));
 
-    // Verify it's valid JSON with LOCTable structure
+    // Verify it's valid JSON with data structure (numeric values, not presentation table)
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON output");
-    assert!(parsed.get("headers").is_some());
-    assert!(parsed.get("footer").is_some());
-    assert!(parsed["footer"].get("label").is_some());
+    assert!(parsed.get("total").is_some());
+    assert!(parsed.get("file_count").is_some());
+    assert!(parsed.get("aggregation").is_some());
+
+    // Values should be numeric, not strings
+    let total = &parsed["total"];
+    assert!(total["code"].is_u64(), "code should be a number");
+    assert!(total["tests"].is_u64(), "tests should be a number");
+    assert!(total["docs"].is_u64(), "docs should be a number");
+    assert!(total["all"].is_u64(), "all should be a number");
+    assert!(total["blanks"].is_u64(), "blanks should be a number");
+    assert!(total["comments"].is_u64(), "comments should be a number");
+    assert!(total["examples"].is_u64(), "examples should be a number");
 }
 
 // CSV output removed - using outstanding's built-in JSON/table output
@@ -163,18 +166,28 @@ fn test_diff_json_output() {
     let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--output", "json"]);
 
     assert!(success);
-    assert!(stdout.contains("\"title\""));
-    assert!(stdout.contains("\"headers\""));
-    assert!(stdout.contains("\"footer\""));
-    // Diff title contains commit range
-    assert!(stdout.contains("HEAD~5"));
-    assert!(stdout.contains("HEAD"));
 
-    // Verify it's valid JSON with LOCTable structure
+    // Verify it's valid JSON with data structure
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON output");
-    assert!(parsed.get("title").is_some());
-    assert!(parsed.get("headers").is_some());
-    assert!(parsed.get("footer").is_some());
+    assert!(parsed.get("from_commit").is_some());
+    assert!(parsed.get("to_commit").is_some());
+    assert!(parsed.get("total").is_some());
+    assert!(parsed.get("file_count").is_some());
+
+    // Diff total has added/removed with numeric values
+    let total = &parsed["total"];
+    assert!(
+        total["added"]["code"].is_u64(),
+        "added.code should be a number"
+    );
+    assert!(
+        total["removed"]["code"].is_u64(),
+        "removed.code should be a number"
+    );
+
+    // Commit range info
+    assert_eq!(parsed["from_commit"].as_str().unwrap(), "HEAD~5");
+    assert_eq!(parsed["to_commit"].as_str().unwrap(), "HEAD");
 }
 
 // CSV output removed - using outstanding's built-in JSON/table output
@@ -252,17 +265,13 @@ fn test_diff_workdir_json() {
     let (stdout, _, success) = run_rustloc(&["diff", "--output", "json"]);
 
     assert!(success);
-    assert!(stdout.contains("\"title\""));
-    assert!(stdout.contains("\"headers\""));
-    assert!(stdout.contains("\"footer\""));
-    // Title contains HEAD and working tree
-    assert!(stdout.contains("HEAD"));
-    assert!(stdout.contains("working tree"));
 
-    // Verify it's valid JSON with LOCTable structure
+    // Verify it's valid JSON with data structure
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON output");
-    assert!(parsed.get("title").is_some());
-    assert!(parsed["title"].as_str().unwrap().contains("HEAD"));
+    assert!(parsed.get("from_commit").is_some());
+    assert!(parsed.get("to_commit").is_some());
+    assert!(parsed.get("total").is_some());
+    assert!(parsed["from_commit"].as_str().unwrap().contains("HEAD"));
 }
 
 #[test]
