@@ -42,6 +42,12 @@ pub struct LOCTable {
     pub rows: Vec<TableRow>,
     /// Summary/footer row
     pub footer: TableRow,
+    /// Optional summary row (e.g., aggregate additions/removals for diffs)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<TableRow>,
+    /// Optional legend text below the table (e.g., "+added / -removed / net")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legend: Option<String>,
 }
 
 impl LOCTable {
@@ -69,6 +75,8 @@ impl LOCTable {
             headers,
             rows,
             footer,
+            summary: None,
+            legend: None,
         }
     }
 
@@ -92,11 +100,26 @@ impl LOCTable {
         };
         let title = Some(format!("Diff: {} → {}", qs.from_commit, qs.to_commit));
 
+        // Build aggregate summary row: total additions / removals / net
+        let lt = LineTypesView::from(&qs.line_types);
+        let total_added = filtered_sum(&qs.total.added, &lt);
+        let total_removed = filtered_sum(&qs.total.removed, &lt);
+        let net = total_added as i64 - total_removed as i64;
+        let summary = TableRow {
+            label: String::new(),
+            values: vec![format!(
+                "[additions]+{}[/additions] / [deletions]-{}[/deletions] / {} net",
+                total_added, total_removed, net
+            )],
+        };
+
         LOCTable {
             title,
             headers,
             rows,
             footer,
+            summary: Some(summary),
+            legend: Some("(+added / -removed / net)".to_string()),
         }
     }
 }
@@ -178,6 +201,30 @@ fn build_headers(
     }
 
     headers
+}
+
+/// Sum the enabled line types from a Locs struct.
+fn filtered_sum(locs: &Locs, lt: &LineTypesView) -> u64 {
+    let mut sum = 0;
+    if lt.code {
+        sum += locs.code;
+    }
+    if lt.tests {
+        sum += locs.tests;
+    }
+    if lt.examples {
+        sum += locs.examples;
+    }
+    if lt.docs {
+        sum += locs.docs;
+    }
+    if lt.comments {
+        sum += locs.comments;
+    }
+    if lt.blanks {
+        sum += locs.blanks;
+    }
+    sum
 }
 
 /// Format Locs values as strings for display.
