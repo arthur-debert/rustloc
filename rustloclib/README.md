@@ -1,143 +1,124 @@
 # rustloclib
 
-A Rust-aware lines of code counter library that separates code, tests, comments, and blank lines.
+A Rust-aware lines-of-code counter library. Unlike generic LOC tools, rustloclib understands that Rust tests live alongside production code and correctly separates them — even in the same file.
 
 [![Crates.io](https://img.shields.io/crates/v/rustloclib.svg)](https://crates.io/crates/rustloclib)
 [![Documentation](https://docs.rs/rustloclib/badge.svg)](https://docs.rs/rustloclib)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Overview
+## Line types
 
-Unlike generic LOC counters, this library understands Rust's unique structure where tests live alongside production code. It uses syntax-aware parsing to distinguish:
+Every line is classified into one of six types:
 
-- **Main**: Production code lines
-- **Tests**: Code within `#[test]` or `#[cfg(test)]` blocks, or in `tests/` directories
-- **Examples**: Code in `examples/` directories
-- **Docs**: Documentation comments (`///`, `//!`, `/** */`, `/*! */`)
-- **Comments**: Regular comments (`//`, `/* */`)
-- **Blank**: Whitespace-only lines
+- **code** — production logic lines
+- **tests** — test logic lines (`#[test]`, `#[cfg(test)]`, `tests/`)
+- **examples** — example logic lines (`examples/`)
+- **docs** — doc comments (`///`, `//!`, `/** */`, `/*! */`)
+- **comments** — regular comments (`//`, `/* */`)
+- **blanks** — whitespace-only lines
 
-## Features
-
-- **Rust-aware parsing**: Properly handles `#[cfg(test)]`, `#[test]` attributes
-- **Cargo workspace support**: Discover and filter crates within a workspace
-- **Glob filtering**: Include/exclude files with glob patterns
-- **Pure Rust data types**: Returns structured data for easy integration
-
-## Installation
-
-Add to your `Cargo.toml`:
+## Quick start
 
 ```toml
 [dependencies]
-rustloclib = "0.1"
+rustloclib = "0.5"
 ```
-
-## Usage
 
 ### Count a workspace
 
-```rust
+```rust,ignore
 use rustloclib::{count_workspace, CountOptions};
 
 let result = count_workspace(".", CountOptions::new())?;
-
-println!("Files: {}", result.total.file_count);
-println!("Main code: {}", result.total.main.code);
-println!("Test code: {}", result.total.tests.code);
-println!("Total: {}", result.total.total());
-```
-
-### Count specific crates
-
-```rust
-use rustloclib::{count_workspace, CountOptions};
-
-let result = count_workspace(".", CountOptions::new()
-    .crates(vec!["my-lib".to_string(), "my-cli".to_string()]))?;
-```
-
-### Filter files with globs
-
-```rust
-use rustloclib::{count_workspace, CountOptions, FilterConfig};
-
-let filter = FilterConfig::new()
-    .exclude("**/generated/**")?
-    .exclude("**/vendor/**")?;
-
-let result = count_workspace(".", CountOptions::new().filter(filter))?;
+println!("Code: {}, Tests: {}, Docs: {}", result.total.code, result.total.tests, result.total.docs);
 ```
 
 ### Count a single file
 
-```rust
+```rust,ignore
 use rustloclib::count_file;
 
-let stats = count_file("src/main.rs")?;
-println!("Code: {}, Docs: {}", stats.main.code, stats.main.docs);
+let stats = count_file("src/lib.rs")?;
+println!("Code: {}, Tests: {}", stats.code, stats.tests);
 ```
 
-### Parse from a string (for testing)
+### Filter by crate or glob
 
-```rust
-use rustloclib::{parse_string, VisitorContext};
+```rust,ignore
+use rustloclib::{count_workspace, CountOptions, FilterConfig};
 
-let source = r#"
-fn main() {
-    println!("Hello");
-}
-
-#[test]
-fn test_main() {
-    assert!(true);
-}
-"#;
-
-let stats = parse_string(source, VisitorContext::Main);
-assert_eq!(stats.main.code, 3);  // fn, println, }
-assert_eq!(stats.tests.code, 4); // #[test], fn, assert, }
+let filter = FilterConfig::new().exclude("**/generated/**")?;
+let result = count_workspace(".", CountOptions::new()
+    .crates(vec!["my-lib".into()])
+    .filter(filter))?;
 ```
 
-## Data Structures
+### Diff between commits
 
-### LocStats
+```rust,ignore
+use rustloclib::{diff_commits, DiffOptions};
 
-Aggregated statistics for a collection of files:
-
-```rust
-pub struct LocStats {
-    pub file_count: u64,
-    pub main: Locs,      // Production code
-    pub tests: Locs,     // Test code
-    pub examples: Locs,  // Example code
-}
+let diff = diff_commits(".", "HEAD~5", "HEAD", DiffOptions::new())?;
+println!("Code: +{}/-{}", diff.total.added.code, diff.total.removed.code);
 ```
 
-### Locs
+### Working directory diff
 
-Line counts for a single context:
+```rust,ignore
+use rustloclib::{diff_workdir, DiffOptions, WorkdirDiffMode};
 
-```rust
-pub struct Locs {
-    pub blank: u64,     // Whitespace-only lines
-    pub code: u64,      // Code lines
-    pub docs: u64,      // Doc comment lines
-    pub comments: u64,  // Regular comment lines
-}
+let diff = diff_workdir(".", WorkdirDiffMode::Staged, DiffOptions::new())?;
 ```
 
-### CountResult
+## Data pipeline
 
-Result from counting operations:
+The library is organized into four stages:
 
-```rust
-pub struct CountResult {
-    pub total: LocStats,           // Aggregated stats
-    pub crates: Vec<CrateStats>,   // Per-crate breakdown
-    pub files: Vec<FileStats>,     // Per-file breakdown (if requested)
-}
+```text
+source  →  data  →  query  →  output
+Find       Parse    Filter    Format
+files      & count  & sort    strings
 ```
+
+### Full pipeline example
+
+```rust,ignore
+use rustloclib::{
+    count_workspace, CountOptions, CountQuerySet, LOCTable,
+    Aggregation, LineTypes, Ordering,
+};
+
+// Stages 1–2: discover and count
+let result = count_workspace(".", CountOptions::new())?;
+
+// Stage 3: query (filter line types, aggregate, sort)
+let queryset = CountQuerySet::from_result(
+    &result,
+    Aggregation::ByCrate,
+    LineTypes::everything(),
+    Ordering::by_code(),
+);
+
+// Stage 4: format for display
+let table = LOCTable::from_count_queryset(&queryset);
+```
+
+## Key types
+
+| Type | Description |
+|------|-------------|
+| `Locs` | Counts for a single item: `code`, `tests`, `examples`, `docs`, `comments`, `blanks`, `all` |
+| `CountResult` | Result from counting: `total`, `crates`, `modules`, `files` |
+| `DiffResult` | Result from diffing: `total`, `crates`, `files` (each with `LocsDiff`) |
+| `LocsDiff` | Added/removed `Locs` with `net_*()` helpers |
+| `CountOptions` | Builder for counting: `.crates()`, `.filter()`, `.aggregation()`, `.line_types()` |
+| `DiffOptions` | Builder for diffing: same API as `CountOptions` |
+| `Aggregation` | `Total`, `ByCrate`, `ByModule`, `ByFile` |
+| `LineTypes` | Which columns to include: `default()`, `everything()`, `code_only()`, etc. |
+| `Ordering` | Sort control: `by_code()`, `by_tests()`, `by_total()`, `by_label()` |
+| `FilterConfig` | Glob-based file filtering: `.include()`, `.exclude()` |
+
+All data types implement `serde::Serialize` and `serde::Deserialize`.
 
 ## Acknowledgments
 

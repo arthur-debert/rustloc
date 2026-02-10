@@ -42,12 +42,6 @@ rustloc --crate my-lib               # filter to a specific crate
 rustloc --exclude "**/generated/**"  # exclude by glob
 ```
 
-`--by-module`:
-
-![by-module output](assets/output-by-module.png)
-
-`--by-file`:
-
 ![by-file output](assets/output-by-file.png)
 
 ### Diffs
