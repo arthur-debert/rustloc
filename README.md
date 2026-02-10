@@ -6,6 +6,8 @@ A Rust-aware lines-of-code counter. Unlike generic LOC tools, rustloc understand
 [![Crates.io](https://img.shields.io/crates/v/rustloc.svg)](https://crates.io/crates/rustloc)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+![Rust Aware](assets/output-by-module.png)
+
 ## Features
 
 **Line types:** Code, Tests, Examples, Docs, Comments, Blanks
