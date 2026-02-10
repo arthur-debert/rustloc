@@ -66,6 +66,7 @@ Examples:
   rustloc --by-crate                   Group by crate
   rustloc --by-module                  Group by module
   rustloc --by-file                    Group by file
+  rustloc --by-file -o -code           Sort files by code (descending)
   rustloc -t code,tests               Only code and test lines
   rustloc -c my-lib                    Only a specific crate
   rustloc diff                         Changes since last commit
@@ -134,8 +135,13 @@ struct CountArgs {
     #[arg(short = 'm', long = "by-module")]
     by_module: bool,
 
-    /// Sort by: label, code, tests, docs, total, ... (prefix - for desc)
-    #[arg(short = 'o', long = "ordering", value_name = "FIELD")]
+    /// Sort by field [use -o=FIELD or --ordering=FIELD, prefix - for desc: -o=-code]
+    #[arg(
+        short = 'o',
+        long = "ordering",
+        value_name = "FIELD",
+        allow_hyphen_values = true
+    )]
     ordering: Option<String>,
 }
 
