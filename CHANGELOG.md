@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Changed**:
+  - Renamed "All" line type to "Total" everywhere (column header, `--type` value, API fields)
+  - `-h` now shows compact help; `--help` shows full descriptions with examples
+  - JSON/YAML/XML/CSV output now serializes raw numeric data instead of formatted display strings
+- **Added**:
+  - `--by-module` / `-m` option for diff command (was only available for count)
+  - Diff summary line showing aggregate additions/removals/net below the table
+  - Legend explaining `+added/-removed/net` notation in diff output
+  - Non-Rust file change summary in diff output (lines added/removed in non-.rs files)
+  - crates.io keywords, categories, homepage, and documentation URLs
+- **Fixed**:
+  - `--ordering` / `-o` now accepts hyphen-prefixed values (`-o -code`) without clap misinterpreting them as flags
+  - Conflicting aggregation flags (`--by-crate --by-file`) now produce a clear error instead of silent precedence
+  - rustloclib README version corrected from 0.5 to 0.8
+
 ## [0.8.4] - 2026-02-10
 
 ## [0.8.3] - 2026-02-10
