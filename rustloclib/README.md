@@ -21,7 +21,7 @@ Every line is classified into one of six types:
 
 ```toml
 [dependencies]
-rustloclib = "0.5"
+rustloclib = "0.8"
 ```
 
 ### Count a workspace
