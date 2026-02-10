@@ -124,15 +124,15 @@ struct CountArgs {
     line_types: Vec<String>,
 
     /// Group results by crate
-    #[arg(long = "by-crate")]
+    #[arg(long = "by-crate", conflicts_with_all = ["by_file", "by_module"])]
     by_crate: bool,
 
     /// Group results by file
-    #[arg(short = 'f', long = "by-file")]
+    #[arg(short = 'f', long = "by-file", conflicts_with_all = ["by_crate", "by_module"])]
     by_file: bool,
 
     /// Group results by module
-    #[arg(short = 'm', long = "by-module")]
+    #[arg(short = 'm', long = "by-module", conflicts_with_all = ["by_crate", "by_file"])]
     by_module: bool,
 
     /// Sort by field [use -o=FIELD or --ordering=FIELD, prefix - for desc: -o=-code]
@@ -180,15 +180,20 @@ struct DiffArgs {
     line_types: Vec<String>,
 
     /// Group results by crate
-    #[arg(long = "by-crate")]
+    #[arg(long = "by-crate", conflicts_with = "by_file")]
     by_crate: bool,
 
     /// Group results by file
-    #[arg(short = 'f', long = "by-file")]
+    #[arg(short = 'f', long = "by-file", conflicts_with = "by_crate")]
     by_file: bool,
 
-    /// Sort rows by field (prefix - for descending)
-    #[arg(short = 'o', long = "ordering", value_name = "FIELD")]
+    /// Sort by field [use -o=FIELD or --ordering=FIELD, prefix - for desc: -o=-code]
+    #[arg(
+        short = 'o',
+        long = "ordering",
+        value_name = "FIELD",
+        allow_hyphen_values = true
+    )]
     ordering: Option<String>,
 }
 
