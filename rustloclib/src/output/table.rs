@@ -45,6 +45,9 @@ pub struct LOCTable {
     /// Optional summary row (e.g., aggregate additions/removals for diffs)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<TableRow>,
+    /// Optional non-Rust changes summary (e.g., "Non-Rust changes: +10/-5/5 net")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub non_rust_summary: Option<String>,
     /// Optional legend text below the table (e.g., "+added / -removed / net")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub legend: Option<String>,
@@ -76,6 +79,7 @@ impl LOCTable {
             rows,
             footer,
             summary: None,
+            non_rust_summary: None,
             legend: None,
         }
     }
@@ -113,12 +117,23 @@ impl LOCTable {
             )],
         };
 
+        let non_rust_summary = if qs.non_rust_added > 0 || qs.non_rust_removed > 0 {
+            let nr_net = qs.non_rust_added as i64 - qs.non_rust_removed as i64;
+            Some(format!(
+                    "Non-Rust changes: [additions]+{}[/additions] / [deletions]-{}[/deletions] / {} net",
+                    qs.non_rust_added, qs.non_rust_removed, nr_net
+                ))
+        } else {
+            None
+        };
+
         LOCTable {
             title,
             headers,
             rows,
             footer,
             summary: Some(summary),
+            non_rust_summary,
             legend: Some("(+added / -removed / net)".to_string()),
         }
     }

@@ -62,6 +62,12 @@ pub struct DiffQuerySet {
     pub from_commit: String,
     /// Target commit
     pub to_commit: String,
+    /// Lines added in non-Rust files
+    #[serde(default)]
+    pub non_rust_added: u64,
+    /// Lines removed in non-Rust files
+    #[serde(default)]
+    pub non_rust_removed: u64,
 }
 
 impl CountQuerySet {
@@ -116,6 +122,8 @@ impl DiffQuerySet {
             file_count: result.files.len(),
             from_commit: result.from_commit.clone(),
             to_commit: result.to_commit.clone(),
+            non_rust_added: result.non_rust_added,
+            non_rust_removed: result.non_rust_removed,
         }
     }
 }
