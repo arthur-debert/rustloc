@@ -17,3 +17,12 @@
 {{ "─" * line_width }}
 {% endif -%}
 {{ footer.label | col(label_width) }}{% for v in footer.values %} {{ v | col(value_width, align='right') }}{% endfor %}
+{% if summary %}{{ summary.label | col(label_width) }}{% for v in summary.values %} {{ v }}{% endfor %}
+{% endif -%}
+{% if non_rust_summary %}
+
+{{ non_rust_summary }}
+{% endif -%}
+{% if legend %}
+[muted]{{ legend }}[/muted]
+{% endif -%}

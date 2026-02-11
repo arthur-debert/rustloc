@@ -15,7 +15,7 @@ use std::str::FromStr;
 /// - `docs`: Documentation comments (anywhere)
 /// - `comments`: Regular comments (anywhere)
 /// - `blanks`: Blank lines (anywhere)
-/// - `all`: Total line count (precomputed sum of all types)
+/// - `total`: Total line count (precomputed sum of all types)
 ///
 /// When a line type is disabled, it will be zeroed in returned stats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,12 +33,12 @@ pub struct LineTypes {
     /// Include blank lines
     pub blanks: bool,
     /// Include total line count (precomputed)
-    pub all: bool,
+    pub total: bool,
 }
 
 impl Default for LineTypes {
     fn default() -> Self {
-        // Default shows code, tests, docs, and all (total)
+        // Default shows code, tests, docs, and total
         Self {
             code: true,
             tests: true,
@@ -46,14 +46,14 @@ impl Default for LineTypes {
             docs: true,
             comments: false,
             blanks: false,
-            all: true,
+            total: true,
         }
     }
 }
 
 impl LineTypes {
     /// Create with no types enabled (for building up).
-    /// Note: `all` defaults to true since it's always useful to see totals.
+    /// Note: `total` defaults to true since it's always useful to see totals.
     pub fn new() -> Self {
         Self {
             code: false,
@@ -62,7 +62,7 @@ impl LineTypes {
             docs: false,
             comments: false,
             blanks: false,
-            all: true, // All is on by default
+            total: true, // All is on by default
         }
     }
 
@@ -75,11 +75,11 @@ impl LineTypes {
             docs: true,
             comments: true,
             blanks: true,
-            all: true,
+            total: true,
         }
     }
 
-    /// Include no line types at all (not even all)
+    /// Include no line types at all (not even total)
     pub fn none() -> Self {
         Self {
             code: false,
@@ -88,21 +88,21 @@ impl LineTypes {
             docs: false,
             comments: false,
             blanks: false,
-            all: false,
+            total: false,
         }
     }
 
-    /// Include only production code (plus all)
+    /// Include only production code (plus total)
     pub fn code_only() -> Self {
         Self::new().with_code()
     }
 
-    /// Include only test code (plus all)
+    /// Include only test code (plus total)
     pub fn tests_only() -> Self {
         Self::new().with_tests()
     }
 
-    /// Include only example code (plus all)
+    /// Include only example code (plus total)
     pub fn examples_only() -> Self {
         Self::new().with_examples()
     }
@@ -116,7 +116,7 @@ impl LineTypes {
             docs: false,
             comments: false,
             blanks: false,
-            all: true,
+            total: true,
         }
     }
 
@@ -156,15 +156,15 @@ impl LineTypes {
         self
     }
 
-    /// Builder: enable all (total)
-    pub fn with_all(mut self) -> Self {
-        self.all = true;
+    /// Builder: enable total
+    pub fn with_total(mut self) -> Self {
+        self.total = true;
         self
     }
 
-    /// Builder: disable all (total)
-    pub fn without_all(mut self) -> Self {
-        self.all = false;
+    /// Builder: disable total
+    pub fn without_total(mut self) -> Self {
+        self.total = false;
         self
     }
 }
@@ -309,7 +309,7 @@ mod tests {
         assert!(lt.docs);
         assert!(!lt.comments); // Not in default
         assert!(!lt.blanks); // Not in default
-        assert!(lt.all);
+        assert!(lt.total);
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
         assert!(!lt.docs);
         assert!(!lt.comments);
         assert!(!lt.blanks);
-        assert!(!lt.all);
+        assert!(!lt.total);
     }
 
     #[test]
@@ -333,7 +333,7 @@ mod tests {
         assert!(lt.docs);
         assert!(lt.comments);
         assert!(lt.blanks);
-        assert!(lt.all);
+        assert!(lt.total);
     }
 
     #[test]
@@ -345,7 +345,7 @@ mod tests {
         assert!(!lt.docs);
         assert!(!lt.comments);
         assert!(!lt.blanks);
-        assert!(lt.all); // All is on by default with new()
+        assert!(lt.total); // All is on by default with new()
     }
 
     #[test]
@@ -357,7 +357,7 @@ mod tests {
         assert!(!lt.docs);
         assert!(!lt.comments);
         assert!(!lt.blanks);
-        assert!(lt.all); // All is on by default
+        assert!(lt.total); // All is on by default
     }
 
     #[test]
@@ -369,7 +369,7 @@ mod tests {
         assert!(!lt.docs);
         assert!(!lt.comments);
         assert!(!lt.blanks);
-        assert!(lt.all);
+        assert!(lt.total);
     }
 
     #[test]

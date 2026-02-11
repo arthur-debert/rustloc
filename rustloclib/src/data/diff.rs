@@ -196,6 +196,12 @@ pub struct DiffResult {
     pub crates: Vec<CrateDiffStats>,
     /// Per-file diff (optional, for detailed output).
     pub files: Vec<FileDiffStats>,
+    /// Lines added in non-Rust files.
+    #[serde(default)]
+    pub non_rust_added: u64,
+    /// Lines removed in non-Rust files.
+    #[serde(default)]
+    pub non_rust_removed: u64,
 }
 
 impl DiffResult {
@@ -208,6 +214,8 @@ impl DiffResult {
             total: self.total.filter(types),
             crates: self.crates.iter().map(|c| c.filter(types)).collect(),
             files: self.files.iter().map(|f| f.filter(types)).collect(),
+            non_rust_added: self.non_rust_added,
+            non_rust_removed: self.non_rust_removed,
         }
     }
 }
@@ -311,7 +319,7 @@ pub fn diff_workdir(
         .map_err(|e| RustlocError::GitError(format!("Failed to read index: {}", e)))?;
 
     // Collect changes based on mode
-    let changes = match mode {
+    let (changes, non_rust_added, non_rust_removed) = match mode {
         WorkdirDiffMode::Staged => collect_staged_changes(&repo, &head_tree, &index)?,
         WorkdirDiffMode::All => collect_workdir_changes(&repo, &head_tree, &repo_root)?,
     };
@@ -405,6 +413,8 @@ pub fn diff_workdir(
         total,
         crates,
         files,
+        non_rust_added,
+        non_rust_removed,
     };
 
     Ok(result.filter(options.line_types))
@@ -423,11 +433,13 @@ fn collect_staged_changes(
     repo: &gix::Repository,
     head_tree: &gix::Tree<'_>,
     index: &gix::worktree::Index,
-) -> Result<Vec<WorkdirFileChange>> {
+) -> Result<(Vec<WorkdirFileChange>, u64, u64)> {
     use std::collections::HashSet;
 
     let mut changes = Vec::new();
     let mut seen_paths: HashSet<PathBuf> = HashSet::new();
+    let mut non_rust_added: u64 = 0;
+    let mut non_rust_removed: u64 = 0;
 
     // Build a map of HEAD tree entries
     let mut head_entries: HashMap<PathBuf, gix::ObjectId> = HashMap::new();
@@ -437,8 +449,20 @@ fn collect_staged_changes(
     for entry in index.entries() {
         let path = PathBuf::from(gix::path::from_bstr(entry.path(index)));
 
-        // Only process .rs files
         if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            // Track non-Rust file line changes
+            let index_oid = entry.id;
+            if let Some(&head_oid) = head_entries.get(&path) {
+                if head_oid != index_oid {
+                    let old_lines = count_lines(&read_blob(repo, head_oid)?);
+                    let new_lines = count_lines(&read_blob(repo, index_oid)?);
+                    non_rust_added += new_lines.saturating_sub(old_lines);
+                    non_rust_removed += old_lines.saturating_sub(new_lines);
+                }
+            } else {
+                non_rust_added += count_lines(&read_blob(repo, index_oid)?);
+            }
+            seen_paths.insert(path);
             continue;
         }
 
@@ -470,6 +494,9 @@ fn collect_staged_changes(
     // Check for deleted files
     for (path, head_oid) in head_entries {
         if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            if !seen_paths.contains(&path) {
+                non_rust_removed += count_lines(&read_blob(repo, head_oid)?);
+            }
             continue;
         }
         if !seen_paths.contains(&path) {
@@ -483,7 +510,7 @@ fn collect_staged_changes(
         }
     }
 
-    Ok(changes)
+    Ok((changes, non_rust_added, non_rust_removed))
 }
 
 /// Collect all uncommitted changes (HEAD vs working directory)
@@ -491,11 +518,13 @@ fn collect_workdir_changes(
     repo: &gix::Repository,
     head_tree: &gix::Tree<'_>,
     repo_root: &Path,
-) -> Result<Vec<WorkdirFileChange>> {
+) -> Result<(Vec<WorkdirFileChange>, u64, u64)> {
     use std::collections::HashSet;
 
     let mut changes = Vec::new();
     let mut seen_paths: HashSet<PathBuf> = HashSet::new();
+    let mut non_rust_added: u64 = 0;
+    let mut non_rust_removed: u64 = 0;
 
     // Build a map of HEAD tree entries
     let mut head_entries: HashMap<PathBuf, gix::ObjectId> = HashMap::new();
@@ -525,10 +554,6 @@ fn collect_workdir_changes(
         }
 
         let abs_path = entry.path();
-        if abs_path.extension().and_then(|e| e.to_str()) != Some("rs") {
-            continue;
-        }
-
         let rel_path = abs_path
             .strip_prefix(repo_root)
             .unwrap_or(abs_path)
@@ -536,6 +561,26 @@ fn collect_workdir_changes(
 
         // Skip untracked files
         if !tracked_paths.contains(&rel_path) && !head_entries.contains_key(&rel_path) {
+            continue;
+        }
+
+        if abs_path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            // Track non-Rust file line changes
+            seen_paths.insert(rel_path.clone());
+            let workdir_content = match std::fs::read_to_string(abs_path) {
+                Ok(content) => content,
+                Err(_) => continue,
+            };
+            let new_lines = count_lines(&workdir_content);
+            if let Some(&head_oid) = head_entries.get(&rel_path) {
+                let old_lines = count_lines(&read_blob(repo, head_oid)?);
+                if old_lines != new_lines {
+                    non_rust_added += new_lines.saturating_sub(old_lines);
+                    non_rust_removed += old_lines.saturating_sub(new_lines);
+                }
+            } else {
+                non_rust_added += new_lines;
+            }
             continue;
         }
 
@@ -569,6 +614,9 @@ fn collect_workdir_changes(
     // Check for deleted files
     for (path, head_oid) in head_entries {
         if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            if !seen_paths.contains(&path) {
+                non_rust_removed += count_lines(&read_blob(repo, head_oid)?);
+            }
             continue;
         }
         if !seen_paths.contains(&path) {
@@ -582,7 +630,7 @@ fn collect_workdir_changes(
         }
     }
 
-    Ok(changes)
+    Ok((changes, non_rust_added, non_rust_removed))
 }
 
 /// Recursively collect all blob entries from a tree
@@ -692,6 +740,8 @@ pub fn diff_commits(
     let mut total = LocsDiff::new();
     let mut files = Vec::new();
     let mut crate_stats: HashMap<String, CrateDiffStats> = HashMap::new();
+    let mut non_rust_added: u64 = 0;
+    let mut non_rust_removed: u64 = 0;
 
     let include_files = matches!(options.aggregation, Aggregation::ByFile);
     let include_crates = matches!(
@@ -701,6 +751,21 @@ pub fn diff_commits(
 
     for change in changes {
         let path = change.path.clone();
+
+        // Track non-Rust file line changes
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            let old_lines = change
+                .old_oid
+                .and_then(|oid| read_blob(&repo, oid).ok().map(|c| count_lines(&c)))
+                .unwrap_or(0);
+            let new_lines = change
+                .new_oid
+                .and_then(|oid| read_blob(&repo, oid).ok().map(|c| count_lines(&c)))
+                .unwrap_or(0);
+            non_rust_added += new_lines.saturating_sub(old_lines);
+            non_rust_removed += old_lines.saturating_sub(new_lines);
+            continue;
+        }
 
         if !options.file_filter.matches(&path) {
             continue;
@@ -749,6 +814,8 @@ pub fn diff_commits(
         total,
         crates,
         files,
+        non_rust_added,
+        non_rust_removed,
     };
 
     Ok(result.filter(options.line_types))
@@ -906,7 +973,7 @@ fn compute_locs_diff(old: &Locs, new: &Locs) -> LocsDiff {
             docs: new.docs.saturating_sub(old.docs),
             comments: new.comments.saturating_sub(old.comments),
             blanks: new.blanks.saturating_sub(old.blanks),
-            all: new.all.saturating_sub(old.all),
+            total: new.total.saturating_sub(old.total),
         },
         removed: Locs {
             code: old.code.saturating_sub(new.code),
@@ -915,9 +982,14 @@ fn compute_locs_diff(old: &Locs, new: &Locs) -> LocsDiff {
             docs: old.docs.saturating_sub(new.docs),
             comments: old.comments.saturating_sub(new.comments),
             blanks: old.blanks.saturating_sub(new.blanks),
-            all: old.all.saturating_sub(new.all),
+            total: old.total.saturating_sub(new.total),
         },
     }
+}
+
+/// Count lines in a text string.
+fn count_lines(content: &str) -> u64 {
+    content.lines().count() as u64
 }
 
 /// Read a blob's content as a UTF-8 string
@@ -956,7 +1028,7 @@ mod tests {
                 docs: 10,
                 comments: 5,
                 blanks: 15,
-                all: 200,
+                total: 200,
             },
             removed: Locs {
                 code: 30,
@@ -965,7 +1037,7 @@ mod tests {
                 docs: 2,
                 comments: 1,
                 blanks: 5,
-                all: 68,
+                total: 68,
             },
         };
 
@@ -988,7 +1060,7 @@ mod tests {
                 docs: 1,
                 comments: 1,
                 blanks: 1,
-                all: 20,
+                total: 20,
             },
             removed: Locs {
                 code: 5,
@@ -997,7 +1069,7 @@ mod tests {
                 docs: 0,
                 comments: 0,
                 blanks: 0,
-                all: 8,
+                total: 8,
             },
         };
         let b = LocsDiff {
@@ -1008,7 +1080,7 @@ mod tests {
                 docs: 2,
                 comments: 2,
                 blanks: 2,
-                all: 40,
+                total: 40,
             },
             removed: Locs {
                 code: 10,
@@ -1017,7 +1089,7 @@ mod tests {
                 docs: 1,
                 comments: 1,
                 blanks: 1,
-                all: 20,
+                total: 20,
             },
         };
 
@@ -1047,7 +1119,7 @@ mod tests {
             docs: 10,
             comments: 5,
             blanks: 20,
-            all: 135,
+            total: 135,
         };
 
         let diff = compute_locs_diff(&old, &new);
@@ -1066,7 +1138,7 @@ mod tests {
             docs: 5,
             comments: 2,
             blanks: 10,
-            all: 67,
+            total: 67,
         };
         let new = Locs::new();
 
@@ -1084,7 +1156,7 @@ mod tests {
             docs: 10,
             comments: 5,
             blanks: 20,
-            all: 135,
+            total: 135,
         };
         let new = Locs {
             code: 120,
@@ -1093,7 +1165,7 @@ mod tests {
             docs: 8,
             comments: 5,
             blanks: 25,
-            all: 158,
+            total: 158,
         };
 
         let diff = compute_locs_diff(&old, &new);

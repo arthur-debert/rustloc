@@ -203,7 +203,7 @@ pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<
 /// - `foo/mod.rs` → "foo"
 /// - `foo/bar.rs` → "foo::bar"
 /// - For new-style modules, `foo.rs` and `foo/` are combined under "foo"
-fn compute_module_name(file_path: &Path, src_root: &Path) -> String {
+pub fn compute_module_name(file_path: &Path, src_root: &Path) -> String {
     let relative = file_path.strip_prefix(src_root).unwrap_or(file_path);
 
     let mut components: Vec<&str> = relative

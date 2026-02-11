@@ -16,3 +16,7 @@ additions:
 # Diff deletions (red)
 deletions:
   fg: red
+
+# Muted text for legends and secondary info
+muted:
+  dim: true

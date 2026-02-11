@@ -369,7 +369,7 @@ impl<T: Read> Visitor<T> {
         self.curr_line_no += 1;
 
         // Always increment all (total line count)
-        self.stats.all += 1;
+        self.stats.total += 1;
 
         if line_context.has_code {
             // Logic lines depend on context
