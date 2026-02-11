@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-02-11
+
 - **Changed**:
   - Renamed "All" line type to "Total" everywhere (column header, `--type` value, API fields)
   - `-h` now shows compact help; `--help` shows full descriptions with examples
@@ -156,7 +158,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Acknowledgments**:
   - Parsing logic adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc) by Maxim Gritsenko
 
-[Unreleased]: https://github.com/arthur-debert/rustloc/compare/v0.8.4...HEAD
+[Unreleased]: https://github.com/arthur-debert/rustloc/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/arthur-debert/rustloc/compare/v0.8.4...v0.9.0
 [0.8.4]: https://github.com/arthur-debert/rustloc/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/arthur-debert/rustloc/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/arthur-debert/rustloc/compare/v0.8.1...v0.8.2
