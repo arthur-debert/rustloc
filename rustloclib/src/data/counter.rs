@@ -197,12 +197,16 @@ pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<
 
 /// Compute the module name for a file path relative to a source root.
 ///
+/// Returns the directory-level module name so that all files within
+/// a directory aggregate under a single module entry.
+///
 /// Module naming rules:
 /// - `lib.rs`, `main.rs`, `mod.rs` in root → "" (root module)
-/// - `foo.rs` (with or without sibling `foo/` dir) → "foo"
+/// - `foo.rs` in root → "foo"
 /// - `foo/mod.rs` → "foo"
-/// - `foo/bar.rs` → "foo::bar"
-/// - For new-style modules, `foo.rs` and `foo/` are combined under "foo"
+/// - `foo/bar.rs` → "foo" (aggregates with other files in foo/)
+/// - `foo/sub/baz.rs` → "foo::sub"
+/// - New-style: `foo.rs` + `foo/bar.rs` both → "foo"
 pub fn compute_module_name(file_path: &Path, src_root: &Path) -> String {
     let relative = file_path.strip_prefix(src_root).unwrap_or(file_path);
 
@@ -229,11 +233,12 @@ pub fn compute_module_name(file_path: &Path, src_root: &Path) -> String {
         return components.join("::");
     }
 
-    // For regular files, check if there's a sibling directory with the same name
-    // If so, this file is the module entry point for that directory
-    // Either way, the module name includes this file's stem
+    // Files inside a directory belong to that directory's module.
+    // e.g., data/counter.rs → "data", data/sub/foo.rs → "data::sub"
+    // Root-level files (like error.rs or data.rs) are their own module.
+    // This means data.rs (new-style module entry) naturally aggregates
+    // with files in data/ since both map to "data".
     if !components.is_empty() {
-        components.push(stem);
         components.join("::")
     } else {
         stem.to_string()
@@ -556,5 +561,106 @@ fn foo() {
         assert!(result.total.code > 0);
         assert!(result.total.tests > 0);
         assert!(result.total.docs > 0);
+    }
+
+    #[test]
+    fn test_compute_module_name_root_files() {
+        let src = Path::new("/project/src");
+        assert_eq!(
+            compute_module_name(Path::new("/project/src/lib.rs"), src),
+            ""
+        );
+        assert_eq!(
+            compute_module_name(Path::new("/project/src/main.rs"), src),
+            ""
+        );
+        assert_eq!(
+            compute_module_name(Path::new("/project/src/error.rs"), src),
+            "error"
+        );
+    }
+
+    #[test]
+    fn test_compute_module_name_directory_aggregation() {
+        let src = Path::new("/project/src");
+        // All files in data/ aggregate to "data"
+        assert_eq!(
+            compute_module_name(Path::new("/project/src/data/mod.rs"), src),
+            "data"
+        );
+        assert_eq!(
+            compute_module_name(Path::new("/project/src/data/counter.rs"), src),
+            "data"
+        );
+        assert_eq!(
+            compute_module_name(Path::new("/project/src/data/stats.rs"), src),
+            "data"
+        );
+    }
+
+    #[test]
+    fn test_compute_module_name_nested_directories() {
+        let src = Path::new("/project/src");
+        // Nested directories get their own module
+        assert_eq!(
+            compute_module_name(Path::new("/project/src/data/sub/foo.rs"), src),
+            "data::sub"
+        );
+        assert_eq!(
+            compute_module_name(Path::new("/project/src/data/sub/mod.rs"), src),
+            "data::sub"
+        );
+    }
+
+    #[test]
+    fn test_compute_module_name_new_style_module() {
+        let src = Path::new("/project/src");
+        // New-style: data.rs (sibling to data/) maps to "data"
+        // just like files inside data/ — they aggregate together
+        assert_eq!(
+            compute_module_name(Path::new("/project/src/data.rs"), src),
+            "data"
+        );
+        assert_eq!(
+            compute_module_name(Path::new("/project/src/data/counter.rs"), src),
+            "data"
+        );
+    }
+
+    #[test]
+    fn test_module_aggregation_groups_files_by_directory() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        // Create a project with multiple modules
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"test-proj\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+
+        create_rust_file(&root.join("src/lib.rs"), "pub mod data;\npub mod utils;\n");
+        create_rust_file(
+            &root.join("src/data/mod.rs"),
+            "pub mod counter;\npub mod stats;\n",
+        );
+        create_rust_file(&root.join("src/data/counter.rs"), "pub fn count() {}\n");
+        create_rust_file(&root.join("src/data/stats.rs"), "pub fn stats() {}\n");
+        create_rust_file(&root.join("src/utils.rs"), "pub fn helper() {}\n");
+
+        let options = CountOptions::new().aggregation(Aggregation::ByModule);
+        let result = count_workspace(root, options).unwrap();
+
+        let module_names: Vec<&str> = result.modules.iter().map(|m| m.name.as_str()).collect();
+
+        // data/mod.rs, data/counter.rs, data/stats.rs all aggregate under "test-proj::data"
+        assert!(module_names.contains(&"test-proj::data"));
+        // utils.rs is a root-level module
+        assert!(module_names.contains(&"test-proj::utils"));
+        // lib.rs maps to the crate root
+        assert!(module_names.contains(&"test-proj"));
+        // Should NOT have per-file entries
+        assert!(!module_names.contains(&"test-proj::data::counter"));
+        assert!(!module_names.contains(&"test-proj::data::stats"));
     }
 }

@@ -178,13 +178,11 @@ fn build_count_items(
         Aggregation::ByCrate => result
             .crates
             .iter()
-            .filter(|c| locs_filtered_total(&c.stats, line_types) > 0)
             .map(|c| (c.name.clone(), c.stats.filter(*line_types)))
             .collect(),
         Aggregation::ByModule => result
             .modules
             .iter()
-            .filter(|m| locs_filtered_total(&m.stats, line_types) > 0)
             .map(|m| {
                 let label = if m.name.is_empty() {
                     "(root)".to_string()
@@ -197,7 +195,6 @@ fn build_count_items(
         Aggregation::ByFile => result
             .files
             .iter()
-            .filter(|f| locs_filtered_total(&f.stats, line_types) > 0)
             .map(|f| {
                 (
                     relative_path_label(&f.path, &result.root),
@@ -240,12 +237,6 @@ fn locs_diff_filtered_total(diff: &LocsDiff, line_types: &LineTypes) -> (u64, u6
     (added, removed)
 }
 
-/// Check if a diff has any net change.
-fn has_net_change(diff: &LocsDiff, line_types: &LineTypes) -> bool {
-    let (added, removed) = locs_diff_filtered_total(diff, line_types);
-    added != removed
-}
-
 /// Get sort key for LocsDiff based on OrderBy (uses net change).
 fn diff_sort_key(diff: &LocsDiff, order_by: &OrderBy, line_types: &LineTypes) -> i64 {
     match order_by {
@@ -275,7 +266,6 @@ fn build_diff_items(
         Aggregation::ByCrate => result
             .crates
             .iter()
-            .filter(|c| has_net_change(&c.diff, line_types))
             .map(|c| (c.name.clone(), c.diff.filter(*line_types)))
             .collect(),
         Aggregation::ByModule => {
@@ -288,7 +278,12 @@ fn build_diff_items(
                     crate_diff.path.clone()
                 };
                 for file in &crate_diff.files {
-                    let local_module = compute_module_name(&file.path, &effective_root);
+                    let abs_path = if file.path.is_absolute() {
+                        file.path.clone()
+                    } else {
+                        result.root.join(&file.path)
+                    };
+                    let local_module = compute_module_name(&abs_path, &effective_root);
                     let full_name = if local_module.is_empty() {
                         crate_diff.name.clone()
                     } else {
@@ -298,15 +293,11 @@ fn build_diff_items(
                     *entry += file.diff.filter(*line_types);
                 }
             }
-            module_map
-                .into_iter()
-                .filter(|(_, diff)| has_net_change(diff, line_types))
-                .collect()
+            module_map.into_iter().collect()
         }
         Aggregation::ByFile => result
             .files
             .iter()
-            .filter(|f| has_net_change(&f.diff, line_types))
             .map(|f| {
                 (
                     f.path.to_string_lossy().to_string(),

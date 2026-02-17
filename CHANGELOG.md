@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Changed**:
+  - Upgraded standout dependency from 6.0.1 to 7.0.0 (fixes `--output-file-path`, XML serialization, and CSV array flattening)
+- **Fixed**:
+  - `--by-module` diff now shows per-module rows instead of "0 modules" (missing aggregation level in diff pipeline)
+  - `--by-module` diff correctly resolves relative file paths from git against repository root
+  - `build.rs` files are now included in file counts (were excluded because they sit outside standard dirs)
+  - `--by-crate`/`--by-module` on non-workspace directories now returns a clear error instead of silently showing "0 items" with populated totals
+  - Row filtering no longer hides files/modules/crates with zero lines in displayed columns, fixing footer count mismatches
+  - Diff Total column `+added/-removed` now equals sum of category columns (was computed independently via `saturating_sub` on pre-summed totals)
+
+## [0.12.0] - 2026-02-17
+
+- **Fixed**:
+  - `--by-module` now aggregates files at the directory level instead of showing per-file entries identical to `--by-file`
+  - New-style Rust module layout (`data.rs` + `data/`) correctly aggregates under a single module entry
+
 ## [0.11.0] - 2026-02-17
 
 - **Fixed**:
@@ -170,7 +186,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Acknowledgments**:
   - Parsing logic adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc) by Maxim Gritsenko
 
-[Unreleased]: https://github.com/arthur-debert/rustloc/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/arthur-debert/rustloc/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/arthur-debert/rustloc/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/arthur-debert/rustloc/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/arthur-debert/rustloc/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/arthur-debert/rustloc/compare/v0.8.4...v0.9.0
