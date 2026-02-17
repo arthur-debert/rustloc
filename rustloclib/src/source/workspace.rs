@@ -121,9 +121,12 @@ impl WorkspaceInfo {
     /// The path can be:
     /// - A directory containing Cargo.toml
     /// - A path to a Cargo.toml file
-    /// - Any path within a cargo project (will search up for Cargo.toml)
     pub fn discover(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
+
+        if !path.exists() {
+            return Err(RustlocError::PathNotFound(path.to_path_buf()));
+        }
 
         // Find the manifest path
         let manifest_path = if path.is_file() && path.file_name() == Some("Cargo.toml".as_ref()) {
@@ -133,10 +136,10 @@ impl WorkspaceInfo {
             if cargo_toml.exists() {
                 cargo_toml
             } else {
-                return Err(RustlocError::PathNotFound(path.to_path_buf()));
+                return Err(RustlocError::CargoTomlNotFound(path.to_path_buf()));
             }
         } else {
-            return Err(RustlocError::PathNotFound(path.to_path_buf()));
+            return Err(RustlocError::CargoTomlNotFound(path.to_path_buf()));
         };
 
         let metadata = MetadataCommand::new()

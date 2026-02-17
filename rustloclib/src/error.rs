@@ -25,6 +25,10 @@ pub enum RustlocError {
     #[error("path does not exist: {0}")]
     PathNotFound(PathBuf),
 
+    /// No Cargo.toml found at or above path
+    #[error("no Cargo.toml found at or above: {0}")]
+    CargoTomlNotFound(PathBuf),
+
     /// Not a Rust file
     #[error("not a Rust file: {0}")]
     NotRustFile(PathBuf),
