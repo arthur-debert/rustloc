@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-02-17
+
 - **Fixed**:
   - `rustloc <path>` now counts files in the given directory instead of always counting the entire workspace when the path is inside a Cargo project
   - Single `.rs` files can now be passed directly as the path argument
@@ -168,7 +170,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Acknowledgments**:
   - Parsing logic adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc) by Maxim Gritsenko
 
-[Unreleased]: https://github.com/arthur-debert/rustloc/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/arthur-debert/rustloc/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/arthur-debert/rustloc/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/arthur-debert/rustloc/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/arthur-debert/rustloc/compare/v0.8.4...v0.9.0
 [0.8.4]: https://github.com/arthur-debert/rustloc/compare/v0.8.3...v0.8.4
