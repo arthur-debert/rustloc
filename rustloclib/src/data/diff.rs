@@ -343,10 +343,13 @@ pub fn diff_workdir(
     let mut crate_stats: HashMap<String, CrateDiffStats> = HashMap::new();
 
     // Determine what to include based on aggregation level
-    let include_files = matches!(options.aggregation, Aggregation::ByFile);
+    let include_files = matches!(
+        options.aggregation,
+        Aggregation::ByFile | Aggregation::ByModule
+    );
     let include_crates = matches!(
         options.aggregation,
-        Aggregation::ByCrate | Aggregation::ByFile
+        Aggregation::ByCrate | Aggregation::ByModule | Aggregation::ByFile
     );
 
     for change in changes {
@@ -743,10 +746,13 @@ pub fn diff_commits(
     let mut non_rust_added: u64 = 0;
     let mut non_rust_removed: u64 = 0;
 
-    let include_files = matches!(options.aggregation, Aggregation::ByFile);
+    let include_files = matches!(
+        options.aggregation,
+        Aggregation::ByFile | Aggregation::ByModule
+    );
     let include_crates = matches!(
         options.aggregation,
-        Aggregation::ByCrate | Aggregation::ByFile
+        Aggregation::ByCrate | Aggregation::ByModule | Aggregation::ByFile
     );
 
     for change in changes {
@@ -965,24 +971,42 @@ fn compute_file_diff(
 
 /// Compute the diff between two Locs
 fn compute_locs_diff(old: &Locs, new: &Locs) -> LocsDiff {
+    let added = Locs {
+        code: new.code.saturating_sub(old.code),
+        tests: new.tests.saturating_sub(old.tests),
+        examples: new.examples.saturating_sub(old.examples),
+        docs: new.docs.saturating_sub(old.docs),
+        comments: new.comments.saturating_sub(old.comments),
+        blanks: new.blanks.saturating_sub(old.blanks),
+        total: 0,
+    };
+    let removed = Locs {
+        code: old.code.saturating_sub(new.code),
+        tests: old.tests.saturating_sub(new.tests),
+        examples: old.examples.saturating_sub(new.examples),
+        docs: old.docs.saturating_sub(new.docs),
+        comments: old.comments.saturating_sub(new.comments),
+        blanks: old.blanks.saturating_sub(new.blanks),
+        total: 0,
+    };
     LocsDiff {
         added: Locs {
-            code: new.code.saturating_sub(old.code),
-            tests: new.tests.saturating_sub(old.tests),
-            examples: new.examples.saturating_sub(old.examples),
-            docs: new.docs.saturating_sub(old.docs),
-            comments: new.comments.saturating_sub(old.comments),
-            blanks: new.blanks.saturating_sub(old.blanks),
-            total: new.total.saturating_sub(old.total),
+            total: added.code
+                + added.tests
+                + added.examples
+                + added.docs
+                + added.comments
+                + added.blanks,
+            ..added
         },
         removed: Locs {
-            code: old.code.saturating_sub(new.code),
-            tests: old.tests.saturating_sub(new.tests),
-            examples: old.examples.saturating_sub(new.examples),
-            docs: old.docs.saturating_sub(new.docs),
-            comments: old.comments.saturating_sub(new.comments),
-            blanks: old.blanks.saturating_sub(new.blanks),
-            total: old.total.saturating_sub(new.total),
+            total: removed.code
+                + removed.tests
+                + removed.examples
+                + removed.docs
+                + removed.comments
+                + removed.blanks,
+            ..removed
         },
     }
 }

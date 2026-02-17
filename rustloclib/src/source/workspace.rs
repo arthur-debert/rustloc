@@ -25,6 +25,8 @@ pub struct CrateInfo {
     pub examples_dir: Option<PathBuf>,
     /// Benches directory if it exists
     pub benches_dir: Option<PathBuf>,
+    /// Build script if it exists
+    pub build_script: Option<PathBuf>,
 }
 
 impl CrateInfo {
@@ -40,6 +42,7 @@ impl CrateInfo {
         let tests_dir = root.join("tests");
         let examples_dir = root.join("examples");
         let benches_dir = root.join("benches");
+        let build_script = root.join("build.rs");
 
         Self {
             name: package.name.clone(),
@@ -64,10 +67,15 @@ impl CrateInfo {
             } else {
                 None
             },
+            build_script: if build_script.exists() {
+                Some(build_script)
+            } else {
+                None
+            },
         }
     }
 
-    /// Get all directories that should be scanned for this crate
+    /// Get all directories (and files like build.rs) that should be scanned for this crate
     pub fn all_dirs(&self) -> Vec<&Path> {
         let mut dirs: Vec<&Path> = self.src_dirs.iter().map(|p| p.as_path()).collect();
 
@@ -79,6 +87,9 @@ impl CrateInfo {
         }
         if let Some(ref benches) = self.benches_dir {
             dirs.push(benches.as_path());
+        }
+        if let Some(ref build_script) = self.build_script {
+            dirs.push(build_script.as_path());
         }
 
         dirs
@@ -237,6 +248,7 @@ mod tests {
             tests_dir: Some(PathBuf::from("/project/tests")),
             examples_dir: Some(PathBuf::from("/project/examples")),
             benches_dir: None,
+            build_script: None,
         };
 
         let dirs = info.all_dirs();
@@ -258,6 +270,7 @@ mod tests {
                     tests_dir: None,
                     examples_dir: None,
                     benches_dir: None,
+                    build_script: None,
                 },
                 CrateInfo {
                     name: "crate-b".to_string(),
@@ -266,6 +279,7 @@ mod tests {
                     tests_dir: None,
                     examples_dir: None,
                     benches_dir: None,
+                    build_script: None,
                 },
                 CrateInfo {
                     name: "crate-c".to_string(),
@@ -274,6 +288,7 @@ mod tests {
                     tests_dir: None,
                     examples_dir: None,
                     benches_dir: None,
+                    build_script: None,
                 },
             ],
         };
@@ -297,6 +312,7 @@ mod tests {
                     tests_dir: None,
                     examples_dir: None,
                     benches_dir: None,
+                    build_script: None,
                 },
                 CrateInfo {
                     name: "beta".to_string(),
@@ -305,6 +321,7 @@ mod tests {
                     tests_dir: None,
                     examples_dir: None,
                     benches_dir: None,
+                    build_script: None,
                 },
             ],
         };
@@ -339,6 +356,7 @@ mod tests {
             tests_dir: Some(PathBuf::from("/workspace/my-crate/tests")),
             examples_dir: None,
             benches_dir: None,
+            build_script: None,
         };
 
         let workspace_root = PathBuf::from("/workspace");
@@ -373,6 +391,7 @@ mod tests {
                     tests_dir: None,
                     examples_dir: None,
                     benches_dir: None,
+                    build_script: None,
                 },
                 CrateInfo {
                     name: "crate-b".to_string(),
@@ -381,6 +400,7 @@ mod tests {
                     tests_dir: None,
                     examples_dir: None,
                     benches_dir: None,
+                    build_script: None,
                 },
             ],
         };

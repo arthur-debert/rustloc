@@ -311,6 +311,19 @@ mod handlers {
         let is_workspace = path_ref.is_dir() && path_ref.join("Cargo.toml").exists()
             || path_ref.is_file() && path_ref.file_name() == Some("Cargo.toml".as_ref());
 
+        if !is_workspace && matches!(aggregation, Aggregation::ByCrate | Aggregation::ByModule) {
+            let flag = if matches!(aggregation, Aggregation::ByCrate) {
+                "--by-crate"
+            } else {
+                "--by-module"
+            };
+            return Err(anyhow::anyhow!(
+                "{} requires a Cargo workspace (directory with Cargo.toml), but '{}' is not a workspace",
+                flag,
+                path,
+            ));
+        }
+
         let result: CountResult = if is_workspace {
             let options = CountOptions::new()
                 .crates(crates)

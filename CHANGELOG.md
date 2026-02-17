@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Fixed**:
+  - `--by-module` diff now shows per-module rows instead of "0 modules" (missing aggregation level in diff pipeline)
+  - `--by-module` diff correctly resolves relative file paths from git against repository root
+  - `build.rs` files are now included in file counts (were excluded because they sit outside standard dirs)
+  - `--by-crate`/`--by-module` on non-workspace directories now returns a clear error instead of silently showing "0 items" with populated totals
+  - Row filtering no longer hides files/modules/crates with zero lines in displayed columns, fixing footer count mismatches
+  - Diff Total column `+added/-removed` now equals sum of category columns (was computed independently via `saturating_sub` on pre-summed totals)
+
 ## [0.12.0] - 2026-02-17
 
 - **Fixed**:
