@@ -95,8 +95,14 @@ fn test_by_module_output() {
 
     assert!(success);
     assert!(stdout.contains("Module"));
-    assert!(stdout.contains("rustloclib::data::counter"));
-    assert!(stdout.contains("rustloclib::data::diff"));
+    // Modules aggregate at directory level
+    assert!(stdout.contains("rustloclib::data"));
+    assert!(stdout.contains("rustloclib::output"));
+    assert!(stdout.contains("rustloclib::query"));
+    assert!(stdout.contains("rustloclib::source"));
+    // Should NOT contain per-file module paths
+    assert!(!stdout.contains("rustloclib::data::counter"));
+    assert!(!stdout.contains("rustloclib::data::diff"));
     assert!(stdout.contains("rustloc"));
     assert!(stdout.contains("Total ("));
 }

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Fixed**:
+  - `--by-module` now aggregates files at the directory level instead of showing per-file entries identical to `--by-file`
+  - New-style Rust module layout (`data.rs` + `data/`) correctly aggregates under a single module entry
+
 ## [0.11.0] - 2026-02-17
 
 - **Fixed**:
