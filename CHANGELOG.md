@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Changed**:
+  - Upgraded standout dependency from 6.0.1 to 7.0.0 (fixes `--output-file-path`, XML serialization, and CSV array flattening)
 - **Fixed**:
   - `--by-module` diff now shows per-module rows instead of "0 modules" (missing aggregation level in diff pipeline)
   - `--by-module` diff correctly resolves relative file paths from git against repository root
