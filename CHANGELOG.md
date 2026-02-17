@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Fixed**:
+  - `rustloc <path>` now counts files in the given directory instead of always counting the entire workspace when the path is inside a Cargo project
+  - Single `.rs` files can now be passed directly as the path argument
+  - Error messages now distinguish "path does not exist" from "no Cargo.toml found" when using workspace mode
+
 ## [0.10.0] - 2026-02-14
 
 - **Removed**:

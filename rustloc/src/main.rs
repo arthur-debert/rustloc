@@ -259,9 +259,9 @@ Default direction: descending for numeric fields, ascending for label.
 mod handlers {
     use clap::ArgMatches;
     use rustloclib::{
-        count_workspace, diff_commits, diff_workdir, Aggregation, CountOptions, CountQuerySet,
-        DiffOptions, DiffQuerySet, FilterConfig, LOCTable, LineTypes, OrderBy, OrderDirection,
-        Ordering, WorkdirDiffMode,
+        count_directory, count_file, count_workspace, diff_commits, diff_workdir, Aggregation,
+        CountOptions, CountQuerySet, CountResult, DiffOptions, DiffQuerySet, FilterConfig,
+        LOCTable, LineTypes, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
     };
     use standout::cli::{CommandContext, HandlerResult, Output};
 
@@ -307,13 +307,27 @@ mod handlers {
             line_types
         };
 
-        let options = CountOptions::new()
-            .crates(crates)
-            .filter(filter)
-            .aggregation(aggregation)
-            .line_types(effective_line_types);
+        let path_ref = std::path::Path::new(path);
+        let is_workspace = path_ref.is_dir() && path_ref.join("Cargo.toml").exists()
+            || path_ref.is_file() && path_ref.file_name() == Some("Cargo.toml".as_ref());
 
-        let result = count_workspace(path, options)?;
+        let result: CountResult = if is_workspace {
+            let options = CountOptions::new()
+                .crates(crates)
+                .filter(filter)
+                .aggregation(aggregation)
+                .line_types(effective_line_types);
+            count_workspace(path, options)?
+        } else if path_ref.is_file() {
+            let stats = count_file(path)?;
+            let mut r = CountResult::new();
+            r.root = path_ref.to_path_buf();
+            r.file_count = 1;
+            r.total = stats;
+            r
+        } else {
+            count_directory(path, &filter)?
+        };
 
         if structured {
             let queryset =
