@@ -12,48 +12,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Create the GitHub release
-  create-release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      version: ${{ steps.get_version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Get version from tag
-        id: get_version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          body: |
-            ## Installation
-
-            ### From crates.io
-            ```bash
-            cargo install rustloc
-            ```
-
-            ### Pre-built binaries
-            Download the appropriate binary for your platform below.
-
-            ## Changes
-            See [CHANGELOG](https://github.com/arthur-debert/rustloc/blob/main/CHANGELOG.md) for details.
-
   # Build and upload binaries
   build-binaries:
     name: Build (${{ matrix.target }})
-    needs: create-release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -77,7 +38,7 @@ jobs:
             asset_name: rustloc-macos-aarch64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -106,19 +67,26 @@ jobs:
           cd ../../..
 
       - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v3
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./${{ matrix.asset_name }}.tar.gz
-          asset_name: ${{ matrix.asset_name }}.tar.gz
-          asset_content_type: application/gzip
+          files: ./${{ matrix.asset_name }}.tar.gz
+          body: |
+            ## Installation
+
+            ### From crates.io
+            ```bash
+            cargo install rustloc
+            ```
+
+            ### Pre-built binaries
+            Download the appropriate binary for your platform below.
+
+            ## Changes
+            See [CHANGELOG](https://github.com/arthur-debert/rustloc/blob/main/CHANGELOG.md) for details.
 
   # Publish to crates.io
   publish-crates:
     name: Publish to crates.io
-    needs: create-release
     runs-on: ubuntu-latest
     env:
       CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
@@ -133,7 +101,7 @@ jobs:
             echo "available=true" >> $GITHUB_OUTPUT
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: steps.check_token.outputs.available == 'true'
 
       - name: Install Rust
