@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Changed**:
+  - Upgraded standout dependency from 7.0.0 to 7.2.0
+  - Alternating table rows now use standout's built-in adaptive `table_row_even`/`table_row_odd` styles (auto-adjusts to light/dark terminal mode) instead of the custom `row_alt` dim style
+  - Theme setup merges custom stylesheet on top of standout defaults, so built-in styles are always available
+
 ## [0.13.0] - 2026-02-17
 
 - **Changed**:

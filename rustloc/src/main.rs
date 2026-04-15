@@ -523,10 +523,12 @@ mod handlers {
 }
 
 fn run() -> Result<RunResult, anyhow::Error> {
-    // Load theme from stylesheet
-    use standout::StylesheetRegistry;
+    // Load theme: start with standout defaults (includes table_row_even/odd),
+    // then merge our custom stylesheet on top
+    use standout::{StylesheetRegistry, Theme};
     let mut registry: StylesheetRegistry = embed_styles!("styles").into();
-    let theme = registry.get("default")?;
+    let custom_theme = registry.get("default")?;
+    let theme = Theme::default().merge(custom_theme);
 
     // Build the standout app with derive-based dispatch
     let app = App::builder()
