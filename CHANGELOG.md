@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-04-16
+
 - **Changed**:
   - Upgraded standout dependency from 7.0.0 to 7.2.0
   - Alternating table rows now use standout's built-in adaptive `table_row_even`/`table_row_odd` styles (auto-adjusts to light/dark terminal mode) instead of the custom `row_alt` dim style
@@ -193,7 +195,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Acknowledgments**:
   - Parsing logic adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc) by Maxim Gritsenko
 
-[Unreleased]: https://github.com/arthur-debert/rustloc/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/arthur-debert/rustloc/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/arthur-debert/rustloc/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/arthur-debert/rustloc/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/arthur-debert/rustloc/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/arthur-debert/rustloc/compare/v0.10.0...v0.11.0
