@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Cut a release. Everything runs in CI — this just triggers it.
+#
+# Usage:  scripts/release <new-version>       e.g. scripts/release 0.14.0
+#    or:  scripts/release <bump-level>        e.g. scripts/release minor
+#                                                  (one of: major, minor, patch)
+#
+# Pre-releases: pass a semver pre-release suffix to cut a release candidate
+# or beta, e.g. scripts/release 0.14.0-rc.1.
+#
+# What CI does (all on GitHub):
+#   1. Bumps [workspace.package] version + intra-workspace dep pin
+#      in workspace [workspace.dependencies], refreshes Cargo.lock
+#   2. Rolls ## [Unreleased] → ## [VERSION] - DATE in CHANGELOG.md
+#      (final releases only)
+#   3. Commits "chore: Release vX.Y.Z" on main + creates+pushes tag
+#   4. Creates GitHub Release with notes from CHANGELOG
+#   5. Builds binaries (macOS arm64+x86_64 signed+notarized, linux x86_64+arm64)
+#   6. Builds .deb packages for linux targets, attaches to the release
+#   7. Publishes rustloclib then rustloc to crates.io
+#   8. Generates Homebrew formula, pushes to arthur-debert/homebrew-tools
+#
+# Preconditions (checked by CI before mutating anything):
+#   - version is MAJOR.MINOR.PATCH[-PRERELEASE] and does not already exist as a tag
+#   - Cargo.toml version differs from the requested version
+#   - CHANGELOG.md has entries under ## [Unreleased]
+
+# semver parser (adapted from Cloudflare's semver.sh).
+semverParseInto() {
+    local RE='[^0-9]*\([0-9]*\)[.]\([0-9]*\)[.]\([0-9]*\)\([0-9A-Za-z-]*\)'
+    eval "$2"=$(echo "$1" | sed -e "s#$RE#\1#")
+    eval "$3"=$(echo "$1" | sed -e "s#$RE#\2#")
+    eval "$4"=$(echo "$1" | sed -e "s#$RE#\3#")
+    eval "$5"=$(echo "$1" | sed -e "s#$RE#\4#")
+}
+
+if [ $# -ne 1 ]; then
+    echo "usage: $(basename "$0") <major|minor|patch|X.Y.Z>" >&2
+    exit 2
+fi
+
+arg="$1"
+repo_root=$(git rev-parse --show-toplevel)
+
+case "$arg" in
+    major|minor|patch)
+        # rustloc uses [workspace.package] version with version.workspace=true
+        # in each crate; the workspace toml is the single source of truth.
+        current=$(grep -E '^version = ' "$repo_root/Cargo.toml" \
+            | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+        current_core="${current%%-*}"
+        MAJOR=0; MINOR=0; PATCH=0; SPECIAL=""
+        semverParseInto "$current_core" MAJOR MINOR PATCH SPECIAL
+        case "$arg" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+        esac
+        new_version="${MAJOR}.${MINOR}.${PATCH}"
+        echo "Bumping ${arg}: ${current} -> ${new_version}"
+        ;;
+    *)
+        if ! [[ "$arg" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "version must be MAJOR.MINOR.PATCH[-PRERELEASE] or one of: major, minor, patch (got: $arg)" >&2
+            exit 2
+        fi
+        new_version="$arg"
+        ;;
+esac
+
+if ! command -v gh >/dev/null 2>&1; then
+    echo "gh CLI not found — install from https://cli.github.com/" >&2
+    exit 1
+fi
+
+echo "Triggering release workflow for v${new_version}..."
+gh workflow run release.yml -f version="$new_version"
+
+echo
+echo "Workflow queued. Follow with:"
+echo "  gh run watch"
+echo "  gh run list --workflow=release.yml --limit=1"

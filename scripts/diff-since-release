@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Get the latest release tag
-latest_tag=$(git tag --list --sort=-version:refname  | head -n1)
+# Skip pre-release tags (e.g. v0.14.0-rc.1) — we want the diff against the
+# last *final* release, since pre-releases share unreleased changelog entries
+# with the final they lead up to.
+latest_tag=$(git tag --list 'v*' --sort=-version:refname | grep -v -- '-' | head -n1)
 
 if [ -z "$latest_tag" ]; then
-  echo "No release tags found"
-  exit 1
+    echo "No release tags found"
+    exit 1
 fi
 
-echo "Showing diff since latest release: $latest_tag"
-echo "─────────────────────────────────────────────"
+echo "Changes since $latest_tag:"
+echo "---"
 git --no-pager log --oneline "$latest_tag"..HEAD

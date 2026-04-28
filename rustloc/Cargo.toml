@@ -26,3 +26,36 @@ anyhow.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+
+# cargo-deb configuration. Driven by `cargo deb -p rustloc` in CI.
+# No maintainer scripts (debian/postinst, debian/prerm) — rustloc has no
+# `completion --shell X print` CLI to register on configure, and no other
+# post-install state to manage.
+[package.metadata.deb]
+maintainer = "Arthur Debert <debert@gmail.com>"
+copyright = "2026, Arthur Debert <debert@gmail.com>"
+license-file = ["../LICENSE", "0"]
+extended-description = """
+rustloc is a Rust-aware lines-of-code counter that separates production
+code from tests — even when both live in the same file (a common pattern
+in Rust crates with inline #[cfg(test)] modules). Outputs by crate,
+module, file, or total; supports JSON/CSV/table; can also diff between
+git commits to track LOC changes over time.
+"""
+section = "devel"
+priority = "optional"
+depends = "$auto"
+assets = [
+    # cargo-deb rewrites `target/release/` to `target/<triple>/release/`
+    # automatically when `--target` is passed (as CI does), so this path
+    # works for both native and cross-compiled builds.
+    ["target/release/rustloc", "usr/bin/", "755"],
+    ["../README.md", "usr/share/doc/rustloc/README.md", "644"],
+    ["../CHANGELOG.md", "usr/share/doc/rustloc/CHANGELOG.md", "644"],
+]
+
+# CI builds each architecture separately with --target, so cargo-deb
+# picks up the binary from target/<triple>/release/. Variants exist as
+# extensibility hooks (e.g. arch-specific depends) — currently empty.
+[package.metadata.deb.variants.amd64]
+[package.metadata.deb.variants.arm64]

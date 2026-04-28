@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Changed**:
+  - **Releases now run end-to-end in CI via `scripts/release`.** Triggering a release with `scripts/release <version|major|minor|patch>` queues a `workflow_dispatch` run that performs the version bump (workspace.package + intra-workspace dep pin), `## [Unreleased]` roll, commit, tag, GitHub Release, multi-platform build (mac arm64+x86_64 signed+notarized, linux x86_64+arm64), `.deb` attach, crates.io publish, and Homebrew formula push to `arthur-debert/homebrew-tools` — all in CI. Replaces the previous local `cargo release` + tag-push trigger model.
+  - **Release tarballs renamed and restructured.** Asset names changed from `rustloc-{linux,macos}-{arch}` to canonical triplet form (`rustloc-x86_64-linux-gnu`, `rustloc-aarch64-apple-darwin`, etc.) for consistency across `arthur-debert` projects. Tarball internal layout changed from a flat binary at root to a per-target subdirectory (`rustloc-<target>/rustloc`) bundling README + CHANGELOG + LICENSE alongside the binary. Existing release URLs are unaffected; new URLs going forward use the new names.
+  - **macOS binaries are now Developer ID signed and Apple-notarized** (both arm64 and x86_64). Earlier `rustloc` macOS binaries shipped adhoc/linker-signed only.
+  - **CI publish bug fixed.** The pre-port workflow referenced `secrets.CRATES_IO_TOKEN` but the actual repo secret is `CRATES_IO_KEY`, so the `check_token` gate silently skipped every CI publish — local `cargo release` was the actual path. Now uses `secrets.CRATES_IO_KEY` correctly with the `CARGO_REGISTRY_TOKEN` env var that cargo natively reads.
+
+- **Added**:
+  - **Homebrew installation via `arthur-debert/homebrew-tools` tap.** New `Formula/rustloc.rb` is generated and pushed on every release. Install with `brew install arthur-debert/tools/rustloc`.
+  - **`.deb` packages for Debian/Ubuntu (amd64 + arm64).** Built by `cargo deb` in CI using the new `[package.metadata.deb]` block in `rustloc/Cargo.toml` and attached to each GitHub Release alongside the tarballs.
+
 ## [0.13.1] - 2026-04-16
 
 - **Changed**:
