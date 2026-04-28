@@ -202,7 +202,12 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: rustloc-aarch64-linux-gnu
-            cross: true
+            # cross's default docker image fails on serde build.rs
+            # (glibc/toolchain mismatch in the older base image — same
+            # flake lex-fmt/lex hit). Reverted from cross to apt-installed
+            # `gcc-aarch64-linux-gnu` + CARGO_TARGET_*_LINKER env, which
+            # works for projects without complex C-dep cross compile.
+            cross: false
             sign: false
             deb_arch: arm64
     runs-on: ${{ matrix.os }}
@@ -219,12 +224,24 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install cross-compilation tools (Linux ARM)
+        if: matrix.target == 'aarch64-unknown-linux-gnu' && !matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Install cross
         if: matrix.cross
         run: cargo install cross --git https://github.com/cross-rs/cross --locked
 
       - name: Build release binary
         id: build
+        env:
+          # When matrix.cross=false on aarch64-linux, we use apt-installed
+          # gcc-aarch64-linux-gnu as the linker (set up by the previous
+          # step). cargo reads this env var to find the correct linker.
+          # No-op for other targets / cross builds.
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
             cross build --release --target "${{ matrix.target }}" -p "$CRATE_NAME"
@@ -357,7 +374,7 @@ jobs:
       # ─── Debian package (linux targets only, gated on ENABLE_DEB) ────
       - name: Install cargo-deb
         if: matrix.deb_arch != '' && env.ENABLE_DEB == 'true' && steps.build.outcome == 'success'
-        run: cargo install cargo-deb --locked
+        run: command -v cargo-deb >/dev/null 2>&1 || cargo install cargo-deb --locked
 
       - name: Build .deb package
         id: deb
