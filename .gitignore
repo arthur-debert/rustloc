@@ -1,7 +1,9 @@
 # Rust
 /target/
 **/*.rs.bk
-Cargo.lock
+# Cargo.lock IS tracked: rustloc ships a binary (`rustloc` CLI), and
+# binary crates should commit Cargo.lock so users / CI / packagers
+# build against the same dep graph that was tested.
 
 # IDE
 .idea/
