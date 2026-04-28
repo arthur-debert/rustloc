@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-04-28
+
 - **Fixed**:
   - Release workflow: aarch64-linux-gnu reverted from `cross` to apt-installed `gcc-aarch64-linux-gnu` + `CARGO_TARGET_*_LINKER` env. cross's older docker base image fails the recent serde/libc build.rs (same flake lex-fmt/lex hit). Restores aarch64-linux Debian package builds.
   - Release workflow: cargo-deb install is now guarded with `command -v cargo-deb` so it's a no-op when the binary is restored from `actions/cache`. Without this, the second build of a multi-target release fails with "binary already exists in destination".
