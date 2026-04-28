@@ -232,7 +232,10 @@ jobs:
 
       - name: Install cross
         if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+        # `command -v` guard skips reinstall when cross was restored
+        # from actions/cache. Without it, `cargo install` fails the
+        # second build with "binary already exists in destination".
+        run: command -v cross >/dev/null 2>&1 || cargo install cross --git https://github.com/cross-rs/cross --locked
 
       - name: Build release binary
         id: build
