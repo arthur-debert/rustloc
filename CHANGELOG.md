@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-04-28
+
 - **Changed**:
   - **Releases now run end-to-end in CI via `scripts/release`.** Triggering a release with `scripts/release <version|major|minor|patch>` queues a `workflow_dispatch` run that performs the version bump (workspace.package + intra-workspace dep pin), `## [Unreleased]` roll, commit, tag, GitHub Release, multi-platform build (mac arm64+x86_64 signed+notarized, linux x86_64+arm64), `.deb` attach, crates.io publish, and Homebrew formula push to `arthur-debert/homebrew-tools` — all in CI. Replaces the previous local `cargo release` + tag-push trigger model.
   - **Release tarballs renamed and restructured.** Asset names changed from `rustloc-{linux,macos}-{arch}` to canonical triplet form (`rustloc-x86_64-linux-gnu`, `rustloc-aarch64-apple-darwin`, etc.) for consistency across `arthur-debert` projects. Tarball internal layout changed from a flat binary at root to a per-target subdirectory (`rustloc-<target>/rustloc`) bundling README + CHANGELOG + LICENSE alongside the binary. Existing release URLs are unaffected; new URLs going forward use the new names.
