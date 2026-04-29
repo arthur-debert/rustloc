@@ -367,7 +367,7 @@ jobs:
           gh release upload "$TAG" "${{ matrix.artifact }}.tar.gz" --clobber
 
       - name: Upload tarball as workflow artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.tar.gz
@@ -403,7 +403,7 @@ jobs:
 
       - name: Upload .deb as workflow artifact
         if: always() && !cancelled() && steps.deb.outcome == 'success'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: rustloc-${{ matrix.deb_arch }}-deb
           path: target/${{ matrix.target }}/debian/*.deb
