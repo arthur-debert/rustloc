@@ -48,6 +48,7 @@ class {{CLASS_NAME}} < Formula
       Dir["*/{{BIN_NAME}}"].find { |path| File.file?(path) }
     end
     raise "Could not find {{BIN_NAME}} in extracted archive" unless executable
+
     bin.install executable
   end
 
