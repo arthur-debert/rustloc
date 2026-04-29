@@ -75,6 +75,31 @@ def ruby_double_quoted_escape(s: str) -> str:
     return "".join(out)
 
 
+def normalize_brew_desc(s: str) -> str:
+    """Normalize a description for Homebrew's FormulaAudit/Desc rules.
+
+    `brew style` enforces three rules that often clash with natural English /
+    Cargo.toml descriptions: must not start with an article ("A ", "An ",
+    "The "), must not end with a period, must be ≤79 characters. Normalize
+    at render time rather than bending Cargo.toml's `description`, which is
+    the canonical project description that reaches crates.io and other
+    consumers untouched.
+    """
+    s = s.strip()
+    for article in ("A ", "An ", "The "):
+        if s.startswith(article):
+            s = s[len(article):]
+            if s and s[0].islower():
+                s = s[0].upper() + s[1:]
+            break
+    if s.endswith("."):
+        s = s[:-1].rstrip()
+    if len(s) > 79:
+        cut = s.rfind(" ", 0, 80)
+        s = (s[:cut] if cut > 60 else s[:79]).rstrip()
+    return s
+
+
 def build_replacements() -> dict[str, str]:
     replacements: dict[str, str] = {}
     for key in PASSTHROUGH_KEYS:
@@ -84,6 +109,8 @@ def build_replacements() -> dict[str, str]:
     for key in RUBY_STRING_KEYS:
         raw = os.environ.get(key)
         if raw is not None:
+            if key == "DESC":
+                raw = normalize_brew_desc(raw)
             replacements[key] = ruby_double_quoted_escape(raw)
     return replacements
 
