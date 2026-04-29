@@ -477,7 +477,7 @@ jobs:
 
       - name: Download release tarballs
         if: steps.guard.outputs.skip != 'true'
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           pattern: ${{ env.BIN_NAME }}-*
           merge-multiple: true
