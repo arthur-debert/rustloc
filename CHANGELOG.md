@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-05-01
+
+
 ### Changed
 
 - **Release pipeline migrated to canonical reusable workflow at
@@ -22,7 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Intel-mac dropped from release artifacts** (`x86_64-apple-darwin`).
   Per canonical: arm64-only macOS. Existing v0.14.1 and earlier remain
   available for Intel users via direct GH release download.
-
 ## [0.14.1] - 2026-04-28
 
 - **Fixed**:
