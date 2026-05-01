@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Release pipeline migrated to canonical reusable workflow at
+  `arthur-debert/release/.github/workflows/rust-cli.yml@v1`.** rustloc's
+  `.github/workflows/release.yml` is now a thin caller. Fourth consumer
+  of the new pipeline (after dodot v2.0.0, padz v1.8.2, simple-gal v0.20.4 —
+  all verified end-to-end). Bug fixes propagate via a single bump of the
+  action's `@v1` ref instead of hand-edits across rust-CLIs.
+- **Tarball naming + layout changed to canonical.** Per-target archives
+  use full Rust target triples (`rustloc-x86_64-unknown-linux-gnu.tar.gz`)
+  and contain a subdirectory matching the archive name. Direct downloads
+  need to descend one directory level into the tarball.
+- **Intel-mac dropped from release artifacts** (`x86_64-apple-darwin`).
+  Per canonical: arm64-only macOS. Existing v0.14.1 and earlier remain
+  available for Intel users via direct GH release download.
+
 ## [0.14.1] - 2026-04-28
 
 - **Fixed**:
