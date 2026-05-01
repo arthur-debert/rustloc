@@ -456,19 +456,6 @@ dependencies = [
 
 [[package]]
 name = "console"
-version = "0.15.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "054ccb5b10f9f2cbf51eb355ca1d05c2d279ce1804688d0db74b4733a5aeafd8"
-dependencies = [
- "encode_unicode",
- "libc",
- "once_cell",
- "unicode-width",
- "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "console"
 version = "0.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d64e8af5551369d19cf50138de61f1c42074ab970f74e99be916646777f8fc87"
@@ -2382,7 +2369,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2404,7 +2391,7 @@ version = "0.14.2"
 dependencies = [
  "anyhow",
  "clap",
- "console 0.15.11",
+ "console",
  "rustloclib",
  "serde",
  "serde_json",
@@ -2616,7 +2603,7 @@ checksum = "2b9949e6b5c7faf8776a96228acd365661db275f493258da14adf01010ac8a6d"
 dependencies = [
  "anyhow",
  "clap",
- "console 0.16.3",
+ "console",
  "csv",
  "deunicode",
  "minijinja",
@@ -2640,7 +2627,7 @@ version = "7.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6800ff2a48e275321c1423b8e37592fa24dd7ac24a2d5c7e94df0e1650d3360"
 dependencies = [
- "console 0.16.3",
+ "console",
 ]
 
 [[package]]
@@ -2683,7 +2670,7 @@ version = "7.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d8a9e2bf7eda5a992459e613fb703107b9213e201f47f6ad602c090038014e3"
 dependencies = [
- "console 0.16.3",
+ "console",
  "cssparser",
  "csv",
  "dark-light",
