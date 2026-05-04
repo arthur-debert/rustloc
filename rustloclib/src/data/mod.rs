@@ -6,7 +6,7 @@
 //! - **Parsing**: AST-aware visitor that categorizes lines
 //! - **Statistics**: Core data structures (`Locs`, `FileStats`, etc.)
 //! - **Counting**: High-level API (`count_workspace`, `count_file`)
-//! - **Diffing**: Git diff analysis (`diff_commits`, `diff_workdir`)
+//! - **Diffing**: Git diff analysis (`diff_revspec`, `diff_workdir`)
 //!
 //! ## Example
 //!
@@ -26,7 +26,7 @@ pub use counter::{
     compute_module_name, count_directory, count_file, count_workspace, CountOptions, CountResult,
 };
 pub use diff::{
-    diff_commits, diff_workdir, CrateDiffStats, DiffOptions, DiffResult, FileChangeType,
+    diff_revspec, diff_workdir, CrateDiffStats, DiffOptions, DiffResult, FileChangeType,
     FileDiffStats, LocsDiff, WorkdirDiffMode,
 };
 pub use stats::{CrateStats, FileStats, Locs, ModuleStats};
