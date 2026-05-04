@@ -135,8 +135,8 @@ pub use data::{
 pub use error::RustlocError;
 pub use output::{LOCTable, TableRow};
 pub use query::{
-    Aggregation, CountQuerySet, DiffQuerySet, LineTypes, OrderBy, OrderDirection, Ordering,
-    QueryItem,
+    Aggregation, CountQuerySet, DiffQuerySet, Field, LineTypes, Op, OrderBy, OrderDirection,
+    Ordering, Predicate, QueryItem,
 };
 pub use source::{CrateInfo, FilterConfig, WorkspaceInfo};
 

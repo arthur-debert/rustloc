@@ -22,5 +22,7 @@
 pub mod options;
 pub mod queryset;
 
-pub use options::{Aggregation, LineTypes, OrderBy, OrderDirection, Ordering};
+pub use options::{
+    Aggregation, Field, LineTypes, Op, OrderBy, OrderDirection, Ordering, Predicate,
+};
 pub use queryset::{CountQuerySet, DiffQuerySet, QueryItem};

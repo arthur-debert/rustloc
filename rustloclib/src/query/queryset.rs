@@ -19,7 +19,7 @@ use crate::data::counter::{compute_module_name, CountResult};
 use crate::data::diff::{DiffResult, LocsDiff};
 use crate::data::stats::Locs;
 
-use super::options::{Aggregation, LineTypes, OrderBy, OrderDirection, Ordering};
+use super::options::{Aggregation, Field, LineTypes, OrderBy, OrderDirection, Ordering, Predicate};
 
 /// A single item in a query set (one row of data before string formatting).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,14 +39,19 @@ pub struct CountQuerySet {
     pub line_types: LineTypes,
     /// Data rows (filtered and sorted; possibly truncated by `top`)
     pub items: Vec<QueryItem<Locs>>,
-    /// Total across all items in the underlying data set (not affected by `top`)
+    /// Total across all items in the underlying data set (not affected by `top` or `filter`)
     pub total: Locs,
     /// Number of files analyzed
     pub file_count: usize,
-    /// Count of rows before any `top` truncation. Equals `items.len()`
-    /// unless `top` was applied.
+    /// Count of rows before any user-driven reduction (`top` or `filter`).
+    /// Equals `items.len()` unless one of those was applied.
     #[serde(default)]
     pub total_items: usize,
+    /// True iff `top` was applied. Distinguishes top-truncation from
+    /// filter-elimination so the footer can render "top X of Y" vs plain
+    /// "X of Y" appropriately.
+    #[serde(default)]
+    pub top_applied: bool,
 }
 
 /// Query set for diff results.
@@ -58,7 +63,7 @@ pub struct DiffQuerySet {
     pub line_types: LineTypes,
     /// Data rows (filtered and sorted; possibly truncated by `top`)
     pub items: Vec<QueryItem<LocsDiff>>,
-    /// Total diff across all items in the underlying data set (not affected by `top`)
+    /// Total diff across all items in the underlying data set (not affected by `top` or `filter`)
     pub total: LocsDiff,
     /// Number of files changed
     pub file_count: usize,
@@ -72,10 +77,13 @@ pub struct DiffQuerySet {
     /// Lines removed in non-Rust files
     #[serde(default)]
     pub non_rust_removed: u64,
-    /// Count of rows before any `top` truncation. Equals `items.len()`
-    /// unless `top` was applied.
+    /// Count of rows before any user-driven reduction (`top` or `filter`).
+    /// Equals `items.len()` unless one of those was applied.
     #[serde(default)]
     pub total_items: usize,
+    /// True iff `top` was applied. See [`CountQuerySet::top_applied`].
+    #[serde(default)]
+    pub top_applied: bool,
 }
 
 impl CountQuerySet {
@@ -99,6 +107,7 @@ impl CountQuerySet {
             total,
             file_count: result.file_count,
             total_items,
+            top_applied: false,
         }
     }
 
@@ -112,8 +121,76 @@ impl CountQuerySet {
     #[must_use]
     pub fn top(mut self, n: usize) -> Self {
         self.items.truncate(n);
+        self.top_applied = true;
         self
     }
+
+    /// Keep only items satisfying every predicate (AND-combined).
+    ///
+    /// `Field::Total` honors the active `LineTypes` — i.e. the total used
+    /// here is the same one that `Ordering` with `OrderBy::Total` uses, so
+    /// `--type code,tests --total-gte 1000` filters on the sum of the two
+    /// enabled types, not on the precomputed `Locs::total`.
+    ///
+    /// `total_items` is intentionally NOT updated — it tracks the row count
+    /// before any *user-driven* truncation (`top` and `filter`), so the
+    /// footer can render "top X of Y" honestly even when the visible slice
+    /// is filtered down. The full data set is still summarized in `total`.
+    #[must_use]
+    pub fn filter(mut self, preds: &[Predicate]) -> Self {
+        if preds.is_empty() {
+            return self;
+        }
+        let line_types = self.line_types;
+        self.items.retain(|item| {
+            preds
+                .iter()
+                .all(|p| matches_locs(p, &item.stats, &line_types))
+        });
+        self
+    }
+}
+
+/// Resolve the integer value a predicate's field refers to in a `Locs`.
+///
+/// `Field::Total` follows `OrderBy::Total` semantics: the sum of currently-
+/// enabled line types, not `Locs::total`.
+fn locs_field_value(locs: &Locs, field: Field, line_types: &LineTypes) -> i64 {
+    match field {
+        Field::Code => locs.code as i64,
+        Field::Tests => locs.tests as i64,
+        Field::Examples => locs.examples as i64,
+        Field::Docs => locs.docs as i64,
+        Field::Comments => locs.comments as i64,
+        Field::Blanks => locs.blanks as i64,
+        Field::Total => locs_filtered_total(locs, line_types) as i64,
+    }
+}
+
+fn matches_locs(pred: &Predicate, locs: &Locs, line_types: &LineTypes) -> bool {
+    let lhs = locs_field_value(locs, pred.field, line_types);
+    pred.op.evaluate(lhs, pred.value as i64)
+}
+
+/// Resolve the (signed) net diff value a predicate's field refers to.
+fn diff_field_value(diff: &LocsDiff, field: Field, line_types: &LineTypes) -> i64 {
+    match field {
+        Field::Code => diff.net_code(),
+        Field::Tests => diff.net_tests(),
+        Field::Examples => diff.net_examples(),
+        Field::Docs => diff.net_docs(),
+        Field::Comments => diff.net_comments(),
+        Field::Blanks => diff.net_blanks(),
+        Field::Total => {
+            let (a, r) = locs_diff_filtered_total(diff, line_types);
+            a as i64 - r as i64
+        }
+    }
+}
+
+fn matches_diff(pred: &Predicate, diff: &LocsDiff, line_types: &LineTypes) -> bool {
+    let lhs = diff_field_value(diff, pred.field, line_types);
+    pred.op.evaluate(lhs, pred.value as i64)
 }
 
 /// Compute a relative path label for a file.
@@ -149,6 +226,7 @@ impl DiffQuerySet {
             non_rust_added: result.non_rust_added,
             non_rust_removed: result.non_rust_removed,
             total_items,
+            top_applied: false,
         }
     }
 
@@ -159,6 +237,28 @@ impl DiffQuerySet {
     #[must_use]
     pub fn top(mut self, n: usize) -> Self {
         self.items.truncate(n);
+        self.top_applied = true;
+        self
+    }
+
+    /// Keep only items satisfying every predicate (AND-combined).
+    ///
+    /// Comparisons are made against the **net** change for each field
+    /// (added − removed), so `--code-lt 0` matches files with net code
+    /// removed, and `--code-gte 100` matches files where added − removed ≥ 100.
+    /// `Field::Total` honors the active `LineTypes`. See [`CountQuerySet::filter`]
+    /// for the rationale on why `total_items` isn't updated.
+    #[must_use]
+    pub fn filter(mut self, preds: &[Predicate]) -> Self {
+        if preds.is_empty() {
+            return self;
+        }
+        let line_types = self.line_types;
+        self.items.retain(|item| {
+            preds
+                .iter()
+                .all(|p| matches_diff(p, &item.stats, &line_types))
+        });
         self
     }
 }
@@ -372,6 +472,7 @@ fn build_diff_items(
 mod tests {
     use super::*;
     use crate::data::stats::CrateStats;
+    use crate::query::options::{Field, Op, Predicate};
     use std::path::PathBuf;
 
     fn sample_locs(code: u64, tests: u64) -> Locs {
@@ -540,6 +641,143 @@ mod tests {
     }
 
     #[test]
+    fn test_filter_gte_drops_items_below_threshold() {
+        // alpha=50 code, beta=150, gamma=400. Filter --code-gte 100 keeps
+        // beta and gamma.
+        let result = sample_count_result_three_crates();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        )
+        .filter(&[Predicate::new(Field::Code, Op::Gte, 100)]);
+
+        let labels: Vec<_> = qs.items.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(labels, vec!["beta", "gamma"]);
+    }
+
+    #[test]
+    fn test_filter_eq_and_ne() {
+        let result = sample_count_result_three_crates();
+        let eq = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        )
+        .filter(&[Predicate::new(Field::Code, Op::Eq, 150)]);
+        assert_eq!(eq.items.len(), 1);
+        assert_eq!(eq.items[0].label, "beta");
+
+        let ne = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        )
+        .filter(&[Predicate::new(Field::Code, Op::Ne, 150)]);
+        assert_eq!(ne.items.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_combines_predicates_with_and() {
+        let result = sample_count_result_three_crates();
+        // alpha=50/25, beta=150/75, gamma=400/200
+        // --code-gt 100 AND --tests-lt 100 -> only beta (150 code, 75 tests)
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        )
+        .filter(&[
+            Predicate::new(Field::Code, Op::Gt, 100),
+            Predicate::new(Field::Tests, Op::Lt, 100),
+        ]);
+
+        assert_eq!(qs.items.len(), 1);
+        assert_eq!(qs.items[0].label, "beta");
+    }
+
+    #[test]
+    fn test_filter_total_honors_line_types() {
+        // alpha total=75 (50+25), beta total=225, gamma total=600.
+        // With everything enabled, --total-gte 200 keeps beta and gamma.
+        let result = sample_count_result_three_crates();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        )
+        .filter(&[Predicate::new(Field::Total, Op::Gte, 200)]);
+        assert_eq!(qs.items.len(), 2);
+
+        // With only `code` enabled, "total" becomes just code values.
+        // alpha=50, beta=150, gamma=400. --total-gte 200 keeps gamma alone.
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::new().with_code(),
+            Ordering::default(),
+        )
+        .filter(&[Predicate::new(Field::Total, Op::Gte, 200)]);
+        assert_eq!(qs.items.len(), 1);
+        assert_eq!(qs.items[0].label, "gamma");
+    }
+
+    #[test]
+    fn test_filter_empty_predicates_is_noop() {
+        let result = sample_count_result_three_crates();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        )
+        .filter(&[]);
+        assert_eq!(qs.items.len(), 3);
+    }
+
+    #[test]
+    fn test_filter_preserves_total_and_total_items() {
+        // total_items should still reflect the pre-filter row count, so the
+        // table footer can render "top X of Y" honestly.
+        let result = sample_count_result_three_crates();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        )
+        .filter(&[Predicate::new(Field::Code, Op::Gte, 200)]);
+
+        assert_eq!(qs.items.len(), 1); // only gamma
+        assert_eq!(qs.total_items, 3); // pre-filter
+        assert_eq!(qs.total.code, 600); // pre-filter
+    }
+
+    #[test]
+    fn test_filter_chains_with_top() {
+        // Filter then top. Filter keeps beta+gamma, top 1 (with default
+        // label-asc ordering) keeps beta.
+        let result = sample_count_result_three_crates();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        )
+        .filter(&[Predicate::new(Field::Code, Op::Gte, 100)])
+        .top(1);
+
+        assert_eq!(qs.items.len(), 1);
+        assert_eq!(qs.items[0].label, "beta");
+        assert_eq!(qs.total_items, 3);
+    }
+
+    #[test]
     fn test_count_queryset_top_zero_empties_items() {
         let result = sample_count_result_three_crates();
         let qs = CountQuerySet::from_result(
@@ -588,5 +826,131 @@ mod tests {
             .items
             .iter()
             .any(|item| item.label == "crate-a/src/lib.rs"));
+    }
+
+    fn sample_diff_result_two_files() -> crate::data::diff::DiffResult {
+        use crate::data::diff::{
+            CrateDiffStats, DiffResult, FileChangeType, FileDiffStats, LocsDiff,
+        };
+        use crate::data::stats::Locs;
+
+        let big = LocsDiff {
+            added: Locs {
+                code: 200,
+                tests: 0,
+                examples: 0,
+                docs: 0,
+                comments: 0,
+                blanks: 0,
+                total: 200,
+            },
+            removed: Locs {
+                code: 50,
+                tests: 0,
+                examples: 0,
+                docs: 0,
+                comments: 0,
+                blanks: 0,
+                total: 50,
+            },
+        };
+        let small = LocsDiff {
+            added: Locs {
+                code: 10,
+                tests: 0,
+                examples: 0,
+                docs: 0,
+                comments: 0,
+                blanks: 0,
+                total: 10,
+            },
+            removed: Locs {
+                code: 30,
+                tests: 0,
+                examples: 0,
+                docs: 0,
+                comments: 0,
+                blanks: 0,
+                total: 30,
+            },
+        };
+
+        let big_file = FileDiffStats {
+            path: PathBuf::from("big.rs"),
+            change_type: FileChangeType::Modified,
+            diff: big,
+        };
+        let small_file = FileDiffStats {
+            path: PathBuf::from("small.rs"),
+            change_type: FileChangeType::Modified,
+            diff: small,
+        };
+
+        DiffResult {
+            root: PathBuf::from("/workspace"),
+            from_commit: "HEAD~1".to_string(),
+            to_commit: "HEAD".to_string(),
+            total: big + small,
+            crates: vec![CrateDiffStats {
+                name: "x".to_string(),
+                path: PathBuf::from("/workspace"),
+                diff: big + small,
+                files: vec![big_file.clone(), small_file.clone()],
+            }],
+            files: vec![big_file, small_file],
+            non_rust_added: 0,
+            non_rust_removed: 0,
+        }
+    }
+
+    #[test]
+    fn test_diff_filter_uses_net_value() {
+        // big.rs net code = +150, small.rs net code = -20.
+        // --code-gt 0 keeps only big.rs.
+        let result = sample_diff_result_two_files();
+        let qs = DiffQuerySet::from_result(
+            &result,
+            Aggregation::ByFile,
+            LineTypes::everything(),
+            Ordering::default(),
+        )
+        .filter(&[Predicate::new(Field::Code, Op::Gt, 0)]);
+
+        assert_eq!(qs.items.len(), 1);
+        assert_eq!(qs.items[0].label, "big.rs");
+    }
+
+    #[test]
+    fn test_diff_filter_negative_net_via_lt_zero() {
+        // --code-lt 0 keeps only files with net code REMOVED (small.rs).
+        // Note: clap accepts u64 values, so the CLI can't actually pass a
+        // negative threshold — but the library handles it correctly when
+        // a caller constructs predicates programmatically.
+        let result = sample_diff_result_two_files();
+        let qs = DiffQuerySet::from_result(
+            &result,
+            Aggregation::ByFile,
+            LineTypes::everything(),
+            Ordering::default(),
+        )
+        .filter(&[Predicate::new(Field::Code, Op::Lt, 0)]);
+
+        assert_eq!(qs.items.len(), 1);
+        assert_eq!(qs.items[0].label, "small.rs");
+    }
+
+    #[test]
+    fn test_diff_filter_preserves_total_items() {
+        let result = sample_diff_result_two_files();
+        let qs = DiffQuerySet::from_result(
+            &result,
+            Aggregation::ByFile,
+            LineTypes::everything(),
+            Ordering::default(),
+        )
+        .filter(&[Predicate::new(Field::Code, Op::Gte, 100)]);
+
+        assert_eq!(qs.items.len(), 1);
+        assert_eq!(qs.total_items, 2); // pre-filter
     }
 }

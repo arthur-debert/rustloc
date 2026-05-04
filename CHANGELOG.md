@@ -9,14 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Filter queries via `--<field>-<op> <N>`** for `count` and `diff`. 7
+  fields × 6 operators = 42 hidden flags generated dynamically:
+  fields are `code, tests, examples, docs, comments, blanks, total`,
+  operators are `gt, gte, eq, ne, lt, lte`. Multiple filters are
+  AND-combined. The individual flags are hidden from `--help`; the
+  bottom of the help output describes the synthetic pattern instead so
+  users don't see 42 lines of clutter. `--filter`-style syntax (e.g.
+  `--filter code>=100`) was rejected during design because shell
+  metacharacters require quoting and tab completion suffers; the
+  `--<field>-<op>` form gives clap-native completion and clean errors
+  for typos. Filter runs *before* `--top`, so `--code-gte 1000 --top 5`
+  is "top 5 files among those with at least 1000 code lines" rather
+  than "top 5 by ordering, of which any may then be filtered out".
+  Library: `Field`, `Op`, `Predicate` types and chainable
+  `CountQuerySet::filter(&[Predicate])` / `DiffQuerySet::filter(&[Predicate])`.
 - **`--top N` flag** for `count` and `diff`. Truncates the result to the
   first N rows after `--ordering`, so e.g. `rustloc --by-file -o -code
   --top 10` shows the 10 files with the most code. The footer makes the
-  truncation explicit ("Total (top 10 of 247 files)") so the totals row
-  is unambiguously the full data set, not the visible slice. Library:
-  `CountQuerySet::top(n)` and `DiffQuerySet::top(n)`. Both querysets
-  also gained a `total_items` field for downstream consumers that want
-  the pre-truncation count.
+  reduction explicit: "Total (top 10 of 247 files)" with `--top`,
+  "Total (X of 247 files)" when only filters reduce rows, plain
+  "Total (247 files)" when nothing is reduced. The totals row always
+  reflects the full data set, not the visible slice. Library:
+  `CountQuerySet::top(n)` / `DiffQuerySet::top(n)` chainable methods,
+  plus `total_items` and `top_applied` fields on both querysets for
+  downstream consumers.
 
 ### Changed
 

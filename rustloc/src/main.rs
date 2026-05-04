@@ -376,13 +376,20 @@ mod handlers {
         };
 
         let top = extract_top(matches);
-        let apply_top = |qs: CountQuerySet| match top {
-            Some(n) => qs.top(n),
-            None => qs,
+        let preds = super::filter_args::extract(matches);
+        // Apply filter first, then top, so `--top` slices the already-
+        // filtered set rather than slicing first and dropping rows that
+        // happened to be in the top-N but failed the predicate.
+        let apply_post = |qs: CountQuerySet| {
+            let qs = qs.filter(&preds);
+            match top {
+                Some(n) => qs.top(n),
+                None => qs,
+            }
         };
 
         if structured {
-            let queryset = apply_top(CountQuerySet::from_result(
+            let queryset = apply_post(CountQuerySet::from_result(
                 &result,
                 aggregation,
                 LineTypes::everything(),
@@ -390,7 +397,7 @@ mod handlers {
             ));
             Ok(Output::Render(serde_json::to_value(queryset)?))
         } else {
-            let queryset = apply_top(CountQuerySet::from_result(
+            let queryset = apply_post(CountQuerySet::from_result(
                 &result,
                 aggregation,
                 line_types,
@@ -477,13 +484,17 @@ mod handlers {
         };
 
         let top = extract_top(matches);
-        let apply_top = |qs: DiffQuerySet| match top {
-            Some(n) => qs.top(n),
-            None => qs,
+        let preds = super::filter_args::extract(matches);
+        let apply_post = |qs: DiffQuerySet| {
+            let qs = qs.filter(&preds);
+            match top {
+                Some(n) => qs.top(n),
+                None => qs,
+            }
         };
 
         if structured {
-            let queryset = apply_top(DiffQuerySet::from_result(
+            let queryset = apply_post(DiffQuerySet::from_result(
                 &result,
                 aggregation,
                 LineTypes::everything(),
@@ -491,7 +502,7 @@ mod handlers {
             ));
             Ok(Output::Render(serde_json::to_value(queryset)?))
         } else {
-            let queryset = apply_top(DiffQuerySet::from_result(
+            let queryset = apply_post(DiffQuerySet::from_result(
                 &result,
                 aggregation,
                 line_types,
@@ -587,6 +598,108 @@ mod handlers {
     }
 }
 
+/// Filter-flag generation.
+///
+/// We support a `--<field>-<op> <N>` grid: 7 fields × 6 ops = 42 hidden args.
+/// Listing each individually would clutter `--help`, so we hide them and
+/// document the synthetic pattern via `after_long_help`. clap still parses
+/// them natively, which gives us tab-completion-friendly errors and bypasses
+/// any custom mini-grammar.
+mod filter_args {
+    use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
+    use rustloclib::{Field, Op, Predicate};
+
+    /// Build the leaked `&'static str` flag name for a (field, op) pair.
+    ///
+    /// clap's `Arg::new` / `Arg::long` want `IntoResettable<Str>` which is
+    /// implemented for `&'static str` but not for `String`. Leaking 42 short
+    /// names at startup is a bounded one-time cost — well worth avoiding the
+    /// lifetime gymnastics that would otherwise spread through this module.
+    fn flag_name(field: Field, op: Op) -> &'static str {
+        let s = format!("{}-{}", field.name(), op.name());
+        Box::leak(s.into_boxed_str())
+    }
+
+    /// Generate one clap arg per (field, op) pair, all hidden from `--help`.
+    pub fn make_args() -> Vec<Arg> {
+        let mut args = Vec::with_capacity(Field::all().len() * Op::all().len());
+        for &field in Field::all() {
+            for &op in Op::all() {
+                let name = flag_name(field, op);
+                args.push(
+                    Arg::new(name)
+                        .long(name)
+                        .value_name("N")
+                        .value_parser(value_parser!(u64))
+                        .action(ArgAction::Append)
+                        .hide(true),
+                );
+            }
+        }
+        args
+    }
+
+    /// Synthetic doc block describing the filter pattern. Rendered in
+    /// `--help` via `after_long_help` so users see one block instead of 42
+    /// individual flag lines.
+    pub const SYNTHETIC_DOC: &str = "Filter options (combine with AND):\n  \
+         --<category>-<op> <N>\n  \
+         Categories: code, tests, examples, docs, comments, blanks, total\n  \
+         Operators:  gt, gte, eq, ne, lt, lte\n\
+         \n\
+         Examples:\n  \
+         rustloc --by-file --code-gte 1000\n  \
+         rustloc --by-file --code-gte 1000 --tests-lt 500 --top 10";
+
+    /// Inject the filter args + synthetic doc onto the top-level Cli, the
+    /// `count` subcommand, and the `diff` subcommand.
+    ///
+    /// All three are required:
+    /// - top-level: for the bare-call form (`rustloc --code-gte 100 .`)
+    ///   where clap routes through the default subcommand machinery via
+    ///   the flattened `CountArgs`.
+    /// - count subcommand: for the explicit form (`rustloc count ...`).
+    /// - diff subcommand: for the diff path.
+    ///
+    /// Adding to fewer than all three breaks one or more of the call shapes.
+    pub fn inject(cmd: Command) -> Command {
+        fn augment(sub: Command) -> Command {
+            let mut sub = sub;
+            for a in make_args() {
+                sub = sub.arg(a);
+            }
+            sub.after_long_help(SYNTHETIC_DOC)
+        }
+
+        let mut cmd = cmd;
+        for a in make_args() {
+            cmd = cmd.arg(a);
+        }
+        cmd.after_long_help(SYNTHETIC_DOC)
+            .mut_subcommand("count", augment)
+            .mut_subcommand("diff", augment)
+    }
+
+    /// Read all filter args back from `ArgMatches` into a flat
+    /// AND-combined predicate list.
+    pub fn extract(matches: &ArgMatches) -> Vec<Predicate> {
+        let mut out = Vec::new();
+        for &field in Field::all() {
+            for &op in Op::all() {
+                // Reconstruct the name; clap's `get_many` accepts `&str`
+                // so we don't need the leaked static version here.
+                let name = format!("{}-{}", field.name(), op.name());
+                if let Some(values) = matches.get_many::<u64>(&name) {
+                    for &v in values {
+                        out.push(Predicate::new(field, op, v));
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
 fn run() -> Result<RunResult, anyhow::Error> {
     // Load theme: start with standout defaults (includes table_row_even/odd),
     // then merge our custom stylesheet on top
@@ -602,7 +715,8 @@ fn run() -> Result<RunResult, anyhow::Error> {
         .commands(Commands::dispatch_config())?
         .build()?;
 
-    Ok(app.run_to_string(Cli::command(), std::env::args()))
+    let cli_cmd = filter_args::inject(Cli::command());
+    Ok(app.run_to_string(cli_cmd, std::env::args()))
 }
 
 fn main() -> ExitCode {

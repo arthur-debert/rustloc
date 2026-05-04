@@ -66,7 +66,13 @@ impl LOCTable {
             })
             .collect();
         let footer = TableRow {
-            label: build_footer_label(&qs.aggregation, rows.len(), qs.total_items, qs.file_count),
+            label: build_footer_label(
+                &qs.aggregation,
+                rows.len(),
+                qs.total_items,
+                qs.file_count,
+                qs.top_applied,
+            ),
             values: format_locs(&qs.total, &qs.line_types),
         };
 
@@ -95,7 +101,13 @@ impl LOCTable {
             })
             .collect();
         let footer = TableRow {
-            label: build_footer_label(&qs.aggregation, rows.len(), qs.total_items, qs.file_count),
+            label: build_footer_label(
+                &qs.aggregation,
+                rows.len(),
+                qs.total_items,
+                qs.file_count,
+                qs.top_applied,
+            ),
             values: format_locs_diff(&qs.total, &qs.line_types),
         };
         let title = Some(format!("Diff: {} → {}", qs.from_commit, qs.to_commit));
@@ -149,12 +161,18 @@ impl From<&crate::query::options::LineTypes> for LineTypesView {
 
 /// Build footer label based on aggregation level.
 ///
-/// `displayed` is the number of rows actually shown (after any `top`
-/// truncation). `total` is the row count before truncation. When they
-/// differ, the label makes the truncation explicit ("top N of M crates")
-/// so the reader knows the totals row reflects more than what's visible.
+/// `displayed` is the number of rows actually shown after any user-driven
+/// reduction. `total` is the pre-reduction row count. When they differ the
+/// label makes the gap explicit so the reader can see that the totals row
+/// reflects more data than what's visible.
 ///
-/// `total < displayed` is logically impossible (truncation can only shrink
+/// `top_applied` distinguishes the two reduction paths so the wording is
+/// honest: "top X of Y" for `--top` (a sorted slice), plain "X of Y" for
+/// filter-eliminated rows. Both can apply at once, in which case the
+/// "top" wording dominates because the visible rows ARE the top of what
+/// passed the filter.
+///
+/// `total < displayed` is logically impossible (reductions only shrink
 /// the row set), but a deserialized queryset from a payload that pre-dates
 /// the `total_items` field will arrive with `total = 0`. The `.max` clamp
 /// keeps the footer correct for that case rather than rendering nonsense
@@ -164,6 +182,7 @@ fn build_footer_label(
     displayed: usize,
     total: usize,
     file_count: usize,
+    top_applied: bool,
 ) -> String {
     let unit = match aggregation {
         Aggregation::Total => return format!("Total ({} files)", file_count),
@@ -172,10 +191,12 @@ fn build_footer_label(
         Aggregation::ByFile => "files",
     };
     let total = total.max(displayed);
-    if displayed < total {
+    if displayed == total {
+        format!("Total ({} {})", total, unit)
+    } else if top_applied {
         format!("Total (top {} of {} {})", displayed, total, unit)
     } else {
-        format!("Total ({} {})", total, unit)
+        format!("Total ({} of {} {})", displayed, total, unit)
     }
 }
 
@@ -408,6 +429,49 @@ mod tests {
         .top(1);
         let table = LOCTable::from_count_queryset(&qs);
 
+        assert_eq!(table.rows.len(), 1);
+        assert_eq!(table.footer.label, "Total (top 1 of 2 crates)");
+    }
+
+    #[test]
+    fn test_footer_label_filter_only_uses_plain_x_of_y() {
+        // When rows are reduced by a filter (not by --top), the footer
+        // says "X of Y" without the "top" qualifier, because the visible
+        // rows aren't sorted-and-sliced — they're just the ones that
+        // passed the predicate.
+        use crate::query::options::{Field, Op, Predicate};
+
+        let result = sample_count_result();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        )
+        .filter(&[Predicate::new(Field::Code, Op::Gte, 100)]);
+        let table = LOCTable::from_count_queryset(&qs);
+
+        assert_eq!(table.rows.len(), 1);
+        assert_eq!(table.footer.label, "Total (1 of 2 crates)");
+    }
+
+    #[test]
+    fn test_footer_label_filter_then_top_uses_top_wording() {
+        use crate::query::options::{Field, Op, Predicate};
+
+        let result = sample_count_result();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        )
+        .filter(&[Predicate::new(Field::Code, Op::Gte, 50)])
+        .top(1);
+        let table = LOCTable::from_count_queryset(&qs);
+
+        // Both filter (kept 2) and top (kept 1) ran; "top" wording wins
+        // because the visible row IS the top of what passed the filter.
         assert_eq!(table.rows.len(), 1);
         assert_eq!(table.footer.label, "Total (top 1 of 2 crates)");
     }
