@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-05-04
+
+
 ### Added
 
 - **Filter queries via `--<field>-<op> <N>`** for `count` and `diff`. 7
@@ -55,7 +58,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`diff_commits(repo, from, to, options)`** — the library now exposes
   `diff_revspec(repo, revspec, options)` instead. Pass either a single
   rev (diffed against HEAD), a range `a..b`, or a merge spec `a...b`.
-
 ## [0.14.2] - 2026-05-01
 
 
