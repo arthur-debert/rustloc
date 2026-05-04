@@ -188,10 +188,14 @@ Default direction: descending for numeric fields, ascending for label.
 struct DiffArgs {
     /// Revspec or range [HEAD~5..HEAD, v1.0.0..v2.0.0, main]
     #[arg(long_help = "\
-Revspec or range. Accepts anything `git rev-parse` accepts: tags
-(annotated or lightweight), branches, short hashes, HEAD~N, ranges (a..b),
-merge-base ranges (a...b). A single rev is diffed against HEAD. Without
-arguments, diffs the working directory.")]
+Revspec or range, parsed by gix. Common forms work: tags (annotated or
+lightweight), branches, short hashes, HEAD~N, ranges (a..b), merge-base
+ranges (a...b). A single rev is diffed against HEAD. Without arguments,
+diffs the working directory.
+
+Some less-common rev-parse forms (e.g. `@{-N}` for previous branch,
+`:/regex` for commit-message search) aren't supported by gix yet — pass
+the resolved hash from `git rev-parse` if you need them.")]
     from: Option<String>,
 
     /// Target revspec (alternative to a..b range syntax)
@@ -413,7 +417,15 @@ mod handlers {
                 ));
             }
             let revspec = match to {
-                Some(to_str) => format!("{}..{}", from_str, to_str),
+                Some(to_str) => {
+                    if from_str.contains("..") {
+                        return Err(anyhow::anyhow!(
+                            "Pass either a single range/revspec (e.g. `a..b`) \
+                             or two revs as separate args (e.g. `a b`), not both."
+                        ));
+                    }
+                    format!("{}..{}", from_str, to_str)
+                }
                 None => from_str.clone(),
             };
             diff_revspec(path, &revspec, options)?
