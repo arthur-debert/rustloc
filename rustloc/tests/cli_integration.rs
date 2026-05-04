@@ -422,3 +422,52 @@ fn test_top_with_diff_by_file() {
     // error and the footer should be present.
     assert!(stdout.contains("Total ("));
 }
+
+#[test]
+fn test_top_count_json_truncates_items_and_carries_total_items() {
+    // The structured-output path should also honour --top: items array
+    // truncated, but `total_items` carries the pre-truncation count and
+    // `total` reflects the full data set.
+    let (stdout, _, success) = run_rustloc(&[".", "--by-crate", "--top", "1", "--output", "json"]);
+
+    assert!(success);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON output");
+
+    let items = parsed["items"].as_array().expect("items should be array");
+    assert_eq!(items.len(), 1, "items should be truncated to top 1");
+
+    assert_eq!(
+        parsed["total_items"].as_u64().unwrap(),
+        2,
+        "total_items should be pre-truncation count"
+    );
+
+    // Total counts must be unaffected by truncation.
+    assert!(parsed["total"]["code"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn test_top_diff_json_truncates_items_and_carries_total_items() {
+    let (stdout, _, success) = run_rustloc(&[
+        "diff",
+        "HEAD~5..HEAD",
+        "--by-file",
+        "--top",
+        "1",
+        "--output",
+        "json",
+    ]);
+
+    assert!(success);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON output");
+
+    let items = parsed["items"].as_array().expect("items should be array");
+    assert!(items.len() <= 1, "items should be truncated to at most 1");
+
+    let total_items = parsed["total_items"]
+        .as_u64()
+        .expect("total_items should be present");
+    // total_items should be at least items.len(); when truncation actually
+    // happened it'll be strictly larger.
+    assert!(total_items >= items.len() as u64);
+}

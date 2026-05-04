@@ -153,6 +153,12 @@ impl From<&crate::query::options::LineTypes> for LineTypesView {
 /// truncation). `total` is the row count before truncation. When they
 /// differ, the label makes the truncation explicit ("top N of M crates")
 /// so the reader knows the totals row reflects more than what's visible.
+///
+/// `total < displayed` is logically impossible (truncation can only shrink
+/// the row set), but a deserialized queryset from a payload that pre-dates
+/// the `total_items` field will arrive with `total = 0`. The `.max` clamp
+/// keeps the footer correct for that case rather than rendering nonsense
+/// like "Total (0 crates)" alongside two visible rows.
 fn build_footer_label(
     aggregation: &Aggregation,
     displayed: usize,
@@ -165,6 +171,7 @@ fn build_footer_label(
         Aggregation::ByModule => "modules",
         Aggregation::ByFile => "files",
     };
+    let total = total.max(displayed);
     if displayed < total {
         format!("Total (top {} of {} {})", displayed, total, unit)
     } else {
@@ -403,6 +410,25 @@ mod tests {
 
         assert_eq!(table.rows.len(), 1);
         assert_eq!(table.footer.label, "Total (top 1 of 2 crates)");
+    }
+
+    #[test]
+    fn test_footer_label_clamps_when_total_items_missing() {
+        // A queryset deserialized from a payload that predates `total_items`
+        // arrives with `total_items = 0`. The footer must still show the
+        // correct row count rather than "Total (0 crates)".
+        let result = sample_count_result();
+        let mut qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        );
+        qs.total_items = 0; // simulate stale payload
+        let table = LOCTable::from_count_queryset(&qs);
+
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.footer.label, "Total (2 crates)");
     }
 
     #[test]
