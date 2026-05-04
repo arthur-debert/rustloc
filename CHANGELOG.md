@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--top N` flag** for `count` and `diff`. Truncates the result to the
+  first N rows after `--ordering`, so e.g. `rustloc --by-file -o -code
+  --top 10` shows the 10 files with the most code. The footer makes the
+  truncation explicit ("Total (top 10 of 247 files)") so the totals row
+  is unambiguously the full data set, not the visible slice. Library:
+  `CountQuerySet::top(n)` and `DiffQuerySet::top(n)`. Both querysets
+  also gained a `total_items` field for downstream consumers that want
+  the pre-truncation count.
+
 ### Changed
 
 - **`rustloc diff` revspec resolution delegated to gix.** `rustloc diff
