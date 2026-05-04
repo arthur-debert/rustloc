@@ -151,25 +151,43 @@ impl CountQuerySet {
     }
 }
 
+/// Saturating `u64 -> i64`. Values past `i64::MAX` clamp to `i64::MAX`
+/// rather than wrapping into the negative range. The cap is ~9.2 × 10^18 —
+/// well past any realistic LOC count, but better to clamp than to silently
+/// produce wrong filter results if a caller passes a huge value.
+fn u64_to_i64_sat(v: u64) -> i64 {
+    i64::try_from(v).unwrap_or(i64::MAX)
+}
+
+/// Saturating signed subtraction `u64 - u64 -> i64`. Used for the diff
+/// `Total` case where each side is a u64 sum and the difference can exceed
+/// `i64` magnitude in pathological inputs.
+fn u64_sub_i64_sat(a: u64, b: u64) -> i64 {
+    let a = u64_to_i64_sat(a);
+    let b = u64_to_i64_sat(b);
+    a.saturating_sub(b)
+}
+
 /// Resolve the integer value a predicate's field refers to in a `Locs`.
 ///
 /// `Field::Total` follows `OrderBy::Total` semantics: the sum of currently-
 /// enabled line types, not `Locs::total`.
 fn locs_field_value(locs: &Locs, field: Field, line_types: &LineTypes) -> i64 {
-    match field {
-        Field::Code => locs.code as i64,
-        Field::Tests => locs.tests as i64,
-        Field::Examples => locs.examples as i64,
-        Field::Docs => locs.docs as i64,
-        Field::Comments => locs.comments as i64,
-        Field::Blanks => locs.blanks as i64,
-        Field::Total => locs_filtered_total(locs, line_types) as i64,
-    }
+    let v: u64 = match field {
+        Field::Code => locs.code,
+        Field::Tests => locs.tests,
+        Field::Examples => locs.examples,
+        Field::Docs => locs.docs,
+        Field::Comments => locs.comments,
+        Field::Blanks => locs.blanks,
+        Field::Total => locs_filtered_total(locs, line_types),
+    };
+    u64_to_i64_sat(v)
 }
 
 fn matches_locs(pred: &Predicate, locs: &Locs, line_types: &LineTypes) -> bool {
     let lhs = locs_field_value(locs, pred.field, line_types);
-    pred.op.evaluate(lhs, pred.value as i64)
+    pred.op.evaluate(lhs, u64_to_i64_sat(pred.value))
 }
 
 /// Resolve the (signed) net diff value a predicate's field refers to.
@@ -183,14 +201,14 @@ fn diff_field_value(diff: &LocsDiff, field: Field, line_types: &LineTypes) -> i6
         Field::Blanks => diff.net_blanks(),
         Field::Total => {
             let (a, r) = locs_diff_filtered_total(diff, line_types);
-            a as i64 - r as i64
+            u64_sub_i64_sat(a, r)
         }
     }
 }
 
 fn matches_diff(pred: &Predicate, diff: &LocsDiff, line_types: &LineTypes) -> bool {
     let lhs = diff_field_value(diff, pred.field, line_types);
-    pred.op.evaluate(lhs, pred.value as i64)
+    pred.op.evaluate(lhs, u64_to_i64_sat(pred.value))
 }
 
 /// Compute a relative path label for a file.
@@ -922,10 +940,15 @@ mod tests {
 
     #[test]
     fn test_diff_filter_negative_net_via_lt_zero() {
-        // --code-lt 0 keeps only files with net code REMOVED (small.rs).
-        // Note: clap accepts u64 values, so the CLI can't actually pass a
-        // negative threshold — but the library handles it correctly when
-        // a caller constructs predicates programmatically.
+        // big.rs has net code = +150, small.rs has net code = -20.
+        // The threshold here is 0 (a valid u64), but the LHS — the net
+        // diff value — is signed and can be negative. So `--code-lt 0`
+        // matches files whose net code change is below zero, i.e. those
+        // with more code removed than added (small.rs only).
+        //
+        // Predicate.value is u64, so the threshold itself can't be
+        // negative; we don't need it to be — the signed net LHS is what
+        // makes "less than zero" meaningful.
         let result = sample_diff_result_two_files();
         let qs = DiffQuerySet::from_result(
             &result,

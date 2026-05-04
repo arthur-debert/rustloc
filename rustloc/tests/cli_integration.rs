@@ -505,6 +505,42 @@ fn test_filter_help_hides_individual_flags_and_shows_synthetic_doc() {
 }
 
 #[test]
+fn test_filter_help_preserves_existing_examples_block() {
+    // The Cli derive defines an `after_long_help` examples block. The
+    // filter injection appends to it rather than replacing — both must
+    // be visible in --help.
+    let (stdout, _, success) = run_rustloc(&["--help"]);
+
+    assert!(success);
+    // Original examples (from Cli derive)
+    assert!(
+        stdout.contains("rustloc --by-crate"),
+        "original Cli examples block should still appear"
+    );
+    // Filter examples (from our appended doc)
+    assert!(
+        stdout.contains("rustloc --by-file --code-gte 1000"),
+        "filter doc block should appear"
+    );
+}
+
+#[test]
+fn test_diff_help_preserves_existing_examples_block() {
+    // Same invariant for the diff subcommand.
+    let (stdout, _, success) = run_rustloc(&["diff", "--help"]);
+
+    assert!(success);
+    assert!(
+        stdout.contains("rustloc diff main feature"),
+        "original diff examples should still appear"
+    );
+    assert!(
+        stdout.contains("rustloc --by-file --code-gte 1000"),
+        "filter doc block should appear in diff --help"
+    );
+}
+
+#[test]
 fn test_filter_gte_works_via_default_subcommand() {
     // `rustloc --by-file --code-gte 100 .` (no explicit `count`)
     // should work because the args live on top-level Cli too.

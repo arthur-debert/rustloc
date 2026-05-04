@@ -608,35 +608,44 @@ mod handlers {
 mod filter_args {
     use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
     use rustloclib::{Field, Op, Predicate};
+    use std::sync::OnceLock;
 
-    /// Build the leaked `&'static str` flag name for a (field, op) pair.
+    /// (field, op, leaked-static-name) for each of the 42 (field × op) pairs.
     ///
-    /// clap's `Arg::new` / `Arg::long` want `IntoResettable<Str>` which is
-    /// implemented for `&'static str` but not for `String`. Leaking 42 short
-    /// names at startup is a bounded one-time cost — well worth avoiding the
-    /// lifetime gymnastics that would otherwise spread through this module.
-    fn flag_name(field: Field, op: Op) -> &'static str {
-        let s = format!("{}-{}", field.name(), op.name());
-        Box::leak(s.into_boxed_str())
+    /// Computed exactly once and cached. Each name is leaked as a
+    /// `&'static str` because clap's `Arg::new` / `Arg::long` want
+    /// `IntoResettable<Str>` which is implemented for `&'static str` but
+    /// not for `String`. Caching avoids re-leaking on repeated calls
+    /// (`make_args` is invoked once per injection point: top-level + count
+    /// + diff = three calls), keeping the leak count to exactly 42.
+    fn flag_table() -> &'static [(Field, Op, &'static str)] {
+        static TABLE: OnceLock<Vec<(Field, Op, &'static str)>> = OnceLock::new();
+        TABLE.get_or_init(|| {
+            let mut v = Vec::with_capacity(Field::all().len() * Op::all().len());
+            for &field in Field::all() {
+                for &op in Op::all() {
+                    let s: &'static str =
+                        Box::leak(format!("{}-{}", field.name(), op.name()).into_boxed_str());
+                    v.push((field, op, s));
+                }
+            }
+            v
+        })
     }
 
     /// Generate one clap arg per (field, op) pair, all hidden from `--help`.
     pub fn make_args() -> Vec<Arg> {
-        let mut args = Vec::with_capacity(Field::all().len() * Op::all().len());
-        for &field in Field::all() {
-            for &op in Op::all() {
-                let name = flag_name(field, op);
-                args.push(
-                    Arg::new(name)
-                        .long(name)
-                        .value_name("N")
-                        .value_parser(value_parser!(u64))
-                        .action(ArgAction::Append)
-                        .hide(true),
-                );
-            }
-        }
-        args
+        flag_table()
+            .iter()
+            .map(|&(_, _, name)| {
+                Arg::new(name)
+                    .long(name)
+                    .value_name("N")
+                    .value_parser(value_parser!(u64))
+                    .action(ArgAction::Append)
+                    .hide(true)
+            })
+            .collect()
     }
 
     /// Synthetic doc block describing the filter pattern. Rendered in
@@ -650,6 +659,21 @@ mod filter_args {
          Examples:\n  \
          rustloc --by-file --code-gte 1000\n  \
          rustloc --by-file --code-gte 1000 --tests-lt 500 --top 10";
+
+    /// `Command::after_long_help` is a setter — it replaces any previous
+    /// value. The Cli derive (and the diff subcommand) already define an
+    /// examples block via `#[command(after_long_help = "...")]`, so we
+    /// concatenate rather than overwrite.
+    fn append_long_help(cmd: Command, addition: &'static str) -> Command {
+        let combined: &'static str = match cmd.get_after_long_help() {
+            Some(existing) if !existing.to_string().is_empty() => {
+                let merged = format!("{}\n\n{}", existing, addition);
+                Box::leak(merged.into_boxed_str())
+            }
+            _ => addition,
+        };
+        cmd.after_long_help(combined)
+    }
 
     /// Inject the filter args + synthetic doc onto the top-level Cli, the
     /// `count` subcommand, and the `diff` subcommand.
@@ -668,14 +692,14 @@ mod filter_args {
             for a in make_args() {
                 sub = sub.arg(a);
             }
-            sub.after_long_help(SYNTHETIC_DOC)
+            append_long_help(sub, SYNTHETIC_DOC)
         }
 
         let mut cmd = cmd;
         for a in make_args() {
             cmd = cmd.arg(a);
         }
-        cmd.after_long_help(SYNTHETIC_DOC)
+        append_long_help(cmd, SYNTHETIC_DOC)
             .mut_subcommand("count", augment)
             .mut_subcommand("diff", augment)
     }
@@ -684,15 +708,10 @@ mod filter_args {
     /// AND-combined predicate list.
     pub fn extract(matches: &ArgMatches) -> Vec<Predicate> {
         let mut out = Vec::new();
-        for &field in Field::all() {
-            for &op in Op::all() {
-                // Reconstruct the name; clap's `get_many` accepts `&str`
-                // so we don't need the leaked static version here.
-                let name = format!("{}-{}", field.name(), op.name());
-                if let Some(values) = matches.get_many::<u64>(&name) {
-                    for &v in values {
-                        out.push(Predicate::new(field, op, v));
-                    }
+        for &(field, op, name) in flag_table() {
+            if let Some(values) = matches.get_many::<u64>(name) {
+                for &v in values {
+                    out.push(Predicate::new(field, op, v));
                 }
             }
         }
