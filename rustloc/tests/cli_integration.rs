@@ -471,3 +471,231 @@ fn test_top_diff_json_truncates_items_and_carries_total_items() {
     // happened it'll be strictly larger.
     assert!(total_items >= items.len() as u64);
 }
+
+// ============================================================================
+// Filter query tests (--<field>-<op> N)
+// ============================================================================
+
+#[test]
+fn test_filter_help_hides_individual_flags_and_shows_synthetic_doc() {
+    let (stdout, _, success) = run_rustloc(&["--help"]);
+
+    assert!(success);
+
+    // The 42 flags must be hidden. Pick a few representatives and assert
+    // they don't appear in the rendered help.
+    assert!(
+        !stdout.contains("--code-gte <"),
+        "--code-gte should not appear in help"
+    );
+    assert!(
+        !stdout.contains("--tests-lt <"),
+        "--tests-lt should not appear in help"
+    );
+    assert!(
+        !stdout.contains("--total-eq <"),
+        "--total-eq should not appear in help"
+    );
+
+    // The synthetic doc block IS expected to be present.
+    assert!(stdout.contains("Filter options"));
+    assert!(stdout.contains("--<category>-<op>"));
+    assert!(stdout.contains("Categories: code, tests, examples, docs, comments, blanks, total"));
+    assert!(stdout.contains("Operators:  gt, gte, eq, ne, lt, lte"));
+}
+
+#[test]
+fn test_filter_help_preserves_existing_examples_block() {
+    // The Cli derive defines an `after_long_help` examples block. The
+    // filter injection appends to it rather than replacing — both must
+    // be visible in --help.
+    let (stdout, _, success) = run_rustloc(&["--help"]);
+
+    assert!(success);
+    // Original examples (from Cli derive)
+    assert!(
+        stdout.contains("rustloc --by-crate"),
+        "original Cli examples block should still appear"
+    );
+    // Filter examples (from our appended doc)
+    assert!(
+        stdout.contains("rustloc --by-file --code-gte 1000"),
+        "filter doc block should appear"
+    );
+}
+
+#[test]
+fn test_diff_help_preserves_existing_examples_block() {
+    // Same invariant for the diff subcommand.
+    let (stdout, _, success) = run_rustloc(&["diff", "--help"]);
+
+    assert!(success);
+    assert!(
+        stdout.contains("rustloc diff main feature"),
+        "original diff examples should still appear"
+    );
+    assert!(
+        stdout.contains("rustloc --by-file --code-gte 1000"),
+        "filter doc block should appear in diff --help"
+    );
+}
+
+#[test]
+fn test_filter_gte_works_via_default_subcommand() {
+    // `rustloc --by-file --code-gte 100 .` (no explicit `count`)
+    // should work because the args live on top-level Cli too.
+    let (stdout, _, success) = run_rustloc(&[".", "--by-file", "--code-gte", "100"]);
+
+    assert!(success);
+    // Footer wording must be the filter-only form, not the "top" form.
+    assert!(
+        stdout.contains(" of ") && !stdout.contains("top "),
+        "expected filter-only footer wording, got:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn test_filter_via_explicit_count_subcommand() {
+    let (stdout, _, success) = run_rustloc(&["count", ".", "--by-file", "--code-gte", "100"]);
+
+    assert!(success);
+    assert!(stdout.contains("File"));
+}
+
+#[test]
+fn test_filter_combines_with_and() {
+    // Two predicates AND-combined; should narrow more than either alone.
+    let (stdout, _, success) =
+        run_rustloc(&[".", "--by-crate", "--code-gte", "100", "--tests-lt", "1500"]);
+
+    assert!(success);
+    // The repo has 2 crates; the AND should keep the rustloc crate (which
+    // has < 1500 tests) and exclude rustloclib (which has more).
+    assert!(stdout.contains("rustloc "));
+    assert!(!stdout.contains("rustloclib "));
+}
+
+#[test]
+fn test_filter_chains_with_top_uses_top_wording() {
+    // When both filter and top apply, the footer says "top X of Y" because
+    // the visible rows are the sorted top of what passed the filter.
+    let (stdout, _, success) = run_rustloc(&[
+        ".",
+        "--by-file",
+        "-o",
+        "-code",
+        "--code-gte",
+        "100",
+        "--top",
+        "1",
+    ]);
+
+    assert!(success);
+    assert!(
+        stdout.contains("top 1 of"),
+        "expected 'top 1 of' wording, got:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn test_filter_total_uses_filtered_sum() {
+    // --total-gte semantics: sum of currently-enabled types (per --type).
+    // With default types (code+tests+docs+total), the rustloc crate should
+    // pass --total-gte 100 (its sum is well over).
+    let (stdout, _, success) = run_rustloc(&[".", "--by-crate", "--total-gte", "100"]);
+
+    assert!(success);
+    assert!(stdout.contains("rustloc"));
+}
+
+#[test]
+fn test_filter_eliminates_all_rows() {
+    // No file in this codebase has 100000+ code lines; --code-gte 100000
+    // should produce an empty rows section. The footer should reflect "0 of N".
+    let (stdout, _, success) = run_rustloc(&[".", "--by-file", "--code-gte", "100000"]);
+
+    assert!(success);
+    assert!(
+        stdout.contains("0 of "),
+        "expected '0 of N' in footer, got:\n{}",
+        stdout
+    );
+    assert!(!stdout.contains("top "));
+}
+
+#[test]
+fn test_filter_unknown_flag_errors_clearly() {
+    // Note: clap parse errors are printed but the binary currently exits 0
+    // (pre-existing behavior — see how every other clap-rejection test in
+    // this file checks stdout/stderr content rather than exit code). What
+    // matters here is that the user sees a clear message pointing at the
+    // typo'd flag.
+    let (stdout, stderr, _) = run_rustloc(&[".", "--code-foo", "100"]);
+    let combined = format!("{}{}", stdout, stderr);
+    assert!(
+        combined.contains("--code-foo") || combined.contains("unexpected"),
+        "unexpected error message: stdout={:?} stderr={:?}",
+        stdout,
+        stderr
+    );
+}
+
+#[test]
+fn test_filter_non_numeric_value_errors_clearly() {
+    let (stdout, stderr, _) = run_rustloc(&[".", "--code-gte", "abc"]);
+    let combined = format!("{}{}", stdout, stderr);
+    assert!(
+        combined.contains("invalid value") || combined.contains("invalid digit"),
+        "unexpected error message: stdout={:?} stderr={:?}",
+        stdout,
+        stderr
+    );
+}
+
+#[test]
+fn test_filter_works_on_diff() {
+    // The filter args are also injected on the diff subcommand.
+    let (stdout, _, success) =
+        run_rustloc(&["diff", "HEAD~5..HEAD", "--by-file", "--code-gte", "0"]);
+
+    assert!(success);
+    assert!(stdout.contains("Diff:"));
+}
+
+#[test]
+fn test_filter_json_carries_filter_results() {
+    // Structured output should also honour the filter.
+    let (stdout, _, success) =
+        run_rustloc(&[".", "--by-crate", "--code-gte", "100", "--output", "json"]);
+
+    assert!(success);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON output");
+    let items = parsed["items"].as_array().expect("items should be array");
+
+    // Every surviving item must satisfy the predicate.
+    for item in items {
+        let code = item["stats"]["code"]
+            .as_u64()
+            .expect("stats.code should be numeric");
+        assert!(code >= 100, "filter violated: code={} < 100", code);
+    }
+
+    // total_items reflects the pre-filter count (still 2 crates in this repo).
+    let total_items = parsed["total_items"].as_u64().unwrap();
+    assert_eq!(total_items, 2);
+    // top_applied stays false when only --filter was used.
+    assert_eq!(parsed["top_applied"].as_bool(), Some(false));
+}
+
+#[test]
+fn test_filter_repeated_same_flag_combines_with_and() {
+    // `--code-gte 100 --code-gte 200` is a tautology of "code >= 100 AND
+    // code >= 200" which simplifies to "code >= 200". Both predicates are
+    // applied so the binary must accept the repetition.
+    let (_, _, success) =
+        run_rustloc(&[".", "--by-file", "--code-gte", "100", "--code-gte", "200"]);
+
+    assert!(success);
+}

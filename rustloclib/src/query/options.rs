@@ -225,6 +225,114 @@ impl FromStr for OrderBy {
     }
 }
 
+/// Numeric category that a filter `Predicate` operates on.
+///
+/// The seven variants correspond one-to-one with the seven counted line
+/// types. `Total` is the sum of currently-enabled line types — it follows
+/// the same semantics as `OrderBy::Total`, so a filter on `Total` honors
+/// the active `LineTypes` rather than the precomputed `Locs::total` field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Field {
+    Code,
+    Tests,
+    Examples,
+    Docs,
+    Comments,
+    Blanks,
+    Total,
+}
+
+impl Field {
+    /// Lower-case name used in CLI flag construction (e.g. `code-gte`).
+    pub fn name(&self) -> &'static str {
+        match self {
+            Field::Code => "code",
+            Field::Tests => "tests",
+            Field::Examples => "examples",
+            Field::Docs => "docs",
+            Field::Comments => "comments",
+            Field::Blanks => "blanks",
+            Field::Total => "total",
+        }
+    }
+
+    /// All seven variants in canonical order. Iteration order is the order
+    /// the CLI generates flags, so it should be stable and predictable.
+    pub fn all() -> &'static [Field] {
+        &[
+            Field::Code,
+            Field::Tests,
+            Field::Examples,
+            Field::Docs,
+            Field::Comments,
+            Field::Blanks,
+            Field::Total,
+        ]
+    }
+}
+
+/// Comparison operator for a filter `Predicate`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Op {
+    Gt,
+    Gte,
+    Eq,
+    Ne,
+    Lt,
+    Lte,
+}
+
+impl Op {
+    /// Lower-case name used in CLI flag construction (e.g. `code-gte`).
+    pub fn name(&self) -> &'static str {
+        match self {
+            Op::Gt => "gt",
+            Op::Gte => "gte",
+            Op::Eq => "eq",
+            Op::Ne => "ne",
+            Op::Lt => "lt",
+            Op::Lte => "lte",
+        }
+    }
+
+    /// All six variants in canonical order.
+    pub fn all() -> &'static [Op] {
+        &[Op::Gt, Op::Gte, Op::Eq, Op::Ne, Op::Lt, Op::Lte]
+    }
+
+    /// Apply the operator to a pair of integer values.
+    ///
+    /// Inputs are `i64` so this works uniformly for raw line counts (always
+    /// non-negative) and diff net values (which can be negative).
+    pub fn evaluate(&self, lhs: i64, rhs: i64) -> bool {
+        match self {
+            Op::Gt => lhs > rhs,
+            Op::Gte => lhs >= rhs,
+            Op::Eq => lhs == rhs,
+            Op::Ne => lhs != rhs,
+            Op::Lt => lhs < rhs,
+            Op::Lte => lhs <= rhs,
+        }
+    }
+}
+
+/// A single filter predicate of the form `<field> <op> <value>`.
+///
+/// Multiple predicates are combined with logical AND when applied via
+/// `CountQuerySet::filter` / `DiffQuerySet::filter`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Predicate {
+    pub field: Field,
+    pub op: Op,
+    pub value: u64,
+}
+
+impl Predicate {
+    pub fn new(field: Field, op: Op, value: u64) -> Self {
+        Self { field, op, value }
+    }
+}
+
 /// Sort direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum OrderDirection {
@@ -391,6 +499,46 @@ mod tests {
         let ordering = Ordering::by_total().ascending();
         assert_eq!(ordering.by, OrderBy::Total);
         assert_eq!(ordering.direction, OrderDirection::Ascending);
+    }
+
+    #[test]
+    fn test_op_evaluate_all_variants() {
+        assert!(Op::Gt.evaluate(10, 5));
+        assert!(!Op::Gt.evaluate(5, 5));
+        assert!(Op::Gte.evaluate(5, 5));
+        assert!(Op::Gte.evaluate(10, 5));
+        assert!(!Op::Gte.evaluate(4, 5));
+        assert!(Op::Eq.evaluate(5, 5));
+        assert!(!Op::Eq.evaluate(5, 6));
+        assert!(Op::Ne.evaluate(5, 6));
+        assert!(!Op::Ne.evaluate(5, 5));
+        assert!(Op::Lt.evaluate(4, 5));
+        assert!(!Op::Lt.evaluate(5, 5));
+        assert!(Op::Lte.evaluate(5, 5));
+        assert!(Op::Lte.evaluate(4, 5));
+        assert!(!Op::Lte.evaluate(6, 5));
+    }
+
+    #[test]
+    fn test_op_evaluate_handles_negative_diffs() {
+        // Diff net values can be negative (lines removed > added).
+        assert!(Op::Lt.evaluate(-100, 0));
+        assert!(Op::Gte.evaluate(-50, -100));
+    }
+
+    #[test]
+    fn test_field_all_and_op_all_lengths() {
+        assert_eq!(Field::all().len(), 7);
+        assert_eq!(Op::all().len(), 6);
+        // 7 × 6 = 42 — the size of the synthetic CLI flag grid.
+    }
+
+    #[test]
+    fn test_predicate_construction() {
+        let p = Predicate::new(Field::Code, Op::Gte, 100);
+        assert_eq!(p.field, Field::Code);
+        assert_eq!(p.op, Op::Gte);
+        assert_eq!(p.value, 100);
     }
 
     #[test]
