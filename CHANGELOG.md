@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`rustloc diff` revspec resolution delegated to gix.** `rustloc diff
+  v1.0.0..v2.0.0` (and other tag-, branch-, or `HEAD~N`-style specs) now
+  works. Previously the CLI did its own naive `..` splitting and called
+  `find_commit` directly on the resolved oid, which failed on annotated
+  tags with "expected commit, got tag". The CLI now hands the revspec
+  verbatim to the library, which calls `gix::Repository::rev_parse` and
+  peels tag objects to commits via `peel_to_commit`. Range (`a..b`) and
+  merge-base (`a...b`) syntax are parsed by gix natively. Two-arg form
+  (`rustloc diff main feature`) still works — it's joined as
+  `main..feature` before resolution. Note: a few less-common rev-parse
+  forms (`@{-N}`, `:/regex`) aren't yet supported by gix; resolve them
+  with `git rev-parse` first if you need them.
+
+### Removed
+
+- **`diff_commits(repo, from, to, options)`** — the library now exposes
+  `diff_revspec(repo, revspec, options)` instead. Pass either a single
+  rev (diffed against HEAD), a range `a..b`, or a merge spec `a...b`.
+
 ## [0.14.2] - 2026-05-01
 
 

@@ -41,7 +41,7 @@
 //! Parse files and collect statistics:
 //! - [`gather_stats`]: Parse a single file into [`Locs`]
 //! - [`count_workspace`]: Count all files, returns [`CountResult`]
-//! - [`diff_commits`]: Compare commits, returns [`DiffResult`]
+//! - [`diff_revspec`]: Compare commits via a git revspec string, returns [`DiffResult`]
 //!
 //! ### Stage 3: Query Processing ([`query`])
 //!
@@ -127,7 +127,7 @@ pub mod error;
 
 // Re-export all public types at crate root for convenience
 pub use data::{
-    count_directory, count_file, count_workspace, diff_commits, diff_workdir, gather_stats,
+    count_directory, count_file, count_workspace, diff_revspec, diff_workdir, gather_stats,
     gather_stats_for_path, CountOptions, CountResult, CrateDiffStats, CrateStats, DiffOptions,
     DiffResult, FileChangeType, FileDiffStats, FileStats, Locs, LocsDiff, ModuleStats,
     VisitorContext, WorkdirDiffMode,

@@ -56,9 +56,11 @@ let result = count_workspace(".", CountOptions::new()
 ### Diff between commits
 
 ```rust,ignore
-use rustloclib::{diff_commits, DiffOptions};
+use rustloclib::{diff_revspec, DiffOptions};
 
-let diff = diff_commits(".", "HEAD~5", "HEAD", DiffOptions::new())?;
+// Single revspec — accepts ranges (`a..b`), merge-base (`a...b`), tags,
+// branches, short hashes, HEAD~N. A single rev is diffed against HEAD.
+let diff = diff_revspec(".", "HEAD~5..HEAD", DiffOptions::new())?;
 println!("Code: +{}/-{}", diff.total.added.code, diff.total.removed.code);
 ```
 

@@ -1,7 +1,7 @@
 //! Git diff analysis for LOC changes between commits and working directory.
 //!
 //! This module provides functionality to compute LOC differences between:
-//! - Two git commits (using `diff_commits`)
+//! - Two git commits via a revspec (using `diff_revspec`)
 //! - Working directory and HEAD or index (using `diff_workdir`)
 //!
 //! ## Design Principle
@@ -693,11 +693,31 @@ fn compute_workdir_file_diff(change: &WorkdirFileChange, path: &Path) -> Result<
     })
 }
 
-/// Compute LOC diff between two git commits.
-pub fn diff_commits(
+/// Compute LOC diff from a git revision specification.
+///
+/// Accepts the same revspec syntax as `git rev-parse` / `git diff`:
+/// - `<rev>` — diff from the named commit to `HEAD`
+/// - `<a>..<b>` — diff from `<a>` to `<b>`
+/// - `<a>...<b>` — diff from merge-base(`<a>`, `<b>`) to `<b>`
+///
+/// `<rev>` can be any form gix understands: tags (annotated or lightweight),
+/// branches, short or full hashes, `HEAD~N`, `<branch>@{N}`, etc. Tag objects
+/// are peeled to their target commit transparently.
+///
+/// # Limitations
+///
+/// Resolution uses [`gix::Repository::rev_parse`], which doesn't yet implement
+/// every form `git rev-parse` accepts. Forms known to be unsupported in this
+/// version of gix include `@{-N}` (previous branch) and `:/regex` (commit
+/// message search). If you hit one, resolve it with `git rev-parse` first and
+/// pass the resulting hash.
+///
+/// If the gix gap becomes painful in practice, the next structural step is to
+/// shell out to `git rev-parse` for resolution — that trades the in-process
+/// advantage for full git-binary compatibility.
+pub fn diff_revspec(
     repo_path: impl AsRef<Path>,
-    from: &str,
-    to: &str,
+    revspec: &str,
     options: DiffOptions,
 ) -> Result<DiffResult> {
     let repo_path = repo_path.as_ref();
@@ -711,17 +731,22 @@ pub fn diff_commits(
         .ok_or_else(|| RustlocError::GitError("Repository has no work directory".to_string()))?
         .to_path_buf();
 
-    // Resolve commit references
-    let from_commit = resolve_commit(&repo, from)?;
-    let to_commit = resolve_commit(&repo, to)?;
+    // Resolve the revspec into two commit endpoints + display labels
+    let resolved = resolve_revspec(&repo, revspec)?;
 
     // Get the trees for both commits
-    let from_tree = from_commit
-        .tree()
-        .map_err(|e| RustlocError::GitError(format!("Failed to get tree for '{}': {}", from, e)))?;
-    let to_tree = to_commit
-        .tree()
-        .map_err(|e| RustlocError::GitError(format!("Failed to get tree for '{}': {}", to, e)))?;
+    let from_tree = resolved.from.tree().map_err(|e| {
+        RustlocError::GitError(format!(
+            "Failed to get tree for '{}': {}",
+            resolved.from_label, e
+        ))
+    })?;
+    let to_tree = resolved.to.tree().map_err(|e| {
+        RustlocError::GitError(format!(
+            "Failed to get tree for '{}': {}",
+            resolved.to_label, e
+        ))
+    })?;
 
     // Compute the diff between trees
     let changes = compute_tree_diff(&from_tree, &to_tree)?;
@@ -815,8 +840,8 @@ pub fn diff_commits(
 
     let result = DiffResult {
         root: repo_root,
-        from_commit: from.to_string(),
-        to_commit: to.to_string(),
+        from_commit: resolved.from_label,
+        to_commit: resolved.to_label,
         total,
         crates,
         files,
@@ -835,19 +860,125 @@ struct FileChange {
     new_oid: Option<gix::ObjectId>,
 }
 
-/// Resolve a commit reference to a commit object
-fn resolve_commit<'repo>(
+/// Two commit endpoints plus user-facing display labels resolved from a revspec.
+struct ResolvedSpec<'repo> {
+    from: gix::Commit<'repo>,
+    to: gix::Commit<'repo>,
+    from_label: String,
+    to_label: String,
+}
+
+/// Resolve a revspec string into a pair of commits.
+///
+/// Delegates the parsing to [`gix::Repository::rev_parse`], which natively
+/// understands tags, branches, short hashes, ranges (`a..b`), and merge
+/// specs (`a...b`). Tag objects are peeled to their target commit.
+fn resolve_revspec<'repo>(
     repo: &'repo gix::Repository,
-    reference: &str,
-) -> Result<gix::Commit<'repo>> {
-    let id = repo
-        .rev_parse_single(reference.as_bytes())
-        .map_err(|e| RustlocError::GitError(format!("Failed to resolve '{}': {}", reference, e)))?
+    revspec: &str,
+) -> Result<ResolvedSpec<'repo>> {
+    use gix::revision::plumbing::Spec as InnerSpec;
+
+    let spec = repo
+        .rev_parse(revspec.as_bytes())
+        .map_err(|e| RustlocError::GitError(format!("Failed to resolve '{}': {}", revspec, e)))?
         .detach();
 
-    repo.find_commit(id).map_err(|e| {
-        RustlocError::GitError(format!("Failed to find commit '{}': {}", reference, e))
-    })
+    match spec {
+        InnerSpec::Include(oid) => {
+            // Single rev: diff <rev>..HEAD, matching the prior CLI behavior.
+            let from = peel_oid_to_commit(repo, oid, revspec)?;
+            let head_id = repo
+                .head_id()
+                .map_err(|e| RustlocError::GitError(format!("Failed to resolve HEAD: {}", e)))?
+                .detach();
+            let to = peel_oid_to_commit(repo, head_id, "HEAD")?;
+            Ok(ResolvedSpec {
+                from,
+                to,
+                from_label: revspec.to_string(),
+                to_label: "HEAD".to_string(),
+            })
+        }
+        InnerSpec::Range { from, to } => {
+            let from_commit = peel_oid_to_commit(repo, from, revspec)?;
+            let to_commit = peel_oid_to_commit(repo, to, revspec)?;
+            let (from_label, to_label) =
+                split_label(revspec, "..").unwrap_or_else(|| (short_hex(&from), short_hex(&to)));
+            Ok(ResolvedSpec {
+                from: from_commit,
+                to: to_commit,
+                from_label,
+                to_label,
+            })
+        }
+        InnerSpec::Merge { theirs, ours } => {
+            // git diff a...b: diff from merge-base(a, b) to b.
+            // Peel both endpoints to commits first — `merge_base` expects
+            // commit ids and gix's rev_parse can hand us tag-object ids.
+            let theirs_commit = peel_oid_to_commit(repo, theirs, revspec)?;
+            let ours_commit = peel_oid_to_commit(repo, ours, revspec)?;
+            let mb = repo
+                .merge_base(theirs_commit.id, ours_commit.id)
+                .map_err(|e| {
+                    RustlocError::GitError(format!(
+                        "Failed to find merge base for '{}': {}",
+                        revspec, e
+                    ))
+                })?
+                .detach();
+            let from = peel_oid_to_commit(repo, mb, revspec)?;
+            let to = ours_commit;
+            let (from_label, to_label) = match split_label(revspec, "...") {
+                Some((a, b)) => (format!("merge-base({}, {})", a, b), b),
+                None => (short_hex(&mb), short_hex(&ours)),
+            };
+            Ok(ResolvedSpec {
+                from,
+                to,
+                from_label,
+                to_label,
+            })
+        }
+        InnerSpec::Exclude(_) | InnerSpec::IncludeOnlyParents(_) | InnerSpec::ExcludeParents(_) => {
+            Err(RustlocError::GitError(format!(
+                "Revspec '{}' resolves to an unsupported form for diff. \
+             Use `<rev>`, `<a>..<b>`, or `<a>...<b>`.",
+                revspec
+            )))
+        }
+    }
+}
+
+/// Peel a resolved object id (which may point at a tag) down to a commit.
+fn peel_oid_to_commit<'repo>(
+    repo: &'repo gix::Repository,
+    oid: gix::ObjectId,
+    revspec: &str,
+) -> Result<gix::Commit<'repo>> {
+    repo.find_object(oid)
+        .map_err(|e| {
+            RustlocError::GitError(format!("Failed to find object for '{}': {}", revspec, e))
+        })?
+        .peel_to_commit()
+        .map_err(|e| {
+            RustlocError::GitError(format!("'{}' does not point to a commit: {}", revspec, e))
+        })
+}
+
+/// Split a revspec on a separator that we know gix accepted, for display only.
+/// Returns `None` if the separator is absent (label fallback uses hashes).
+fn split_label(revspec: &str, sep: &str) -> Option<(String, String)> {
+    let (a, b) = revspec.split_once(sep)?;
+    if a.is_empty() || b.is_empty() {
+        return None;
+    }
+    Some((a.to_string(), b.to_string()))
+}
+
+fn short_hex(oid: &gix::ObjectId) -> String {
+    let s = oid.to_hex().to_string();
+    s.chars().take(8).collect()
 }
 
 /// Compute the diff between two trees
@@ -1205,16 +1336,63 @@ mod tests {
     }
 
     #[test]
-    fn test_diff_commits_same_commit() {
-        let result = diff_commits(".", "e3b2667", "e3b2667", DiffOptions::new());
+    fn test_diff_revspec_same_commit_range() {
+        let result = diff_revspec(".", "e3b2667..e3b2667", DiffOptions::new());
         assert!(result.is_ok());
         let diff = result.unwrap();
         assert_eq!(diff.total.net_total(), 0);
     }
 
     #[test]
-    fn test_diff_commits_invalid_commit() {
-        let result = diff_commits(".", "invalid_commit_hash", "HEAD", DiffOptions::new());
+    fn test_diff_revspec_invalid() {
+        let result = diff_revspec(".", "definitely_not_a_real_ref_xyz", DiffOptions::new());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_diff_revspec_single_rev_against_head() {
+        // Single rev resolves to <rev>..HEAD; using HEAD itself is a no-op diff.
+        let result = diff_revspec(".", "HEAD", DiffOptions::new());
+        assert!(result.is_ok());
+        let diff = result.unwrap();
+        assert_eq!(diff.total.net_total(), 0);
+        assert_eq!(diff.from_commit, "HEAD");
+        assert_eq!(diff.to_commit, "HEAD");
+    }
+
+    #[test]
+    fn test_diff_revspec_range_labels() {
+        let result = diff_revspec(".", "HEAD..HEAD", DiffOptions::new());
+        assert!(result.is_ok());
+        let diff = result.unwrap();
+        assert_eq!(diff.from_commit, "HEAD");
+        assert_eq!(diff.to_commit, "HEAD");
+    }
+
+    #[test]
+    fn test_diff_revspec_merge_base_syntax() {
+        // a...b should resolve via merge-base; with a == b, merge-base is a.
+        let result = diff_revspec(".", "HEAD...HEAD", DiffOptions::new());
+        assert!(result.is_ok());
+        let diff = result.unwrap();
+        assert_eq!(diff.total.net_total(), 0);
+        assert!(diff.from_commit.starts_with("merge-base("));
+        assert_eq!(diff.to_commit, "HEAD");
+    }
+
+    #[test]
+    fn test_diff_revspec_short_hash() {
+        // Short hashes should resolve.
+        let result = diff_revspec(".", "e3b2667", DiffOptions::new());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_diff_revspec_unsupported_form() {
+        // ^a (Exclude) is parseable but not a meaningful diff endpoint.
+        let result = diff_revspec(".", "^HEAD", DiffOptions::new());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unsupported"), "got: {}", err);
     }
 }

@@ -134,7 +134,7 @@ fn test_diff_help() {
 
     assert!(success);
     assert!(stdout.contains("diff"));
-    assert!(stdout.contains("Base commit or range"));
+    assert!(stdout.contains("Revspec or range"));
     assert!(stdout.contains("--by-file"));
     assert!(stdout.contains("--by-crate"));
 }
@@ -165,6 +165,51 @@ fn test_diff_with_separate_commits() {
     assert!(stdout.contains("Diff:"));
     // Total row shows file count in row name (same layout as counts)
     assert!(stdout.contains("Total (") && stdout.contains("files)"));
+}
+
+#[test]
+fn test_diff_annotated_tag_range() {
+    // Annotated tags must be peeled to their target commit by the resolver.
+    // This used to fail with "expected commit, got tag" before delegating
+    // resolution to gix::Repository::rev_parse + peel_to_commit.
+    let (stdout, _, success) = run_rustloc(&["diff", "v0.14.0..v0.14.2"]);
+
+    assert!(success, "tag-to-tag diff should resolve via gix rev_parse");
+    assert!(stdout.contains("Diff: v0.14.0"));
+    assert!(stdout.contains("v0.14.2"));
+}
+
+#[test]
+fn test_diff_single_tag_against_head() {
+    // A single revspec is diffed against HEAD.
+    let (stdout, _, success) = run_rustloc(&["diff", "v0.14.2"]);
+
+    assert!(success);
+    assert!(stdout.contains("Diff: v0.14.2"));
+    assert!(stdout.contains("HEAD"));
+}
+
+#[test]
+fn test_diff_rejects_range_with_extra_arg() {
+    // `rustloc diff a..b c` would naively become `a..b..c`, an invalid
+    // revspec. The CLI should detect and reject this with a clear error.
+    let (_, stderr, success) = run_rustloc(&["diff", "HEAD~1..HEAD", "HEAD"]);
+
+    assert!(!success, "passing a range plus a second arg should fail");
+    assert!(
+        stderr.contains("either a single range") || stderr.contains("not both"),
+        "unexpected error message: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_diff_merge_base_syntax() {
+    // a...b should resolve to merge-base(a, b)..b.
+    let (stdout, _, success) = run_rustloc(&["diff", "v0.14.0...v0.14.2"]);
+
+    assert!(success);
+    assert!(stdout.contains("merge-base"));
 }
 
 #[test]

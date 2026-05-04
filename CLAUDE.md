@@ -68,7 +68,9 @@ Git diff API:
 
 - `DiffOptions` - configuration for diffing
 - `DiffResult` - result with added/removed stats
-- `diff_commits()` - entry point for comparing commits
+- `diff_revspec()` - entry point for comparing commits (accepts a single git
+  revspec string: `<rev>`, `<a>..<b>`, or `<a>...<b>`)
+- `diff_workdir()` - entry point for diffing the working tree against HEAD
 
 ## Adding New Features
 

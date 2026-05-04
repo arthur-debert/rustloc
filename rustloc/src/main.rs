@@ -103,11 +103,18 @@ Compares line counts between two commits, or between the working directory
 and HEAD. Shows additions, removals, and net change per line type.")]
     #[command(after_help = "Use --help for examples")]
     #[command(after_long_help = "\
+Revspec syntax mirrors `git diff` / `git rev-parse`: tags, branches, short
+hashes, HEAD~N, ranges (a..b), and merge-base ranges (a...b) are all accepted.
+A single rev is diffed against HEAD; tag objects are peeled to their target
+commit automatically.
+
 Examples:
   rustloc diff                         All uncommitted changes
   rustloc diff --staged                Only staged changes
   rustloc diff HEAD~5..HEAD            Between two commits
-  rustloc diff main..feature --by-file Per-file breakdown
+  rustloc diff v1.0.0..v2.0.0          Between two tags
+  rustloc diff main feature --by-file  Two-arg form, per-file breakdown
+  rustloc diff main...feature          From their merge base to feature
   rustloc diff -t code                 Only code line changes")]
     Diff(DiffArgs),
 }
@@ -179,15 +186,19 @@ Default direction: descending for numeric fields, ascending for label.
 /// Arguments for diff command
 #[derive(Args, Clone)]
 struct DiffArgs {
-    /// Base commit or range [HEAD~5..HEAD, main..feature, main]
+    /// Revspec or range [HEAD~5..HEAD, v1.0.0..v2.0.0, main]
     #[arg(long_help = "\
-Base commit or range.
+Revspec or range, parsed by gix. Common forms work: tags (annotated or
+lightweight), branches, short hashes, HEAD~N, ranges (a..b), merge-base
+ranges (a...b). A single rev is diffed against HEAD. Without arguments,
+diffs the working directory.
 
-Accepts commit ranges (HEAD~5..HEAD, main..feature) or a single commit
-(compared against HEAD). Without arguments, diffs the working directory.")]
+Some less-common rev-parse forms (e.g. `@{-N}` for previous branch,
+`:/regex` for commit-message search) aren't supported by gix yet — pass
+the resolved hash from `git rev-parse` if you need them.")]
     from: Option<String>,
 
-    /// Target commit (when not using .. range syntax)
+    /// Target revspec (alternative to a..b range syntax)
     to: Option<String>,
 
     /// Path to the repository
@@ -259,7 +270,7 @@ Default direction: descending for numeric fields, ascending for label.
 mod handlers {
     use clap::ArgMatches;
     use rustloclib::{
-        count_directory, count_file, count_workspace, diff_commits, diff_workdir, Aggregation,
+        count_directory, count_file, count_workspace, diff_revspec, diff_workdir, Aggregation,
         CountOptions, CountQuerySet, CountResult, DiffOptions, DiffQuerySet, FilterConfig,
         LOCTable, LineTypes, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
     };
@@ -396,14 +407,28 @@ mod handlers {
         let to = matches.get_one::<String>("to");
 
         let result = if let Some(from_str) = from {
-            // Commit diff
+            // Commit diff: pass the revspec straight through to the library,
+            // which delegates parsing to gix's rev_parse. Two positional args
+            // (e.g. `rustloc diff main feature`) are joined as `<a>..<b>` so
+            // gix sees a single range expression.
             if staged {
                 return Err(anyhow::anyhow!(
                     "--staged/--cached can only be used without commit arguments"
                 ));
             }
-            let (from_commit, to_commit) = parse_commit_range(from_str, to.map(|s| s.as_str()))?;
-            diff_commits(path, &from_commit, &to_commit, options)?
+            let revspec = match to {
+                Some(to_str) => {
+                    if from_str.contains("..") {
+                        return Err(anyhow::anyhow!(
+                            "Pass either a single range/revspec (e.g. `a..b`) \
+                             or two revs as separate args (e.g. `a b`), not both."
+                        ));
+                    }
+                    format!("{}..{}", from_str, to_str)
+                }
+                None => from_str.clone(),
+            };
+            diff_revspec(path, &revspec, options)?
         } else {
             // Working directory diff
             let mode = if staged {
@@ -503,22 +528,6 @@ mod handlers {
             .get_many::<String>("crates")
             .map(|v| v.cloned().collect())
             .unwrap_or_default()
-    }
-
-    fn parse_commit_range(from: &str, to: Option<&str>) -> Result<(String, String), anyhow::Error> {
-        if let Some(to_commit) = to {
-            Ok((from.to_string(), to_commit.to_string()))
-        } else if from.contains("..") {
-            let parts: Vec<&str> = from.split("..").collect();
-            if parts.len() != 2 {
-                return Err(anyhow::anyhow!(
-                    "Invalid commit range format. Use 'from..to' or 'from to'"
-                ));
-            }
-            Ok((parts[0].to_string(), parts[1].to_string()))
-        } else {
-            Ok((from.to_string(), "HEAD".to_string()))
-        }
     }
 }
 
