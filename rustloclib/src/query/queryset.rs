@@ -37,12 +37,16 @@ pub struct CountQuerySet {
     pub aggregation: Aggregation,
     /// Line types included
     pub line_types: LineTypes,
-    /// Data rows (filtered and sorted)
+    /// Data rows (filtered and sorted; possibly truncated by `top`)
     pub items: Vec<QueryItem<Locs>>,
-    /// Total across all items
+    /// Total across all items in the underlying data set (not affected by `top`)
     pub total: Locs,
     /// Number of files analyzed
     pub file_count: usize,
+    /// Count of rows before any `top` truncation. Equals `items.len()`
+    /// unless `top` was applied.
+    #[serde(default)]
+    pub total_items: usize,
 }
 
 /// Query set for diff results.
@@ -52,9 +56,9 @@ pub struct DiffQuerySet {
     pub aggregation: Aggregation,
     /// Line types included
     pub line_types: LineTypes,
-    /// Data rows (filtered and sorted)
+    /// Data rows (filtered and sorted; possibly truncated by `top`)
     pub items: Vec<QueryItem<LocsDiff>>,
-    /// Total diff across all items
+    /// Total diff across all items in the underlying data set (not affected by `top`)
     pub total: LocsDiff,
     /// Number of files changed
     pub file_count: usize,
@@ -68,6 +72,10 @@ pub struct DiffQuerySet {
     /// Lines removed in non-Rust files
     #[serde(default)]
     pub non_rust_removed: u64,
+    /// Count of rows before any `top` truncation. Equals `items.len()`
+    /// unless `top` was applied.
+    #[serde(default)]
+    pub total_items: usize,
 }
 
 impl CountQuerySet {
@@ -82,6 +90,7 @@ impl CountQuerySet {
     ) -> Self {
         let items = build_count_items(result, &aggregation, &line_types, &ordering);
         let total = result.total.filter(line_types);
+        let total_items = items.len();
 
         CountQuerySet {
             aggregation,
@@ -89,7 +98,21 @@ impl CountQuerySet {
             items,
             total,
             file_count: result.file_count,
+            total_items,
         }
+    }
+
+    /// Keep only the first `n` items after ordering.
+    ///
+    /// Applied after `from_result` so the truncation runs on already-sorted
+    /// rows. With `n` larger than the current row count this is a no-op.
+    /// `total` and `file_count` are intentionally not changed — the displayed
+    /// rows are a slice, but the underlying counts still describe the full
+    /// data set.
+    #[must_use]
+    pub fn top(mut self, n: usize) -> Self {
+        self.items.truncate(n);
+        self
     }
 }
 
@@ -113,6 +136,7 @@ impl DiffQuerySet {
     ) -> Self {
         let items = build_diff_items(result, &aggregation, &line_types, &ordering);
         let total = result.total.filter(line_types);
+        let total_items = items.len();
 
         DiffQuerySet {
             aggregation,
@@ -124,7 +148,18 @@ impl DiffQuerySet {
             to_commit: result.to_commit.clone(),
             non_rust_added: result.non_rust_added,
             non_rust_removed: result.non_rust_removed,
+            total_items,
         }
+    }
+
+    /// Keep only the first `n` items after ordering.
+    ///
+    /// See [`CountQuerySet::top`] for semantics — `total` and `file_count`
+    /// describe the full data set, not the truncated slice.
+    #[must_use]
+    pub fn top(mut self, n: usize) -> Self {
+        self.items.truncate(n);
+        self
     }
 }
 
@@ -439,6 +474,85 @@ mod tests {
         // Stats should be filtered
         assert_eq!(qs.items[0].stats.code, 50);
         assert_eq!(qs.items[0].stats.tests, 0); // Filtered out
+    }
+
+    fn sample_count_result_three_crates() -> CountResult {
+        CountResult {
+            root: PathBuf::from("/workspace"),
+            file_count: 6,
+            total: sample_locs(600, 300),
+            crates: vec![
+                CrateStats {
+                    name: "alpha".to_string(),
+                    path: PathBuf::from("/alpha"),
+                    stats: sample_locs(50, 25),
+                    files: vec![],
+                },
+                CrateStats {
+                    name: "beta".to_string(),
+                    path: PathBuf::from("/beta"),
+                    stats: sample_locs(150, 75),
+                    files: vec![],
+                },
+                CrateStats {
+                    name: "gamma".to_string(),
+                    path: PathBuf::from("/gamma"),
+                    stats: sample_locs(400, 200),
+                    files: vec![],
+                },
+            ],
+            files: vec![],
+            modules: vec![],
+        }
+    }
+
+    #[test]
+    fn test_count_queryset_top_truncates_after_sort() {
+        let result = sample_count_result_three_crates();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::by_code(), // descending: gamma(400), beta(150), alpha(50)
+        )
+        .top(2);
+
+        assert_eq!(qs.items.len(), 2);
+        assert_eq!(qs.items[0].label, "gamma");
+        assert_eq!(qs.items[1].label, "beta");
+        // total reflects the full data set, not the truncated slice
+        assert_eq!(qs.total.code, 600);
+        assert_eq!(qs.file_count, 6);
+    }
+
+    #[test]
+    fn test_count_queryset_top_larger_than_len_is_noop() {
+        let result = sample_count_result_three_crates();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::by_code(),
+        )
+        .top(99);
+
+        assert_eq!(qs.items.len(), 3);
+    }
+
+    #[test]
+    fn test_count_queryset_top_zero_empties_items() {
+        let result = sample_count_result_three_crates();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::by_code(),
+        )
+        .top(0);
+
+        assert_eq!(qs.items.len(), 0);
+        // Total preserved.
+        assert_eq!(qs.total.code, 600);
     }
 
     #[test]

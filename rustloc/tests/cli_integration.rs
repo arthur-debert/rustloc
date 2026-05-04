@@ -342,3 +342,83 @@ fn test_diff_staged_with_commits_error() {
     assert!(!success);
     assert!(stderr.contains("--staged") || stderr.contains("--cached"));
 }
+
+#[test]
+fn test_top_truncates_by_crate() {
+    // This workspace has 2 crates; --top 1 should leave just one row.
+    let (stdout, _, success) = run_rustloc(&[".", "--by-crate", "--top", "1"]);
+
+    assert!(success);
+    // Footer must make truncation explicit and report the original count.
+    assert!(
+        stdout.contains("top 1 of 2 crates"),
+        "expected 'top 1 of 2 crates' in footer, got:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn test_top_no_truncation_label_when_not_truncated() {
+    let (stdout, _, success) = run_rustloc(&[".", "--by-crate"]);
+
+    assert!(success);
+    // Without --top the footer should be the plain count, no "top N of M".
+    assert!(stdout.contains("Total (2 crates)"));
+    assert!(!stdout.contains("top "));
+}
+
+#[test]
+fn test_top_with_by_file_and_ordering() {
+    // Truncation runs after ordering: top 2 by code descending should
+    // be the two largest files.
+    let (stdout, _, success) = run_rustloc(&[".", "--by-file", "-o", "-code", "--top", "2"]);
+
+    assert!(success);
+    assert!(stdout.contains("top 2 of"));
+    // Header still present.
+    assert!(stdout.contains("File"));
+}
+
+#[test]
+fn test_top_zero_shows_no_rows() {
+    let (stdout, _, success) = run_rustloc(&[".", "--by-crate", "--top", "0"]);
+
+    assert!(success);
+    assert!(stdout.contains("top 0 of 2 crates"));
+    // No crate row should be shown — the workspace has crates "rustloc"
+    // and "rustloclib"; assert neither appears as a row label by checking
+    // there's no row line that begins with one.
+    let rows_with_rustloc = stdout
+        .lines()
+        .filter(|line| {
+            line.trim_start().starts_with("rustloc ") || line.trim_start().starts_with("rustloclib")
+        })
+        .count();
+    assert_eq!(
+        rows_with_rustloc, 0,
+        "expected no crate rows, got:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn test_top_larger_than_data_is_noop() {
+    // With --top 99 in a 2-crate workspace, we still see both, no truncation marker.
+    let (stdout, _, success) = run_rustloc(&[".", "--by-crate", "--top", "99"]);
+
+    assert!(success);
+    assert!(stdout.contains("Total (2 crates)"));
+    assert!(!stdout.contains("top "));
+}
+
+#[test]
+fn test_top_with_diff_by_file() {
+    // --top should also work on diff output.
+    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--by-file", "--top", "2"]);
+
+    assert!(success);
+    // If there are at least 3 files changed, we'll see the truncation marker;
+    // if fewer, we'll see the plain count. Either way the command should not
+    // error and the footer should be present.
+    assert!(stdout.contains("Total ("));
+}

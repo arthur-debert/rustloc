@@ -66,7 +66,7 @@ impl LOCTable {
             })
             .collect();
         let footer = TableRow {
-            label: build_footer_label(&qs.aggregation, rows.len(), qs.file_count),
+            label: build_footer_label(&qs.aggregation, rows.len(), qs.total_items, qs.file_count),
             values: format_locs(&qs.total, &qs.line_types),
         };
 
@@ -95,7 +95,7 @@ impl LOCTable {
             })
             .collect();
         let footer = TableRow {
-            label: build_footer_label(&qs.aggregation, rows.len(), qs.file_count),
+            label: build_footer_label(&qs.aggregation, rows.len(), qs.total_items, qs.file_count),
             values: format_locs_diff(&qs.total, &qs.line_types),
         };
         let title = Some(format!("Diff: {} → {}", qs.from_commit, qs.to_commit));
@@ -149,14 +149,26 @@ impl From<&crate::query::options::LineTypes> for LineTypesView {
 
 /// Build footer label based on aggregation level.
 ///
-/// For Total aggregation (no item rows), reports the total file count.
-/// For other aggregations, reports the number of displayed items with the matching unit.
-fn build_footer_label(aggregation: &Aggregation, items_count: usize, file_count: usize) -> String {
-    match aggregation {
-        Aggregation::Total => format!("Total ({} files)", file_count),
-        Aggregation::ByCrate => format!("Total ({} crates)", items_count),
-        Aggregation::ByModule => format!("Total ({} modules)", items_count),
-        Aggregation::ByFile => format!("Total ({} files)", items_count),
+/// `displayed` is the number of rows actually shown (after any `top`
+/// truncation). `total` is the row count before truncation. When they
+/// differ, the label makes the truncation explicit ("top N of M crates")
+/// so the reader knows the totals row reflects more than what's visible.
+fn build_footer_label(
+    aggregation: &Aggregation,
+    displayed: usize,
+    total: usize,
+    file_count: usize,
+) -> String {
+    let unit = match aggregation {
+        Aggregation::Total => return format!("Total ({} files)", file_count),
+        Aggregation::ByCrate => "crates",
+        Aggregation::ByModule => "modules",
+        Aggregation::ByFile => "files",
+    };
+    if displayed < total {
+        format!("Total (top {} of {} {})", displayed, total, unit)
+    } else {
+        format!("Total ({} {})", total, unit)
     }
 }
 
@@ -375,6 +387,22 @@ mod tests {
         assert_eq!(table.rows[0].label, "alpha");
         assert_eq!(table.rows[1].label, "beta");
         assert_eq!(table.footer.label, "Total (2 crates)");
+    }
+
+    #[test]
+    fn test_footer_label_marks_truncation_when_top_applied() {
+        let result = sample_count_result();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        )
+        .top(1);
+        let table = LOCTable::from_count_queryset(&qs);
+
+        assert_eq!(table.rows.len(), 1);
+        assert_eq!(table.footer.label, "Total (top 1 of 2 crates)");
     }
 
     #[test]

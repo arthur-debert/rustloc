@@ -181,6 +181,17 @@ Default direction: descending for numeric fields, ascending for label.
   -o +code        Sort by code lines (ascending)
   -o label        Sort by name (ascending)")]
     ordering: Option<String>,
+
+    /// Show only the top N rows after sorting [requires --by-* aggregation]
+    #[arg(long = "top", value_name = "N")]
+    #[arg(long_help = "\
+Truncate the result to the top N rows after sorting. The truncation is
+applied after `--ordering`, so use the two together for things like
+`--by-file -o -code --top 10` (the 10 files with the most code).
+
+The total row and file count still describe the full data set, not the
+truncated slice. No-op when no `--by-*` aggregation is in effect.")]
+    top: Option<usize>,
 }
 
 /// Arguments for diff command
@@ -264,6 +275,17 @@ Default direction: descending for numeric fields, ascending for label.
   -o +code        Sort by code lines (ascending)
   -o label        Sort by name (ascending)")]
     ordering: Option<String>,
+
+    /// Show only the top N rows after sorting [requires --by-* aggregation]
+    #[arg(long = "top", value_name = "N")]
+    #[arg(long_help = "\
+Truncate the result to the top N rows after sorting. The truncation is
+applied after `--ordering`, so use the two together for things like
+`--by-file -o -code --top 10` (the 10 files with the most code change).
+
+The total row and file count still describe the full data set, not the
+truncated slice. No-op when no `--by-*` aggregation is in effect.")]
+    top: Option<usize>,
 }
 
 /// Command handlers module
@@ -353,12 +375,27 @@ mod handlers {
             count_directory(path, &filter)?
         };
 
+        let top = extract_top(matches);
+        let apply_top = |qs: CountQuerySet| match top {
+            Some(n) => qs.top(n),
+            None => qs,
+        };
+
         if structured {
-            let queryset =
-                CountQuerySet::from_result(&result, aggregation, LineTypes::everything(), ordering);
+            let queryset = apply_top(CountQuerySet::from_result(
+                &result,
+                aggregation,
+                LineTypes::everything(),
+                ordering,
+            ));
             Ok(Output::Render(serde_json::to_value(queryset)?))
         } else {
-            let queryset = CountQuerySet::from_result(&result, aggregation, line_types, ordering);
+            let queryset = apply_top(CountQuerySet::from_result(
+                &result,
+                aggregation,
+                line_types,
+                ordering,
+            ));
             let table = LOCTable::from_count_queryset(&queryset);
             Ok(Output::Render(serde_json::to_value(table)?))
         }
@@ -439,12 +476,27 @@ mod handlers {
             diff_workdir(path, mode, options)?
         };
 
+        let top = extract_top(matches);
+        let apply_top = |qs: DiffQuerySet| match top {
+            Some(n) => qs.top(n),
+            None => qs,
+        };
+
         if structured {
-            let queryset =
-                DiffQuerySet::from_result(&result, aggregation, LineTypes::everything(), ordering);
+            let queryset = apply_top(DiffQuerySet::from_result(
+                &result,
+                aggregation,
+                LineTypes::everything(),
+                ordering,
+            ));
             Ok(Output::Render(serde_json::to_value(queryset)?))
         } else {
-            let queryset = DiffQuerySet::from_result(&result, aggregation, line_types, ordering);
+            let queryset = apply_top(DiffQuerySet::from_result(
+                &result,
+                aggregation,
+                line_types,
+                ordering,
+            ));
             let table = LOCTable::from_diff_queryset(&queryset);
             Ok(Output::Render(serde_json::to_value(table)?))
         }
@@ -482,6 +534,10 @@ mod handlers {
             .get_one::<String>("ordering")
             .map(|s| parse_ordering(s).unwrap_or_default())
             .unwrap_or_default()
+    }
+
+    fn extract_top(matches: &ArgMatches) -> Option<usize> {
+        matches.get_one::<usize>("top").copied()
     }
 
     fn extract_line_types(matches: &ArgMatches) -> LineTypes {
