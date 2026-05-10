@@ -3,7 +3,15 @@
 use std::process::Command;
 
 fn run_rustloc(args: &[&str]) -> (String, String, bool) {
-    let mut cmd_args = vec!["run", "-p", "rustloc", "--"];
+    let (stdout, stderr, code) = run_rustloc_with_code(args);
+    (stdout, stderr, code == Some(0))
+}
+
+/// Like `run_rustloc` but returns the actual exit code so tests can pin
+/// down the precise failure mode (e.g. clap usage errors must exit 2,
+/// not just "any nonzero").
+fn run_rustloc_with_code(args: &[&str]) -> (String, String, Option<i32>) {
+    let mut cmd_args = vec!["run", "--quiet", "-p", "rustloc", "--"];
     cmd_args.extend(args);
 
     let output = Command::new("cargo")
@@ -14,9 +22,7 @@ fn run_rustloc(args: &[&str]) -> (String, String, bool) {
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let success = output.status.success();
-
-    (stdout, stderr, success)
+    (stdout, stderr, output.status.code())
 }
 
 #[test]
@@ -626,17 +632,48 @@ fn test_filter_eliminates_all_rows() {
 }
 
 #[test]
-fn test_filter_unknown_flag_errors_clearly() {
-    // Note: clap parse errors are printed but the binary currently exits 0
-    // (pre-existing behavior — see how every other clap-rejection test in
-    // this file checks stdout/stderr content rather than exit code). What
-    // matters here is that the user sees a clear message pointing at the
-    // typo'd flag.
-    let (stdout, stderr, _) = run_rustloc(&[".", "--code-foo", "100"]);
-    let combined = format!("{}{}", stdout, stderr);
+fn test_filter_unknown_op_errors_to_stderr_with_nonzero_exit() {
+    // Unknown operator on a real field. Must exit with the standard
+    // usage-error code (2), surface clap's error text on stderr, and
+    // produce no stdout — otherwise a script piping rustloc would silently
+    // miss the typo (the real-world report that motivated this test).
+    let (stdout, stderr, code) = run_rustloc_with_code(&[".", "--total-fsdgte", "1300"]);
+    assert_eq!(code, Some(2), "expected exit 2, got {:?}", code);
     assert!(
-        combined.contains("--code-foo") || combined.contains("unexpected"),
-        "unexpected error message: stdout={:?} stderr={:?}",
+        stderr.contains("error:") && stderr.contains("unexpected argument"),
+        "expected clap error on stderr, got stdout={:?} stderr={:?}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.is_empty(),
+        "stdout should be empty on parse error, got {:?}",
+        stdout
+    );
+}
+
+#[test]
+fn test_filter_unknown_flag_errors_clearly() {
+    let (stdout, stderr, code) = run_rustloc_with_code(&[".", "--code-foo", "100"]);
+    assert_eq!(code, Some(2), "expected exit 2, got {:?}", code);
+    assert!(
+        stderr.contains("error:") && stderr.contains("unexpected argument"),
+        "expected clap error on stderr, got stdout={:?} stderr={:?}",
+        stdout,
+        stderr
+    );
+}
+
+#[test]
+fn test_filter_malformed_double_dash_in_flag_errors() {
+    // `--total--fsdgte` is well-formed at the shell level (passed through
+    // verbatim) but isn't a valid clap long-flag name and isn't in our
+    // registered set. Must still fail loud rather than silently no-op.
+    let (stdout, stderr, code) = run_rustloc_with_code(&[".", "--total--fsdgte", "1300"]);
+    assert_eq!(code, Some(2), "expected exit 2, got {:?}", code);
+    assert!(
+        stderr.contains("error:") && stderr.contains("unexpected argument"),
+        "expected clap error on stderr, got stdout={:?} stderr={:?}",
         stdout,
         stderr
     );
@@ -644,11 +681,12 @@ fn test_filter_unknown_flag_errors_clearly() {
 
 #[test]
 fn test_filter_non_numeric_value_errors_clearly() {
-    let (stdout, stderr, _) = run_rustloc(&[".", "--code-gte", "abc"]);
-    let combined = format!("{}{}", stdout, stderr);
+    let (stdout, stderr, code) = run_rustloc_with_code(&[".", "--code-gte", "abc"]);
+    assert_eq!(code, Some(2), "expected exit 2, got {:?}", code);
     assert!(
-        combined.contains("invalid value") || combined.contains("invalid digit"),
-        "unexpected error message: stdout={:?} stderr={:?}",
+        stderr.contains("error:")
+            && (stderr.contains("invalid value") || stderr.contains("invalid digit")),
+        "expected clap value error on stderr, got stdout={:?} stderr={:?}",
         stdout,
         stderr
     );

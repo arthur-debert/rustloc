@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Filter-flag typos like `--total-fsdgte 1300` no longer silently exit 0
+  with no output. They now print clap's `error: unexpected argument...`
+  message (with the helpful "did you mean `--total-gte`?" tip) to stderr
+  and exit with the standard usage-error code 2 — so scripts piping
+  rustloc actually notice the typo.
+
+  Two compounding bugs caused the silent failure:
+  1. standout's `run_to_string` used to stuff clap parse errors into
+     `RunResult::Handled(stringified)`, which we treated as success and
+     printed to stdout with exit 0. **Fixed upstream in standout 7.6.0**
+     via a new `RunResult::Error` variant that signals "write to stderr,
+     exit non-zero." Bumped `standout` 7.2.0 → 7.6.2 to pick this up.
+  2. v0.15.1 added a `_ => ExitCode::SUCCESS` wildcard to the `RunResult`
+     match (to compile against `#[non_exhaustive]` future variants). On
+     standout 7.6.x — what `cargo install` resolves to — that wildcard
+     swallowed the new `Error` variant entirely. Now we match `Error`
+     explicitly; the wildcard exits with FAILURE so future unhandled
+     variants are surfaced rather than hidden.
+
+### Changed
+
+- Bumped `standout` dependency from 7.2.0 to 7.6.2.
+
 ## [0.15.1] - 2026-05-10
 
 
