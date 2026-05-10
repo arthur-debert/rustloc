@@ -761,6 +761,14 @@ fn main() -> ExitCode {
                 eprintln!("Error: Unknown command");
                 ExitCode::FAILURE
             }
+            // RunResult is #[non_exhaustive] and newer 7.x releases add
+            // variants beyond the four above. `cargo install` ignores
+            // Cargo.lock by default, so end users resolve to the latest
+            // semver-compatible standout-dispatch and need this wildcard
+            // to compile. The allow keeps `-D warnings` happy against the
+            // locked version where the four named arms are still exhaustive.
+            #[allow(unreachable_patterns)]
+            _ => ExitCode::SUCCESS,
         },
         Err(e) => {
             eprintln!("Error: {}", e);
