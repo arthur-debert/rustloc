@@ -146,10 +146,11 @@ impl CountQuerySet {
 
     /// Keep only items satisfying every predicate (AND-combined).
     ///
-    /// `Field::Total` honors the active `LineTypes` — i.e. the total used
-    /// here is the same one that `Ordering` with `OrderBy::Total` uses, so
-    /// `--type code,tests --total-gte 1000` filters on the sum of the two
-    /// enabled types, not on the precomputed `Locs::total`.
+    /// `Field::Total` reads `Locs::total` directly so filtering on `total`
+    /// matches the displayed `Total` column regardless of the active
+    /// `LineTypes`. To filter on a subset, use the per-field flags
+    /// (`--code-gte`, `--tests-gte`, …) which always operate on the
+    /// underlying line type, not a "currently-visible" view of it.
     ///
     /// `total_items` is intentionally NOT updated — it tracks the row count
     /// before any *user-driven* truncation (`top` and `filter`), so the
@@ -160,12 +161,8 @@ impl CountQuerySet {
         if preds.is_empty() {
             return self;
         }
-        let line_types = self.line_types;
-        self.items.retain(|item| {
-            preds
-                .iter()
-                .all(|p| matches_locs(p, &item.stats, &line_types))
-        });
+        self.items
+            .retain(|item| preds.iter().all(|p| matches_locs(p, &item.stats)));
         self
     }
 }
@@ -178,20 +175,13 @@ fn u64_to_i64_sat(v: u64) -> i64 {
     i64::try_from(v).unwrap_or(i64::MAX)
 }
 
-/// Saturating signed subtraction `u64 - u64 -> i64`. Used for the diff
-/// `Total` case where each side is a u64 sum and the difference can exceed
-/// `i64` magnitude in pathological inputs.
-fn u64_sub_i64_sat(a: u64, b: u64) -> i64 {
-    let a = u64_to_i64_sat(a);
-    let b = u64_to_i64_sat(b);
-    a.saturating_sub(b)
-}
-
 /// Resolve the integer value a predicate's field refers to in a `Locs`.
 ///
-/// `Field::Total` follows `OrderBy::Total` semantics: the sum of currently-
-/// enabled line types, not `Locs::total`.
-fn locs_field_value(locs: &Locs, field: Field, line_types: &LineTypes) -> i64 {
+/// `Field::Total` reads `Locs::total` directly — the same precomputed
+/// all-types sum that the displayed `Total` column shows. Filtering on
+/// `total` matches what the user sees, regardless of which line types
+/// the active `LineTypes` happens to enable for column display.
+fn locs_field_value(locs: &Locs, field: Field) -> i64 {
     let v: u64 = match field {
         Field::Code => locs.code,
         Field::Tests => locs.tests,
@@ -199,18 +189,21 @@ fn locs_field_value(locs: &Locs, field: Field, line_types: &LineTypes) -> i64 {
         Field::Docs => locs.docs,
         Field::Comments => locs.comments,
         Field::Blanks => locs.blanks,
-        Field::Total => locs_filtered_total(locs, line_types),
+        Field::Total => locs.total,
     };
     u64_to_i64_sat(v)
 }
 
-fn matches_locs(pred: &Predicate, locs: &Locs, line_types: &LineTypes) -> bool {
-    let lhs = locs_field_value(locs, pred.field, line_types);
+fn matches_locs(pred: &Predicate, locs: &Locs) -> bool {
+    let lhs = locs_field_value(locs, pred.field);
     pred.op.evaluate(lhs, u64_to_i64_sat(pred.value))
 }
 
 /// Resolve the (signed) net diff value a predicate's field refers to.
-fn diff_field_value(diff: &LocsDiff, field: Field, line_types: &LineTypes) -> i64 {
+///
+/// `Field::Total` uses `LocsDiff::net_total()` — the all-types net change.
+/// Same WYSIWYF rationale as `locs_field_value`.
+fn diff_field_value(diff: &LocsDiff, field: Field) -> i64 {
     match field {
         Field::Code => diff.net_code(),
         Field::Tests => diff.net_tests(),
@@ -218,15 +211,12 @@ fn diff_field_value(diff: &LocsDiff, field: Field, line_types: &LineTypes) -> i6
         Field::Docs => diff.net_docs(),
         Field::Comments => diff.net_comments(),
         Field::Blanks => diff.net_blanks(),
-        Field::Total => {
-            let (a, r) = locs_diff_filtered_total(diff, line_types);
-            u64_sub_i64_sat(a, r)
-        }
+        Field::Total => diff.net_total(),
     }
 }
 
-fn matches_diff(pred: &Predicate, diff: &LocsDiff, line_types: &LineTypes) -> bool {
-    let lhs = diff_field_value(diff, pred.field, line_types);
+fn matches_diff(pred: &Predicate, diff: &LocsDiff) -> bool {
+    let lhs = diff_field_value(diff, pred.field);
     pred.op.evaluate(lhs, u64_to_i64_sat(pred.value))
 }
 
@@ -283,49 +273,26 @@ impl DiffQuerySet {
     /// Comparisons are made against the **net** change for each field
     /// (added − removed), so `--code-lt 0` matches files with net code
     /// removed, and `--code-gte 100` matches files where added − removed ≥ 100.
-    /// `Field::Total` honors the active `LineTypes`. See [`CountQuerySet::filter`]
-    /// for the rationale on why `total_items` isn't updated.
+    /// `Field::Total` uses `LocsDiff::net_total()` so it matches the
+    /// displayed Total column. See [`CountQuerySet::filter`] for the
+    /// rationale on why `total_items` isn't updated.
     #[must_use]
     pub fn filter(mut self, preds: &[Predicate]) -> Self {
         if preds.is_empty() {
             return self;
         }
-        let line_types = self.line_types;
-        self.items.retain(|item| {
-            preds
-                .iter()
-                .all(|p| matches_diff(p, &item.stats, &line_types))
-        });
+        self.items
+            .retain(|item| preds.iter().all(|p| matches_diff(p, &item.stats)));
         self
     }
 }
 
-/// Compute filtered total for a Locs struct.
-fn locs_filtered_total(locs: &Locs, line_types: &LineTypes) -> u64 {
-    let mut total = 0;
-    if line_types.code {
-        total += locs.code;
-    }
-    if line_types.tests {
-        total += locs.tests;
-    }
-    if line_types.examples {
-        total += locs.examples;
-    }
-    if line_types.docs {
-        total += locs.docs;
-    }
-    if line_types.comments {
-        total += locs.comments;
-    }
-    if line_types.blanks {
-        total += locs.blanks;
-    }
-    total
-}
-
 /// Get sort key for Locs based on OrderBy.
-fn count_sort_key(locs: &Locs, order_by: &OrderBy, line_types: &LineTypes) -> u64 {
+///
+/// `OrderBy::Total` reads `Locs::total` so sort order matches the displayed
+/// `Total` column (which is also `Locs::total`). See `locs_field_value` for
+/// the same rationale on the predicate side.
+fn count_sort_key(locs: &Locs, order_by: &OrderBy) -> u64 {
     match order_by {
         OrderBy::Label => 0, // Label sorting handled separately
         OrderBy::Code => locs.code,
@@ -334,7 +301,7 @@ fn count_sort_key(locs: &Locs, order_by: &OrderBy, line_types: &LineTypes) -> u6
         OrderBy::Docs => locs.docs,
         OrderBy::Comments => locs.comments,
         OrderBy::Blanks => locs.blanks,
-        OrderBy::Total => locs_filtered_total(locs, line_types),
+        OrderBy::Total => locs.total,
     }
 }
 
@@ -383,8 +350,8 @@ fn build_count_items(
         }
         _ => {
             items.sort_by(|a, b| {
-                let key_a = count_sort_key(&a.1, &ordering.by, line_types);
-                let key_b = count_sort_key(&b.1, &ordering.by, line_types);
+                let key_a = count_sort_key(&a.1, &ordering.by);
+                let key_b = count_sort_key(&b.1, &ordering.by);
                 key_a.cmp(&key_b)
             });
         }
@@ -402,15 +369,11 @@ fn build_count_items(
         .collect()
 }
 
-/// Compute filtered total for a LocsDiff struct.
-fn locs_diff_filtered_total(diff: &LocsDiff, line_types: &LineTypes) -> (u64, u64) {
-    let added = locs_filtered_total(&diff.added, line_types);
-    let removed = locs_filtered_total(&diff.removed, line_types);
-    (added, removed)
-}
-
 /// Get sort key for LocsDiff based on OrderBy (uses net change).
-fn diff_sort_key(diff: &LocsDiff, order_by: &OrderBy, line_types: &LineTypes) -> i64 {
+///
+/// `OrderBy::Total` uses `LocsDiff::net_total()` for the same WYSIWYF
+/// rationale as the count side — sort order matches the displayed Total.
+fn diff_sort_key(diff: &LocsDiff, order_by: &OrderBy) -> i64 {
     match order_by {
         OrderBy::Label => 0, // Label sorting handled separately
         OrderBy::Code => diff.net_code(),
@@ -419,10 +382,7 @@ fn diff_sort_key(diff: &LocsDiff, order_by: &OrderBy, line_types: &LineTypes) ->
         OrderBy::Docs => diff.net_docs(),
         OrderBy::Comments => diff.net_comments(),
         OrderBy::Blanks => diff.net_blanks(),
-        OrderBy::Total => {
-            let (a, r) = locs_diff_filtered_total(diff, line_types);
-            a as i64 - r as i64
-        }
+        OrderBy::Total => diff.net_total(),
     }
 }
 
@@ -486,8 +446,8 @@ fn build_diff_items(
         }
         _ => {
             items.sort_by(|a, b| {
-                let key_a = diff_sort_key(&a.1, &ordering.by, line_types);
-                let key_b = diff_sort_key(&b.1, &ordering.by, line_types);
+                let key_a = diff_sort_key(&a.1, &ordering.by);
+                let key_b = diff_sort_key(&b.1, &ordering.by);
                 key_a.cmp(&key_b)
             });
         }
@@ -738,10 +698,17 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_total_honors_line_types() {
-        // alpha total=75 (50+25), beta total=225, gamma total=600.
-        // With everything enabled, --total-gte 200 keeps beta and gamma.
+    fn test_filter_total_uses_full_total_regardless_of_line_types() {
+        // `Field::Total` reads `Locs::total` (the precomputed all-types
+        // sum, what the displayed `Total` column shows), independent of
+        // which line types `LineTypes` enables for column display. This
+        // is the WYSIWYF guarantee: filtering on `total` matches what
+        // the user sees in the Total column.
+        //
+        // alpha total=75, beta total=225, gamma total=600.
         let result = sample_count_result_three_crates();
+
+        // With everything enabled: --total-gte 200 keeps beta + gamma.
         let qs = CountQuerySet::from_result(
             &result,
             Aggregation::ByCrate,
@@ -751,8 +718,11 @@ mod tests {
         .filter(&[Predicate::new(Field::Total, Op::Gte, 200)]);
         assert_eq!(qs.items.len(), 2);
 
-        // With only `code` enabled, "total" becomes just code values.
-        // alpha=50, beta=150, gamma=400. --total-gte 200 keeps gamma alone.
+        // With only `code` enabled, the predicate STILL evaluates against
+        // `Locs::total`, so the same 2 rows survive. Before the WYSIWYF
+        // fix this returned only `gamma` because `Field::Total` was
+        // redefined as "sum of currently-enabled line types", which made
+        // it diverge from the visible Total column.
         let qs = CountQuerySet::from_result(
             &result,
             Aggregation::ByCrate,
@@ -760,8 +730,10 @@ mod tests {
             Ordering::default(),
         )
         .filter(&[Predicate::new(Field::Total, Op::Gte, 200)]);
-        assert_eq!(qs.items.len(), 1);
-        assert_eq!(qs.items[0].label, "gamma");
+        assert_eq!(qs.items.len(), 2);
+        let labels: Vec<_> = qs.items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"beta"));
+        assert!(labels.contains(&"gamma"));
     }
 
     #[test]
