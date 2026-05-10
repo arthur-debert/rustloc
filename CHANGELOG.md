@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-05-10
+
+
 ### Fixed
 
 - Filter-flag typos like `--total-fsdgte 1300` no longer silently exit 0
@@ -31,7 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Bumped `standout` dependency from 7.2.0 to 7.6.2.
-
 ## [0.15.1] - 2026-05-10
 
 
