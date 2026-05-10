@@ -45,10 +45,14 @@
 //!
 //! ### Stage 3: Query Processing ([`query`])
 //!
-//! Filter, aggregate, and sort the collected data:
-//! - [`CountQuerySet`]: Processed count data ready for display
-//! - [`LineTypes`]: Which line types to include
+//! Filter, aggregate, sort, and slice the collected data:
+//! - [`CountQuerySet`] / [`DiffQuerySet`]: Processed data ready for display
+//! - [`Aggregation`]: Total, ByCrate, ByModule, ByFile
+//! - [`LineTypes`]: Which line types to include in output
 //! - [`Ordering`]: How to sort results
+//! - [`Predicate`] (built from [`Field`] + [`Op`]): Threshold filters,
+//!   chained via `CountQuerySet::filter(&[Predicate])`
+//! - `CountQuerySet::top(N)`: Truncate to the first N rows after sorting
 //!
 //! ### Stage 4: Output Formatting ([`output`])
 //!
@@ -92,23 +96,31 @@
 //! ```rust,ignore
 //! use rustloclib::{
 //!     count_workspace, CountOptions, CountQuerySet, LOCTable,
-//!     Aggregation, LineTypes, Ordering,
+//!     Aggregation, Field, LineTypes, Op, Ordering, Predicate,
 //! };
 //!
 //! // Stage 1-2: Discover and collect
 //! let result = count_workspace(".", CountOptions::new())?;
 //!
-//! // Stage 3: Query (filter, aggregate, sort)
+//! // Stage 3: Query — aggregate, sort, then filter and slice. Chain
+//! // `.filter(...)` and `.top(...)` for the equivalent of the CLI's
+//! // `--code-gte 1000 --top 10`.
 //! let queryset = CountQuerySet::from_result(
 //!     &result,
-//!     Aggregation::ByCrate,
+//!     Aggregation::ByFile,
 //!     LineTypes::everything(),
 //!     Ordering::by_code(),
-//! );
+//! )
+//! .filter(&[Predicate::new(Field::Code, Op::Gte, 1000)])
+//! .top(10);
 //!
 //! // Stage 4: Format for output
 //! let table = LOCTable::from_count_queryset(&queryset);
 //! ```
+//!
+//! [`DiffQuerySet`] mirrors [`CountQuerySet`] for the diff side; both
+//! support the same `.filter()` / `.top()` chain. Diff filters operate
+//! on the net change (added − removed) per row.
 //!
 //! ## Origins
 //!

@@ -6,10 +6,26 @@
 //! - Filtered to include only requested line types
 //! - Sorted according to the ordering preference
 //!
+//! After construction with `from_result`, two chainable methods further
+//! reduce the row set:
+//!
+//! - [`CountQuerySet::filter`] / [`DiffQuerySet::filter`] — keep only rows
+//!   satisfying every supplied [`Predicate`] (AND-combined). For diffs,
+//!   each predicate is evaluated against the row's net change
+//!   (added − removed).
+//! - [`CountQuerySet::top`] / [`DiffQuerySet::top`] — truncate to the first
+//!   N rows after sorting.
+//!
+//! Filter runs before top in the typical chain. `total` and `total_items`
+//! always describe the underlying data set, not the post-filter/post-top
+//! slice — that lets the footer render "top X of Y" honestly.
+//!
 //! The data pipeline is:
 //! 1. Raw Data (CountResult, DiffResult)
-//! 2. QuerySet (filtered, aggregated, sorted)
+//! 2. QuerySet (filtered, aggregated, sorted, optionally truncated)
 //! 3. LOCTable (formatted strings for display)
+//!
+//! [`Predicate`]: crate::query::options::Predicate
 
 use serde::{Deserialize, Serialize};
 

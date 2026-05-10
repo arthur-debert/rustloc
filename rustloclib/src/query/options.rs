@@ -1,7 +1,21 @@
 //! Input options for LOC counting and diffing operations.
 //!
-//! This module contains all configuration types that control what data
-//! the library computes and returns.
+//! This module contains the configuration types that control what data the
+//! library computes and returns:
+//!
+//! - [`LineTypes`] — which of the 7 line types to include in results.
+//! - [`Aggregation`] — granularity of breakdown (`Total`, `ByCrate`,
+//!   `ByModule`, `ByFile`).
+//! - [`Ordering`] (composed of [`OrderBy`] + [`OrderDirection`]) — how the
+//!   query set is sorted.
+//! - [`Predicate`] — a `<field> <op> <value>` threshold filter, built from
+//!   a [`Field`] (one of the 7 line types) and an [`Op`]
+//!   (`gt`/`gte`/`eq`/`ne`/`lt`/`lte`). Multiple predicates AND together
+//!   when applied via `CountQuerySet::filter` / `DiffQuerySet::filter`.
+//!
+//! `Field::Total` follows the same semantics as `OrderBy::Total`: it sums
+//! the currently-enabled line types rather than reading the precomputed
+//! `Locs::total` field.
 
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
