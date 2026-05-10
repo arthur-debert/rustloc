@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `--total-gte N` (and the other `--total-<op>` filters, plus `-o total`
+  sort) now match the displayed `Total` column. Previously they evaluated
+  against "sum of currently-enabled line types", which silently diverged
+  from the visible Total whenever any line type was hidden — and the CLI
+  default hides `examples`, `comments`, and `blanks`. So a file with
+  `Total = 1048` could fail `--total-gte 1000` because the predicate was
+  actually summing only `code + tests + docs = 895`. `Field::Total` and
+  `OrderBy::Total` now read `Locs::total` (the precomputed all-types
+  sum that the table prints). To filter on a subset of types, use the
+  per-field flags (`--code-gte 1000`, `--tests-gte 100`, …) — they
+  already operated on the underlying field, no change there.
+
 ## [0.15.2] - 2026-05-10
 
 

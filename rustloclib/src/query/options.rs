@@ -13,9 +13,10 @@
 //!   (`gt`/`gte`/`eq`/`ne`/`lt`/`lte`). Multiple predicates AND together
 //!   when applied via `CountQuerySet::filter` / `DiffQuerySet::filter`.
 //!
-//! `Field::Total` follows the same semantics as `OrderBy::Total`: it sums
-//! the currently-enabled line types rather than reading the precomputed
-//! `Locs::total` field.
+//! `Field::Total` (and `OrderBy::Total`) read `Locs::total` directly — the
+//! same precomputed all-types sum that the displayed `Total` column shows.
+//! Filtering or sorting on `total` matches what the user sees, regardless
+//! of which line types are enabled for column display via `LineTypes`.
 
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -242,9 +243,9 @@ impl FromStr for OrderBy {
 /// Numeric category that a filter `Predicate` operates on.
 ///
 /// The seven variants correspond one-to-one with the seven counted line
-/// types. `Total` is the sum of currently-enabled line types — it follows
-/// the same semantics as `OrderBy::Total`, so a filter on `Total` honors
-/// the active `LineTypes` rather than the precomputed `Locs::total` field.
+/// types. `Total` reads `Locs::total` (the precomputed all-types sum) so
+/// filtering on `Total` matches the displayed `Total` column regardless
+/// of the active `LineTypes` selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Field {
     Code,
