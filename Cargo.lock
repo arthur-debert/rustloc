@@ -2400,7 +2400,7 @@ dependencies = [
 
 [[package]]
 name = "rustloc"
-version = "0.15.2"
+version = "0.15.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -2413,7 +2413,7 @@ dependencies = [
 
 [[package]]
 name = "rustloclib"
-version = "0.15.2"
+version = "0.15.3"
 dependencies = [
  "cargo_metadata",
  "gix",

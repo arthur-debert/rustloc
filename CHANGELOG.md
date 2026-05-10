@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-05-10
+
+
 ### Fixed
 
 - `--total-gte N` (and the other `--total-<op>` filters, plus `-o total`
@@ -20,7 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sum that the table prints). To filter on a subset of types, use the
   per-field flags (`--code-gte 1000`, `--tests-gte 100`, …) — they
   already operated on the underlying field, no change there.
-
 ## [0.15.2] - 2026-05-10
 
 
