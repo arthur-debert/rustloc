@@ -110,9 +110,12 @@ rustloc is also available as a library crate, [`rustloclib`](https://docs.rs/rus
 ```rust
 use rustloclib::{count_workspace, CountOptions};
 
-let result = count_workspace(".", CountOptions::new())?;
-println!("Production code: {}", result.total.code);
-println!("Test code:       {}", result.total.tests);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let result = count_workspace(".", CountOptions::new())?;
+    println!("Production code: {}", result.total.code);
+    println!("Test code:       {}", result.total.tests);
+    Ok(())
+}
 ```
 
 The library exposes a four-stage pipeline (source → data → query → output) that the CLI is built on top of. See the [API documentation](https://docs.rs/rustloclib) for the full surface area, including diffs, filtering predicates, and table rendering.

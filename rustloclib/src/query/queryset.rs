@@ -16,9 +16,12 @@
 //! - [`CountQuerySet::top`] / [`DiffQuerySet::top`] — truncate to the first
 //!   N rows after sorting.
 //!
-//! Filter runs before top in the typical chain. `total` and `total_items`
-//! always describe the underlying data set, not the post-filter/post-top
-//! slice — that lets the footer render "top X of Y" honestly.
+//! Order of application is whatever the caller chains.
+//! `.filter(...).top(N)` keeps the top N of the matching rows (the CLI's
+//! convention); `.top(N).filter(...)` filters within an already-truncated
+//! slice. `total` and `total_items` always describe the underlying data
+//! set, not the post-filter/post-top slice — that lets the footer render
+//! "top X of Y" honestly.
 //!
 //! The data pipeline is:
 //! 1. Raw Data (CountResult, DiffResult)

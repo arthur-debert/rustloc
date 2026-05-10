@@ -9,7 +9,10 @@
 //!   ([`Predicate`]). Operators are `gt`/`gte`/`eq`/`ne`/`lt`/`lte`.
 //! - **QuerySet**: Processed data ready for presentation, with chainable
 //!   `.filter(&[Predicate])` and `.top(N)` methods on both [`CountQuerySet`]
-//!   and [`DiffQuerySet`]. Filter runs before top.
+//!   and [`DiffQuerySet`]. The two are independent and order matters —
+//!   `.filter(...).top(N)` gives "top N of those matching the predicates"
+//!   (what the CLI does); `.top(N).filter(...)` instead truncates first
+//!   and then filters from that slice.
 //!
 //! Diff predicates are evaluated against the net change per row
 //! (added − removed), so e.g. `Op::Lt` against `0` matches rows with more
