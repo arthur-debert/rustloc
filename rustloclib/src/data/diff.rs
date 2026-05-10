@@ -45,6 +45,19 @@ pub struct LocsDiff {
     pub removed: Locs,
 }
 
+/// Saturating signed subtraction `u64 - u64 -> i64`. Each side is clamped
+/// to `i64::MAX` before subtracting and the difference saturates rather
+/// than wrapping. Realistic LOC counts never hit `i64::MAX` (~9.2 × 10^18),
+/// but the `net_total` case is a sum-of-fields and downstream
+/// predicate/sort code consumes the result as a signed int — saturating
+/// here means any pathological input degrades gracefully into a clamped
+/// (still correctly-signed) value rather than a sign-flipped wrap.
+fn sat_sub_u64(a: u64, b: u64) -> i64 {
+    let a = i64::try_from(a).unwrap_or(i64::MAX);
+    let b = i64::try_from(b).unwrap_or(i64::MAX);
+    a.saturating_sub(b)
+}
+
 impl LocsDiff {
     /// Create a new empty diff.
     pub fn new() -> Self {
@@ -53,37 +66,37 @@ impl LocsDiff {
 
     /// Net change for code lines.
     pub fn net_code(&self) -> i64 {
-        self.added.code as i64 - self.removed.code as i64
+        sat_sub_u64(self.added.code, self.removed.code)
     }
 
     /// Net change for test lines.
     pub fn net_tests(&self) -> i64 {
-        self.added.tests as i64 - self.removed.tests as i64
+        sat_sub_u64(self.added.tests, self.removed.tests)
     }
 
     /// Net change for example lines.
     pub fn net_examples(&self) -> i64 {
-        self.added.examples as i64 - self.removed.examples as i64
+        sat_sub_u64(self.added.examples, self.removed.examples)
     }
 
     /// Net change for doc comment lines.
     pub fn net_docs(&self) -> i64 {
-        self.added.docs as i64 - self.removed.docs as i64
+        sat_sub_u64(self.added.docs, self.removed.docs)
     }
 
     /// Net change for regular comment lines.
     pub fn net_comments(&self) -> i64 {
-        self.added.comments as i64 - self.removed.comments as i64
+        sat_sub_u64(self.added.comments, self.removed.comments)
     }
 
     /// Net change for blank lines.
     pub fn net_blanks(&self) -> i64 {
-        self.added.blanks as i64 - self.removed.blanks as i64
+        sat_sub_u64(self.added.blanks, self.removed.blanks)
     }
 
     /// Net change for total lines.
     pub fn net_total(&self) -> i64 {
-        self.added.total() as i64 - self.removed.total() as i64
+        sat_sub_u64(self.added.total(), self.removed.total())
     }
 
     /// Return a filtered copy with only the specified line types included.
@@ -1209,6 +1222,30 @@ mod tests {
         assert_eq!(diff.net_comments(), 4);
         assert_eq!(diff.net_blanks(), 10);
         assert_eq!(diff.net_total(), 132); // 200 - 68
+    }
+
+    #[test]
+    fn test_locs_diff_net_saturates_for_pathological_inputs() {
+        // Realistic LOC counts never hit i64::MAX, but predicate filtering
+        // and sorting consume `net_*` as i64, so a wrap-on-overflow would
+        // sign-flip the value silently. With saturating arithmetic an
+        // out-of-range `added` clamps to i64::MAX and `added > removed`
+        // still yields a positive result rather than a negative wrap.
+        let diff = LocsDiff {
+            added: Locs {
+                code: u64::MAX,
+                tests: 0,
+                examples: 0,
+                docs: 0,
+                comments: 0,
+                blanks: 0,
+                total: u64::MAX,
+            },
+            removed: Locs::new(),
+        };
+        assert_eq!(diff.net_code(), i64::MAX);
+        assert_eq!(diff.net_total(), i64::MAX);
+        assert!(diff.net_code() > 0, "must not sign-flip into negative");
     }
 
     #[test]
