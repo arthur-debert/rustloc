@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `cargo install rustloc` failed to compile against `standout-dispatch`
+  ≥ 7.6.2 because the `RunResult` match in `main.rs` was non-exhaustive
+  and `RunResult` is `#[non_exhaustive]`. Local builds, CI, and
+  `cargo publish` all use `Cargo.lock` (pinned to 7.2.0) so the gap
+  was invisible until end users installed the crate. Added a wildcard
+  arm so the build is forward-compatible with new variants.
+
 ## [0.15.0] - 2026-05-04
 
 

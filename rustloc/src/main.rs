@@ -740,6 +740,13 @@ fn run() -> Result<RunResult, anyhow::Error> {
 
 fn main() -> ExitCode {
     match run() {
+        // standout-dispatch::RunResult is #[non_exhaustive]. Against the
+        // pinned 7.2.0 in Cargo.lock the four named arms are exhaustive and
+        // the wildcard below is unreachable — but `cargo install` ignores
+        // Cargo.lock and resolves to the newest 7.x (currently 7.6.2), which
+        // adds variants the wildcard catches. Allow the lint locally so we
+        // stay buildable in both worlds.
+        #[allow(unreachable_patterns)]
         Ok(result) => match result {
             RunResult::Handled(output) => {
                 if !output.is_empty() {
@@ -761,6 +768,10 @@ fn main() -> ExitCode {
                 eprintln!("Error: Unknown command");
                 ExitCode::FAILURE
             }
+            // standout-dispatch::RunResult is #[non_exhaustive]; treat any
+            // future variant as a successful no-op so `cargo install` (which
+            // ignores Cargo.lock and resolves to the newest 7.x) still builds.
+            _ => ExitCode::SUCCESS,
         },
         Err(e) => {
             eprintln!("Error: {}", e);
