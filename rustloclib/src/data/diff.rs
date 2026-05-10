@@ -1,8 +1,14 @@
 //! Git diff analysis for LOC changes between commits and working directory.
 //!
 //! This module provides functionality to compute LOC differences between:
-//! - Two git commits via a revspec (using `diff_revspec`)
-//! - Working directory and HEAD or index (using `diff_workdir`)
+//! - Two git commits via a revspec string (using [`diff_revspec`]) — accepts
+//!   a single revspec like `<rev>`, `<a>..<b>`, or `<a>...<b>`.
+//! - Working directory and HEAD or index (using [`diff_workdir`]).
+//!
+//! Both entry points return a [`DiffResult`], which downstream code lifts
+//! into a [`crate::query::DiffQuerySet`] for sorting, truncation, and
+//! threshold filtering. Threshold predicates on a diff query set evaluate
+//! against the net change per row (added − removed).
 //!
 //! ## Design Principle
 //!
