@@ -743,16 +743,26 @@ fn main() -> ExitCode {
         Ok(result) => match result {
             RunResult::Handled(output) => {
                 if !output.is_empty() {
-                    if output.starts_with("Error:") {
-                        eprintln!("{}", output);
-                        return ExitCode::FAILURE;
-                    }
                     print!("{}", output);
                     if !output.ends_with('\n') {
                         println!();
                     }
                 }
                 ExitCode::SUCCESS
+            }
+            // standout-dispatch ≥ 7.6.0 routes clap parse errors (and any
+            // handler/hook errors that called .use_stderr()) here instead
+            // of stuffing them into Handled. Without this arm, a typo like
+            // `--total-fsdgte 1300` is silently swallowed: no output, no
+            // error, exit 0. clap's own message is already in `msg`, so
+            // just write it to stderr and exit with the standard usage-error
+            // code (2) so scripts notice.
+            RunResult::Error(msg) => {
+                eprint!("{}", msg);
+                if !msg.ends_with('\n') {
+                    eprintln!();
+                }
+                ExitCode::from(2)
             }
             RunResult::Binary(_, _) => ExitCode::SUCCESS,
             RunResult::Silent => ExitCode::SUCCESS,
@@ -761,14 +771,13 @@ fn main() -> ExitCode {
                 eprintln!("Error: Unknown command");
                 ExitCode::FAILURE
             }
-            // RunResult is #[non_exhaustive] and newer 7.x releases add
-            // variants beyond the four above. `cargo install` ignores
-            // Cargo.lock by default, so end users resolve to the latest
-            // semver-compatible standout-dispatch and need this wildcard
-            // to compile. The allow keeps `-D warnings` happy against the
-            // locked version where the four named arms are still exhaustive.
-            #[allow(unreachable_patterns)]
-            _ => ExitCode::SUCCESS,
+            // RunResult is #[non_exhaustive]; future variants we don't
+            // know about should be treated as failures rather than silently
+            // ignored — better to surface the gap than hide it.
+            _ => {
+                eprintln!("Error: unhandled result from command dispatch");
+                ExitCode::FAILURE
+            }
         },
         Err(e) => {
             eprintln!("Error: {}", e);

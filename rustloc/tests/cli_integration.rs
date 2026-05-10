@@ -626,17 +626,45 @@ fn test_filter_eliminates_all_rows() {
 }
 
 #[test]
-fn test_filter_unknown_flag_errors_clearly() {
-    // Note: clap parse errors are printed but the binary currently exits 0
-    // (pre-existing behavior — see how every other clap-rejection test in
-    // this file checks stdout/stderr content rather than exit code). What
-    // matters here is that the user sees a clear message pointing at the
-    // typo'd flag.
-    let (stdout, stderr, _) = run_rustloc(&[".", "--code-foo", "100"]);
-    let combined = format!("{}{}", stdout, stderr);
+fn test_filter_unknown_op_errors_to_stderr_with_nonzero_exit() {
+    // Unknown operator on a real field. Must fail loud: nonzero exit so
+    // scripts notice, error on stderr so it's distinguishable from data.
+    let (stdout, stderr, success) = run_rustloc(&[".", "--total-fsdgte", "1300"]);
+    assert!(!success, "expected nonzero exit, got success");
     assert!(
-        combined.contains("--code-foo") || combined.contains("unexpected"),
-        "unexpected error message: stdout={:?} stderr={:?}",
+        stderr.contains("--total-fsdgte") || stderr.contains("unexpected"),
+        "expected clap error on stderr, got stdout={:?} stderr={:?}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.is_empty(),
+        "stdout should be empty on parse error, got {:?}",
+        stdout
+    );
+}
+
+#[test]
+fn test_filter_unknown_flag_errors_clearly() {
+    let (stdout, stderr, success) = run_rustloc(&[".", "--code-foo", "100"]);
+    assert!(!success, "expected nonzero exit, got success");
+    assert!(
+        stderr.contains("--code-foo") || stderr.contains("unexpected"),
+        "expected clap error on stderr, got stdout={:?} stderr={:?}",
+        stdout,
+        stderr
+    );
+}
+
+#[test]
+fn test_filter_malformed_double_dash_in_flag_errors() {
+    // `--total--fsdgte` (double dash inside the flag) is malformed at the
+    // shell level. Must still fail loud rather than silently no-op.
+    let (stdout, stderr, success) = run_rustloc(&[".", "--total--fsdgte", "1300"]);
+    assert!(!success, "expected nonzero exit, got success");
+    assert!(
+        stderr.contains("unexpected") || stderr.contains("--total--fsdgte"),
+        "expected clap error on stderr, got stdout={:?} stderr={:?}",
         stdout,
         stderr
     );
@@ -644,11 +672,11 @@ fn test_filter_unknown_flag_errors_clearly() {
 
 #[test]
 fn test_filter_non_numeric_value_errors_clearly() {
-    let (stdout, stderr, _) = run_rustloc(&[".", "--code-gte", "abc"]);
-    let combined = format!("{}{}", stdout, stderr);
+    let (stdout, stderr, success) = run_rustloc(&[".", "--code-gte", "abc"]);
+    assert!(!success, "expected nonzero exit, got success");
     assert!(
-        combined.contains("invalid value") || combined.contains("invalid digit"),
-        "unexpected error message: stdout={:?} stderr={:?}",
+        stderr.contains("invalid value") || stderr.contains("invalid digit"),
+        "expected clap value error on stderr, got stdout={:?} stderr={:?}",
         stdout,
         stderr
     );
