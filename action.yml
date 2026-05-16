@@ -83,6 +83,17 @@ runs:
             || git fetch --no-tags --deepen=200 origin 2>/dev/null \
             || true
         fi
+        # Final verification — if either ref is still unreachable, exit with
+        # an actionable message instead of letting `rustloc diff` fail later
+        # with a less helpful one.
+        missing=
+        git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null || missing="$missing base ($BASE)"
+        git rev-parse --verify --quiet "${HEAD}^{commit}" >/dev/null || missing="$missing head ($HEAD)"
+        if [ -n "$missing" ] || ! git merge-base "$BASE" "$HEAD" >/dev/null 2>&1; then
+          echo "rustloc-diff: cannot reach${missing:- merge-base of $BASE...$HEAD} from the local clone." >&2
+          echo "rustloc-diff: use \`actions/checkout@v4\` with \`fetch-depth: 0\` so both refs are present." >&2
+          exit 1
+        fi
 
     - name: Run rustloc diff
       id: run
@@ -121,8 +132,11 @@ runs:
       run: |
         set -euo pipefail
         marker='<!-- rustloc-diff -->'
-        existing=$(gh api -X GET "repos/$REPO/issues/$PR/comments" --paginate \
-          --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n1)
+        # Capture all matching ids first, then take the first line in shell —
+        # avoids `gh ... | head` getting SIGPIPE'd under `set -o pipefail`.
+        matches=$(gh api -X GET "repos/$REPO/issues/$PR/comments" --paginate \
+          --jq ".[] | select(.body | startswith(\"$marker\")) | .id")
+        existing=${matches%%$'\n'*}
         if [ -n "$existing" ]; then
           gh api -X PATCH "repos/$REPO/issues/comments/$existing" \
             -f body="$BODY" >/dev/null
