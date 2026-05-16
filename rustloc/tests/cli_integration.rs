@@ -82,7 +82,87 @@ fn test_json_output() {
     assert!(total["examples"].is_u64(), "examples should be a number");
 }
 
-// CSV output removed - using outstanding's built-in JSON/table output
+/// A valid CSV from `--output csv` must be one row per item (file, crate,
+/// or module) plus a final TOTAL row — not a single mega-row formed by
+/// flattening the whole queryset object into hundreds of `items.0.*`,
+/// `items.1.*` columns.
+#[test]
+fn test_csv_output_by_file() {
+    let (stdout, _, success) = run_rustloc(&[".", "--output", "csv", "--by-file"]);
+    assert!(success);
+
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    let header = lines[0];
+    let column_count = header.split(',').count();
+
+    assert!(
+        header.contains("label"),
+        "header should have a label column; got: {header}"
+    );
+    assert!(
+        !header.contains("items."),
+        "header must not flatten the queryset object into items.0.* columns; got: {header}"
+    );
+
+    // Every row should have the same column count as the header. That's
+    // the bare-minimum well-formedness check for CSV.
+    for (i, line) in lines.iter().enumerate().skip(1) {
+        assert_eq!(
+            line.split(',').count(),
+            column_count,
+            "row {i} column count mismatch; row: {line}"
+        );
+    }
+
+    // At least one data row + one TOTAL row, all distinct from the header.
+    assert!(lines.len() >= 3, "expected at least header + data + TOTAL");
+    assert!(
+        lines.iter().any(|l| l.contains("TOTAL")),
+        "expected a TOTAL summary row"
+    );
+}
+
+#[test]
+fn test_csv_output_total() {
+    let (stdout, _, success) = run_rustloc(&[".", "--output", "csv"]);
+    assert!(success);
+
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    // Total aggregation → header + a single TOTAL row.
+    assert_eq!(lines.len(), 2, "expected header + TOTAL row only");
+    assert!(lines[0].contains("label"));
+    assert!(lines[1].contains("TOTAL"));
+}
+
+#[test]
+fn test_csv_output_diff() {
+    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--output", "csv", "--by-file"]);
+    assert!(success);
+
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    let header = lines[0];
+    let column_count = header.split(',').count();
+
+    assert!(
+        !header.contains("items."),
+        "diff header must not flatten items.*; got: {header}"
+    );
+    assert!(header.contains("label"));
+    assert!(
+        header.contains("added_") && header.contains("removed_"),
+        "diff header should have added_*/removed_* columns; got: {header}"
+    );
+
+    for (i, line) in lines.iter().enumerate().skip(1) {
+        assert_eq!(
+            line.split(',').count(),
+            column_count,
+            "diff row {i} column count mismatch; row: {line}"
+        );
+    }
+
+    assert!(lines.iter().any(|l| l.contains("TOTAL")));
+}
 
 #[test]
 fn test_by_crate_output() {

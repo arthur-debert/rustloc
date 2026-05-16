@@ -308,6 +308,92 @@ mod handlers {
         )
     }
 
+    fn is_csv_output(matches: &ArgMatches) -> bool {
+        matches
+            .get_one::<String>("_output_mode")
+            .map(|s| s.as_str())
+            == Some("csv")
+    }
+
+    /// Reshape a CountQuerySet into a top-level array of flat row objects
+    /// so standout's CSV flattener produces one row per item rather than
+    /// hammering the whole queryset into a single mega-row.
+    fn count_queryset_to_csv(qs: &CountQuerySet) -> serde_json::Value {
+        use rustloclib::Locs;
+        use serde_json::{json, Value};
+
+        let locs_row = |label: &str, stats: &Locs| -> Value {
+            json!({
+                "label": label,
+                "code": stats.code,
+                "tests": stats.tests,
+                "examples": stats.examples,
+                "docs": stats.docs,
+                "comments": stats.comments,
+                "blanks": stats.blanks,
+                "total": stats.total,
+            })
+        };
+
+        let mut rows: Vec<Value> = qs
+            .items
+            .iter()
+            .map(|item| locs_row(&item.label, &item.stats))
+            .collect();
+        rows.push(locs_row("TOTAL", &qs.total));
+        Value::Array(rows)
+    }
+
+    /// Reshape a DiffQuerySet into a top-level array of flat row objects.
+    /// Each row has the label plus added/removed/net columns for every
+    /// line type, so the CSV is one row per file (or crate/module).
+    fn diff_queryset_to_csv(qs: &DiffQuerySet) -> serde_json::Value {
+        use rustloclib::LocsDiff;
+        use serde_json::{json, Value};
+
+        // i64 net so removals don't underflow to "very large positive".
+        let net = |a: u64, r: u64| -> i64 {
+            let a = i64::try_from(a).unwrap_or(i64::MAX);
+            let r = i64::try_from(r).unwrap_or(i64::MAX);
+            a.saturating_sub(r)
+        };
+
+        let diff_row = |label: &str, d: &LocsDiff| -> Value {
+            json!({
+                "label": label,
+                "added_code": d.added.code,
+                "added_tests": d.added.tests,
+                "added_examples": d.added.examples,
+                "added_docs": d.added.docs,
+                "added_comments": d.added.comments,
+                "added_blanks": d.added.blanks,
+                "added_total": d.added.total,
+                "removed_code": d.removed.code,
+                "removed_tests": d.removed.tests,
+                "removed_examples": d.removed.examples,
+                "removed_docs": d.removed.docs,
+                "removed_comments": d.removed.comments,
+                "removed_blanks": d.removed.blanks,
+                "removed_total": d.removed.total,
+                "net_code": net(d.added.code, d.removed.code),
+                "net_tests": net(d.added.tests, d.removed.tests),
+                "net_examples": net(d.added.examples, d.removed.examples),
+                "net_docs": net(d.added.docs, d.removed.docs),
+                "net_comments": net(d.added.comments, d.removed.comments),
+                "net_blanks": net(d.added.blanks, d.removed.blanks),
+                "net_total": net(d.added.total, d.removed.total),
+            })
+        };
+
+        let mut rows: Vec<Value> = qs
+            .items
+            .iter()
+            .map(|item| diff_row(&item.label, &item.stats))
+            .collect();
+        rows.push(diff_row("TOTAL", &qs.total));
+        Value::Array(rows)
+    }
+
     /// Handler for count command
     pub fn count(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
         let path = matches
@@ -395,7 +481,11 @@ mod handlers {
                 LineTypes::everything(),
                 ordering,
             ));
-            Ok(Output::Render(serde_json::to_value(queryset)?))
+            if is_csv_output(matches) {
+                Ok(Output::Render(count_queryset_to_csv(&queryset)))
+            } else {
+                Ok(Output::Render(serde_json::to_value(queryset)?))
+            }
         } else {
             let queryset = apply_post(CountQuerySet::from_result(
                 &result,
@@ -500,7 +590,11 @@ mod handlers {
                 LineTypes::everything(),
                 ordering,
             ));
-            Ok(Output::Render(serde_json::to_value(queryset)?))
+            if is_csv_output(matches) {
+                Ok(Output::Render(diff_queryset_to_csv(&queryset)))
+            } else {
+                Ok(Output::Render(serde_json::to_value(queryset)?))
+            }
         } else {
             let queryset = apply_post(DiffQuerySet::from_result(
                 &result,
