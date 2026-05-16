@@ -122,7 +122,7 @@ runs:
         set -euo pipefail
         marker='<!-- rustloc-diff -->'
         existing=$(gh api -X GET "repos/$REPO/issues/$PR/comments" --paginate \
-          --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -n1)
+          --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n1)
         if [ -n "$existing" ]; then
           gh api -X PATCH "repos/$REPO/issues/comments/$existing" \
             -f body="$BODY" >/dev/null
