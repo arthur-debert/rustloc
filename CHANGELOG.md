@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-05-16
+
+
 ### Fixed
 
 - `--output csv` now produces a well-formed CSV with one row per item
@@ -18,7 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NON_RUST` row when non-Rust files changed (preserving the non-Rust
   summary that the text table footer and JSON output already surface).
   JSON / YAML / XML output is unchanged.
-
 ## [0.15.3] - 2026-05-10
 
 
