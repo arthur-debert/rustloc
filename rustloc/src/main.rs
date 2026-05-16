@@ -348,7 +348,7 @@ mod handlers {
     /// Each row has the label plus added/removed/net columns for every
     /// line type, so the CSV is one row per file (or crate/module).
     fn diff_queryset_to_csv(qs: &DiffQuerySet) -> serde_json::Value {
-        use rustloclib::LocsDiff;
+        use rustloclib::{Locs, LocsDiff};
         use serde_json::{json, Value};
 
         // i64 net so removals don't underflow to "very large positive".
@@ -384,6 +384,26 @@ mod handlers {
             .iter()
             .map(|item| diff_row(&item.label, &item.stats))
             .collect();
+
+        // Preserve the non-Rust summary that the text footer and JSON
+        // output expose. We have no per-line-type breakdown for non-Rust
+        // files, so only the *_total fields carry data; everything else
+        // is left at zero. Skip the row entirely when there's nothing to
+        // show, so a pure-Rust diff stays clean.
+        if qs.non_rust_added > 0 || qs.non_rust_removed > 0 {
+            let non_rust = LocsDiff {
+                added: Locs {
+                    total: qs.non_rust_added,
+                    ..Locs::default()
+                },
+                removed: Locs {
+                    total: qs.non_rust_removed,
+                    ..Locs::default()
+                },
+            };
+            rows.push(diff_row("NON_RUST", &non_rust));
+        }
+
         rows.push(diff_row("TOTAL", &qs.total));
         Value::Array(rows)
     }
