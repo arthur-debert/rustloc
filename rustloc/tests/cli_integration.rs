@@ -82,7 +82,131 @@ fn test_json_output() {
     assert!(total["examples"].is_u64(), "examples should be a number");
 }
 
-// CSV output removed - using outstanding's built-in JSON/table output
+/// Parse `output` with the csv crate so column counts respect quoting
+/// (file paths with commas, embedded quotes, etc.) — `split(',')` would
+/// miscount any well-formed-but-quoted row. Returns (headers, records).
+fn parse_csv(output: &str) -> (Vec<String>, Vec<Vec<String>>) {
+    let mut rdr = csv::Reader::from_reader(output.as_bytes());
+    let headers: Vec<String> = rdr
+        .headers()
+        .expect("CSV must have a header row")
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let records: Vec<Vec<String>> = rdr
+        .records()
+        .map(|r| {
+            r.expect("malformed CSV record")
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        })
+        .collect();
+    (headers, records)
+}
+
+/// Headers that every count CSV must expose, regardless of column order.
+/// Pinning the full set so a regression that drops, say, `examples` would
+/// fail the test instead of slipping through under the row-width check.
+const COUNT_CSV_HEADERS: &[&str] = &[
+    "label", "code", "tests", "examples", "docs", "comments", "blanks", "total",
+];
+
+/// Headers that every diff CSV must expose. Includes added_*, removed_*,
+/// and net_* for each line type plus a label column.
+const DIFF_CSV_HEADERS: &[&str] = &[
+    "label",
+    "added_code",
+    "added_tests",
+    "added_examples",
+    "added_docs",
+    "added_comments",
+    "added_blanks",
+    "added_total",
+    "removed_code",
+    "removed_tests",
+    "removed_examples",
+    "removed_docs",
+    "removed_comments",
+    "removed_blanks",
+    "removed_total",
+    "net_code",
+    "net_tests",
+    "net_examples",
+    "net_docs",
+    "net_comments",
+    "net_blanks",
+    "net_total",
+];
+
+fn assert_headers_present(headers: &[String], required: &[&str]) {
+    for col in required {
+        assert!(
+            headers.iter().any(|h| h == col),
+            "missing required CSV column `{col}`; headers: {headers:?}"
+        );
+    }
+}
+
+/// A valid CSV from `--output csv` must be one row per item (file, crate,
+/// or module) plus a final TOTAL row — not a single mega-row formed by
+/// flattening the whole queryset object into hundreds of `items.0.*`,
+/// `items.1.*` columns.
+#[test]
+fn test_csv_output_by_file() {
+    let (stdout, _, success) = run_rustloc(&[".", "--output", "csv", "--by-file"]);
+    assert!(success);
+
+    let (headers, records) = parse_csv(&stdout);
+
+    assert!(
+        !headers.iter().any(|h| h.starts_with("items.")),
+        "header must not flatten the queryset object into items.0.* columns; got: {headers:?}"
+    );
+    assert_headers_present(&headers, COUNT_CSV_HEADERS);
+
+    assert!(
+        records.len() >= 2,
+        "expected at least one data row + a TOTAL row"
+    );
+    let label_idx = headers.iter().position(|h| h == "label").unwrap();
+    assert!(
+        records.iter().any(|r| r[label_idx] == "TOTAL"),
+        "expected a TOTAL summary row"
+    );
+}
+
+#[test]
+fn test_csv_output_total() {
+    let (stdout, _, success) = run_rustloc(&[".", "--output", "csv"]);
+    assert!(success);
+
+    let (headers, records) = parse_csv(&stdout);
+    assert_headers_present(&headers, COUNT_CSV_HEADERS);
+
+    // Total aggregation → exactly one TOTAL row.
+    assert_eq!(records.len(), 1, "expected only a TOTAL row");
+    let label_idx = headers.iter().position(|h| h == "label").unwrap();
+    assert_eq!(records[0][label_idx], "TOTAL");
+}
+
+#[test]
+fn test_csv_output_diff() {
+    let (stdout, _, success) =
+        run_rustloc(&["diff", "HEAD~5..HEAD", "--output", "csv", "--by-file"]);
+    assert!(success);
+
+    let (headers, records) = parse_csv(&stdout);
+
+    assert!(
+        !headers.iter().any(|h| h.starts_with("items.")),
+        "diff header must not flatten items.*; got: {headers:?}"
+    );
+    assert_headers_present(&headers, DIFF_CSV_HEADERS);
+
+    let label_idx = headers.iter().position(|h| h == "label").unwrap();
+    assert!(records.iter().any(|r| r[label_idx] == "TOTAL"));
+}
 
 #[test]
 fn test_by_crate_output() {

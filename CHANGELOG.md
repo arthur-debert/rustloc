@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `--output csv` now produces a well-formed CSV with one row per item
+  (file / crate / module) plus a `TOTAL` summary row, instead of a single
+  mega-row of `items.0.*`, `items.1.*` flattened columns. The CLI
+  reshapes the queryset into a top-level array of flat row objects
+  before handing it to standout's CSV path. Diff CSV gains `added_*`,
+  `removed_*`, and `net_*` columns per line type, and includes a
+  `NON_RUST` row when non-Rust files changed (preserving the non-Rust
+  summary that the text table footer and JSON output already surface).
+  JSON / YAML / XML output is unchanged.
+
 ## [0.15.3] - 2026-05-10
 
 

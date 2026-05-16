@@ -2405,6 +2405,7 @@ dependencies = [
  "anyhow",
  "clap",
  "console 0.15.11",
+ "csv",
  "rustloclib",
  "serde",
  "serde_json",
