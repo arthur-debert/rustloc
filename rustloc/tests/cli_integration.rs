@@ -136,7 +136,8 @@ fn test_csv_output_total() {
 
 #[test]
 fn test_csv_output_diff() {
-    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--output", "csv", "--by-file"]);
+    let (stdout, _, success) =
+        run_rustloc(&["diff", "HEAD~5..HEAD", "--output", "csv", "--by-file"]);
     assert!(success);
 
     let lines: Vec<&str> = stdout.trim().lines().collect();

@@ -352,12 +352,6 @@ mod handlers {
         use serde_json::{json, Value};
 
         // i64 net so removals don't underflow to "very large positive".
-        let net = |a: u64, r: u64| -> i64 {
-            let a = i64::try_from(a).unwrap_or(i64::MAX);
-            let r = i64::try_from(r).unwrap_or(i64::MAX);
-            a.saturating_sub(r)
-        };
-
         let diff_row = |label: &str, d: &LocsDiff| -> Value {
             json!({
                 "label": label,
@@ -375,13 +369,13 @@ mod handlers {
                 "removed_comments": d.removed.comments,
                 "removed_blanks": d.removed.blanks,
                 "removed_total": d.removed.total,
-                "net_code": net(d.added.code, d.removed.code),
-                "net_tests": net(d.added.tests, d.removed.tests),
-                "net_examples": net(d.added.examples, d.removed.examples),
-                "net_docs": net(d.added.docs, d.removed.docs),
-                "net_comments": net(d.added.comments, d.removed.comments),
-                "net_blanks": net(d.added.blanks, d.removed.blanks),
-                "net_total": net(d.added.total, d.removed.total),
+                "net_code": d.net_code(),
+                "net_tests": d.net_tests(),
+                "net_examples": d.net_examples(),
+                "net_docs": d.net_docs(),
+                "net_comments": d.net_comments(),
+                "net_blanks": d.net_blanks(),
+                "net_total": d.net_total(),
             })
         };
 
