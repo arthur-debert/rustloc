@@ -18,7 +18,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-if [[ -d .git ]] && git remote get-url origin >/dev/null 2>&1; then
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git remote get-url origin >/dev/null 2>&1; then
     echo "Fetching git tags from origin..."
     git fetch --tags --quiet origin || echo "warning: git fetch --tags failed (offline?)"
 fi
