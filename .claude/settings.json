@@ -2,10 +2,11 @@
   "hooks": {
     "SessionStart": [
       {
+        "matcher": "startup|resume",
         "hooks": [
           {
             "type": "command",
-            "command": "scripts/setup-dev-env.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/setup-dev-env.sh"
           }
         ]
       }
