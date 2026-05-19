@@ -101,12 +101,26 @@ impl LOCTable {
     /// This method just formats it into displayable strings with diff notation.
     pub fn from_diff_queryset(qs: &DiffQuerySet) -> Self {
         let headers = build_headers(&qs.aggregation, &qs.line_types);
+
+        // Two-pass formatting so the `+added`, `-removed`, and `net` sub-fields
+        // line up across every row in a column: gather raw pairs first,
+        // compute per-column sub-widths from rows+footer, then render every
+        // cell padded to those widths.
+        let raw_rows: Vec<Vec<(u64, u64)>> = qs
+            .items
+            .iter()
+            .map(|item| diff_pairs(&item.stats, &qs.line_types))
+            .collect();
+        let raw_footer = diff_pairs(&qs.total, &qs.line_types);
+        let sub_widths = compute_diff_sub_widths(&raw_rows, &raw_footer);
+
         let rows: Vec<TableRow> = qs
             .items
             .iter()
-            .map(|item| TableRow {
+            .zip(&raw_rows)
+            .map(|(item, pairs)| TableRow {
                 label: item.label.clone(),
-                values: format_locs_diff(&item.stats, &qs.line_types),
+                values: format_diff_row(pairs, &sub_widths),
             })
             .collect();
         let footer = TableRow {
@@ -117,7 +131,7 @@ impl LOCTable {
                 qs.file_count,
                 qs.top_applied,
             ),
-            values: format_locs_diff(&qs.total, &qs.line_types),
+            values: format_diff_row(&raw_footer, &sub_widths),
         };
         let value_widths = compute_value_widths(&headers, &rows, &footer);
         let title = Some(format!("Diff: {} → {}", qs.from_commit, qs.to_commit));
@@ -323,50 +337,99 @@ fn format_locs(locs: &Locs, line_types: &crate::query::options::LineTypes) -> Ve
     values
 }
 
-/// Format a diff value as "+added/-removed/net" with standout style tags.
-fn format_diff_value(added: u64, removed: u64) -> String {
+/// Per-column max widths of the three sub-fields inside a diff value
+/// (`+added/-removed/net`). Used to right-align each sub-field across
+/// every row in the same column so the `/` separators line up.
+#[derive(Debug, Clone, Default)]
+struct DiffSubWidths {
+    added: usize,
+    removed: usize,
+    net: usize,
+}
+
+/// Format a diff value as "+added/-removed/net" with standout style tags,
+/// right-padding each sub-field to the given widths. Padding spaces sit
+/// *outside* the style tags so coloring stays on the digits only. Passing
+/// zero widths produces a tight unpadded value.
+fn format_diff_value_padded(added: u64, removed: u64, w: &DiffSubWidths) -> String {
     let net = added as i64 - removed as i64;
+    let added_str = format!("+{}", added);
+    let removed_str = format!("-{}", removed);
+    let net_str = net.to_string();
+    let apad = " ".repeat(w.added.saturating_sub(added_str.len()));
+    let rpad = " ".repeat(w.removed.saturating_sub(removed_str.len()));
+    let npad = " ".repeat(w.net.saturating_sub(net_str.len()));
     format!(
-        "[additions]+{}[/additions]/[deletions]-{}[/deletions]/{}",
-        added, removed, net
+        "{}[additions]{}[/additions]/{}[deletions]{}[/deletions]/{}{}",
+        apad, added_str, rpad, removed_str, npad, net_str,
     )
 }
 
-/// Format LocsDiff values as strings for display.
-fn format_locs_diff(diff: &LocsDiff, line_types: &crate::query::options::LineTypes) -> Vec<String> {
+/// Return raw `(added, removed)` pairs in the order of enabled line types.
+/// The shape matches what `build_headers` / `format_locs_diff` produce, so
+/// callers can pair widths with cells positionally.
+fn diff_pairs(diff: &LocsDiff, line_types: &crate::query::options::LineTypes) -> Vec<(u64, u64)> {
     let lt = LineTypesView::from(line_types);
-    let mut values = Vec::new();
-
+    let mut pairs = Vec::new();
     if lt.code {
-        values.push(format_diff_value(diff.added.code, diff.removed.code));
+        pairs.push((diff.added.code, diff.removed.code));
     }
     if lt.tests {
-        values.push(format_diff_value(diff.added.tests, diff.removed.tests));
+        pairs.push((diff.added.tests, diff.removed.tests));
     }
     if lt.examples {
-        values.push(format_diff_value(
-            diff.added.examples,
-            diff.removed.examples,
-        ));
+        pairs.push((diff.added.examples, diff.removed.examples));
     }
     if lt.docs {
-        values.push(format_diff_value(diff.added.docs, diff.removed.docs));
+        pairs.push((diff.added.docs, diff.removed.docs));
     }
     if lt.comments {
-        values.push(format_diff_value(
-            diff.added.comments,
-            diff.removed.comments,
-        ));
+        pairs.push((diff.added.comments, diff.removed.comments));
     }
     if lt.blanks {
-        values.push(format_diff_value(diff.added.blanks, diff.removed.blanks));
+        pairs.push((diff.added.blanks, diff.removed.blanks));
     }
     if lt.total {
-        // Use the precomputed all fields
-        values.push(format_diff_value(diff.added.total, diff.removed.total));
+        pairs.push((diff.added.total, diff.removed.total));
     }
+    pairs
+}
 
-    values
+/// For each value column, compute the max widths of the `+added`, `-removed`,
+/// and `net` sub-fields across every row and the footer. With these widths,
+/// the three `/`-separated sub-fields line up across every row in the column
+/// — the usual case is the footer wins each sub-width because it sums the
+/// rows.
+fn compute_diff_sub_widths(rows: &[Vec<(u64, u64)>], footer: &[(u64, u64)]) -> Vec<DiffSubWidths> {
+    (0..footer.len())
+        .map(|i| {
+            let mut w = DiffSubWidths::default();
+            let update = |a: u64, r: u64, w: &mut DiffSubWidths| {
+                let aw = format!("+{}", a).len();
+                let rw = format!("-{}", r).len();
+                let nw = (a as i64 - r as i64).to_string().len();
+                w.added = w.added.max(aw);
+                w.removed = w.removed.max(rw);
+                w.net = w.net.max(nw);
+            };
+            for row in rows {
+                if let Some(&(a, r)) = row.get(i) {
+                    update(a, r, &mut w);
+                }
+            }
+            update(footer[i].0, footer[i].1, &mut w);
+            w
+        })
+        .collect()
+}
+
+/// Format every `(added, removed)` pair against its column's sub-widths.
+fn format_diff_row(pairs: &[(u64, u64)], widths: &[DiffSubWidths]) -> Vec<String> {
+    pairs
+        .iter()
+        .zip(widths)
+        .map(|(&(a, r), w)| format_diff_value_padded(a, r, w))
+        .collect()
 }
 
 #[cfg(test)]
@@ -628,19 +691,87 @@ mod tests {
     }
 
     #[test]
-    fn test_format_diff_value() {
+    fn test_format_diff_value_unpadded() {
+        let zero = DiffSubWidths::default();
         assert_eq!(
-            format_diff_value(10, 5),
+            format_diff_value_padded(10, 5, &zero),
             "[additions]+10[/additions]/[deletions]-5[/deletions]/5"
         );
         assert_eq!(
-            format_diff_value(5, 10),
+            format_diff_value_padded(5, 10, &zero),
             "[additions]+5[/additions]/[deletions]-10[/deletions]/-5"
         );
         assert_eq!(
-            format_diff_value(0, 0),
+            format_diff_value_padded(0, 0, &zero),
             "[additions]+0[/additions]/[deletions]-0[/deletions]/0"
         );
+    }
+
+    #[test]
+    fn test_format_diff_value_pads_sub_fields_outside_tags() {
+        // Padding goes outside the style tags so coloring stays on digits.
+        let w = DiffSubWidths {
+            added: 4,
+            removed: 2,
+            net: 3,
+        };
+        assert_eq!(
+            format_diff_value_padded(0, 0, &w),
+            "  [additions]+0[/additions]/[deletions]-0[/deletions]/  0"
+        );
+        // Already-wide values keep zero padding.
+        assert_eq!(
+            format_diff_value_padded(111, 0, &w),
+            "[additions]+111[/additions]/[deletions]-0[/deletions]/111"
+        );
+    }
+
+    #[test]
+    fn test_diff_sub_widths_align_separators_across_rows() {
+        // For a column with rows (a=0, r=0) and (a=111, r=0), the footer
+        // (a=111, r=0) determines the max widths. After padding, every
+        // cell in the column has the same visible width, so the `/`
+        // separators sit at the same offset in every row.
+        let rows = vec![vec![(0u64, 0u64)], vec![(9u64, 0u64)]];
+        let footer = vec![(111u64, 0u64)];
+        let widths = compute_diff_sub_widths(&rows, &footer);
+        assert_eq!(widths.len(), 1);
+        assert_eq!(widths[0].added, "+111".len());
+        assert_eq!(widths[0].removed, "-0".len());
+        assert_eq!(widths[0].net, "111".len());
+
+        let cell_a = format_diff_value_padded(0, 0, &widths[0]);
+        let cell_b = format_diff_value_padded(9, 0, &widths[0]);
+        let cell_c = format_diff_value_padded(111, 0, &widths[0]);
+        // All cells render to the same visible width.
+        let wa = visible_width(&cell_a);
+        let wb = visible_width(&cell_b);
+        let wc = visible_width(&cell_c);
+        assert_eq!(wa, wb);
+        assert_eq!(wb, wc);
+        // And the `/` separators sit at the same visible positions.
+        let slash_positions = |s: &str| -> Vec<usize> {
+            let stripped: String = {
+                let mut out = String::new();
+                let mut in_tag = false;
+                for c in s.chars() {
+                    match c {
+                        '[' => in_tag = true,
+                        ']' if in_tag => in_tag = false,
+                        _ if !in_tag => out.push(c),
+                        _ => {}
+                    }
+                }
+                out
+            };
+            stripped
+                .char_indices()
+                .filter(|&(_, c)| c == '/')
+                .map(|(i, _)| i)
+                .collect()
+        };
+        assert_eq!(slash_positions(&cell_a), slash_positions(&cell_c));
+        assert_eq!(slash_positions(&cell_b), slash_positions(&cell_c));
     }
 
     #[test]
@@ -657,20 +788,22 @@ mod tests {
     fn test_compute_value_widths_picks_widest_cell_per_column() {
         // Each column's width = max(header, row values, footer value).
         // The footer here has the longest values, so widths match it.
+        let zero = DiffSubWidths::default();
+        let make = |a: u64, r: u64| format_diff_value_padded(a, r, &zero);
         let headers = vec!["File".to_string(), "Code".to_string(), "Total".to_string()];
         let rows = vec![
             TableRow {
                 label: "a.rs".to_string(),
-                values: vec![format_diff_value(1, 0), format_diff_value(1, 0)],
+                values: vec![make(1, 0), make(1, 0)],
             },
             TableRow {
                 label: "b.rs".to_string(),
-                values: vec![format_diff_value(9, 0), format_diff_value(9, 0)],
+                values: vec![make(9, 0), make(9, 0)],
             },
         ];
         let footer = TableRow {
             label: "Total (2 files)".to_string(),
-            values: vec![format_diff_value(100, 0), format_diff_value(100, 0)],
+            values: vec![make(100, 0), make(100, 0)],
         };
 
         let widths = compute_value_widths(&headers, &rows, &footer);
