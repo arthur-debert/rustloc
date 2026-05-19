@@ -7,9 +7,15 @@
 {% endif -%}
 [header]{{ headers[0] | col(label_width, align='center') }}{% for h in headers[1:] %} {{ h | col(value_widths[loop.index0], align='right') }}{% endfor %}[/header]
 {{ "─" * line_width }}
+{#- Alternating rows: even-indexed (1-based) rows get a [table_row_odd] wrap
+    that paints the row background. Odd-indexed rows are emitted bare —
+    wrapping them in [table_row_even] (an empty style in the default theme)
+    causes standout-bbparser to strip the inner [additions]/[deletions]
+    resets without emitting its own, which makes the last cell's fg color
+    bleed into the next row's label. -#}
 {% for row in rows -%}
 {% if loop.index is even %}[table_row_odd]{{ row.label | col(label_width, truncate='start') }}{% for v in row.values %} {{ v | col(value_widths[loop.index0], align='right') }}{% endfor %}[/table_row_odd]
-{% else %}[table_row_even]{{ row.label | col(label_width, truncate='start') }}{% for v in row.values %} {{ v | col(value_widths[loop.index0], align='right') }}{% endfor %}[/table_row_even]
+{% else %}{{ row.label | col(label_width, truncate='start') }}{% for v in row.values %} {{ v | col(value_widths[loop.index0], align='right') }}{% endfor %}
 {% endif -%}
 {% endfor -%}
 {%- if rows | length > 0 -%}

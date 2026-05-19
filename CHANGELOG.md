@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `diff` no longer renders every other row's label in red. The
+  `[table_row_even]` wrap that alternating rows used resolves to an
+  empty style in the default theme, which made standout-bbparser strip
+  the inner `[additions]`/`[deletions]` resets without re-emitting one.
+  The last cell's fg color then bled into the next row's label. The
+  bare-row branch is now emitted unwrapped, so cell resets survive and
+  the file/crate label stays in the default color, matching `count`.
+
 ## [0.17.0] - 2026-05-19
 
 ### Fixed
