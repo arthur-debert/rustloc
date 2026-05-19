@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   values no longer sit in a sea of whitespace and the Total never has
   fewer digits than any per-row entry. Affects both `count` and `diff`
   table output; JSON / CSV / YAML / XML are unchanged.
+- Inside each diff cell, the three sub-fields (`+added`, `-removed`, and
+  `net`) are now right-padded to per-column max widths, so the `/`
+  separators line up across every row including the Total footer.
+  Without this, the additions/removals/net positions drifted from row
+  to row in a column whenever digit counts varied.
 
 ## [0.16.0] - 2026-05-16
 
