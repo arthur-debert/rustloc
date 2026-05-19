@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Text-table column widths now fit the widest visible cell per column
+  (header, rows, and the Total footer) instead of a hardcoded 16 chars.
+  Per-row values right-align to the Total row's right edge, so short
+  values no longer sit in a sea of whitespace and the Total never has
+  fewer digits than any per-row entry. Affects both `count` and `diff`
+  table output; JSON / CSV / YAML / XML are unchanged.
+
 ## [0.16.0] - 2026-05-16
 
 
