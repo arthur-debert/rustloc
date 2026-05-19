@@ -1,22 +1,21 @@
 {#- Table template for LOCTable with alternating row styles -#}
 {%- set label_width = 40 -%}
-{%- set value_width = 16 -%}
-{%- set line_width = label_width + (value_width + 1) * (headers | length - 1) -%}
+{%- set line_width = label_width + (value_widths | sum) + (value_widths | length) -%}
 {% if title %}
 {{ title }}
 
 {% endif -%}
-[header]{{ headers[0] | col(label_width, align='center') }}{% for h in headers[1:] %} {{ h | col(value_width, align='right') }}{% endfor %}[/header]
+[header]{{ headers[0] | col(label_width, align='center') }}{% for h in headers[1:] %} {{ h | col(value_widths[loop.index0], align='right') }}{% endfor %}[/header]
 {{ "─" * line_width }}
 {% for row in rows -%}
-{% if loop.index is even %}[table_row_odd]{{ row.label | col(label_width, truncate='start') }}{% for v in row.values %} {{ v | col(value_width, align='right') }}{% endfor %}[/table_row_odd]
-{% else %}[table_row_even]{{ row.label | col(label_width, truncate='start') }}{% for v in row.values %} {{ v | col(value_width, align='right') }}{% endfor %}[/table_row_even]
+{% if loop.index is even %}[table_row_odd]{{ row.label | col(label_width, truncate='start') }}{% for v in row.values %} {{ v | col(value_widths[loop.index0], align='right') }}{% endfor %}[/table_row_odd]
+{% else %}[table_row_even]{{ row.label | col(label_width, truncate='start') }}{% for v in row.values %} {{ v | col(value_widths[loop.index0], align='right') }}{% endfor %}[/table_row_even]
 {% endif -%}
 {% endfor -%}
 {%- if rows | length > 0 -%}
 {{ "─" * line_width }}
 {% endif -%}
-{{ footer.label | col(label_width) }}{% for v in footer.values %} {{ v | col(value_width, align='right') }}{% endfor %}
+{{ footer.label | col(label_width) }}{% for v in footer.values %} {{ v | col(value_widths[loop.index0], align='right') }}{% endfor %}
 {% if non_rust_summary %}
 
 {{ non_rust_summary }}

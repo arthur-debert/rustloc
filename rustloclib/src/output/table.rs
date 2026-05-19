@@ -42,6 +42,13 @@ pub struct LOCTable {
     pub rows: Vec<TableRow>,
     /// Summary/footer row
     pub footer: TableRow,
+    /// Per-value-column display widths (one per header[1..]). Each width is
+    /// the max visible width across that column's header, all row values,
+    /// and the footer value, so per-row items right-align to the widest
+    /// value — usually the footer ("Total") — and the total never has
+    /// fewer digits than any per-row entry.
+    #[serde(default)]
+    pub value_widths: Vec<usize>,
     /// Optional non-Rust changes summary (e.g., "Non-Rust changes: +10/-5/5 net")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub non_rust_summary: Option<String>,
@@ -75,12 +82,14 @@ impl LOCTable {
             ),
             values: format_locs(&qs.total, &qs.line_types),
         };
+        let value_widths = compute_value_widths(&headers, &rows, &footer);
 
         LOCTable {
             title: None,
             headers,
             rows,
             footer,
+            value_widths,
             non_rust_summary: None,
             legend: None,
         }
@@ -110,6 +119,7 @@ impl LOCTable {
             ),
             values: format_locs_diff(&qs.total, &qs.line_types),
         };
+        let value_widths = compute_value_widths(&headers, &rows, &footer);
         let title = Some(format!("Diff: {} → {}", qs.from_commit, qs.to_commit));
 
         let non_rust_summary = if qs.non_rust_added > 0 || qs.non_rust_removed > 0 {
@@ -127,10 +137,52 @@ impl LOCTable {
             headers,
             rows,
             footer,
+            value_widths,
             non_rust_summary,
             legend: Some("(+added / -removed / net)".to_string()),
         }
     }
+}
+
+/// Visible width of a string, skipping BBCode-style `[tag]`/`[/tag]` markup
+/// that the renderer strips before display. Mirrors what `standout`'s
+/// `strip_tags` does for the simple tag forms our diff values produce —
+/// the only markup we emit is `[additions]`, `[/additions]`, `[deletions]`,
+/// `[/deletions]`, so a naive bracket-balanced skip is sufficient.
+fn visible_width(s: &str) -> usize {
+    let mut count = 0usize;
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '[' => in_tag = true,
+            ']' if in_tag => in_tag = false,
+            _ if !in_tag => count += 1,
+            _ => {}
+        }
+    }
+    count
+}
+
+/// For each value column, return the max visible width across its header,
+/// every row value, and the footer value. The result has length
+/// `headers.len() - 1` (the label header is not a value column).
+fn compute_value_widths(headers: &[String], rows: &[TableRow], footer: &TableRow) -> Vec<usize> {
+    if headers.len() <= 1 {
+        return Vec::new();
+    }
+    (0..headers.len() - 1)
+        .map(|i| {
+            let header_w = visible_width(&headers[i + 1]);
+            let row_w = rows
+                .iter()
+                .filter_map(|r| r.values.get(i))
+                .map(|v| visible_width(v))
+                .max()
+                .unwrap_or(0);
+            let footer_w = footer.values.get(i).map(|v| visible_width(v)).unwrap_or(0);
+            header_w.max(row_w).max(footer_w)
+        })
+        .collect()
 }
 
 /// Line types configuration for header building.
@@ -589,5 +641,75 @@ mod tests {
             format_diff_value(0, 0),
             "[additions]+0[/additions]/[deletions]-0[/deletions]/0"
         );
+    }
+
+    #[test]
+    fn test_visible_width_strips_bbcode_tags() {
+        assert_eq!(visible_width("plain"), 5);
+        assert_eq!(
+            visible_width("[additions]+10[/additions]/[deletions]-5[/deletions]/5"),
+            "+10/-5/5".len()
+        );
+        assert_eq!(visible_width("[header]Code[/header]"), 4);
+    }
+
+    #[test]
+    fn test_compute_value_widths_picks_widest_cell_per_column() {
+        // Each column's width = max(header, row values, footer value).
+        // The footer here has the longest values, so widths match it.
+        let headers = vec!["File".to_string(), "Code".to_string(), "Total".to_string()];
+        let rows = vec![
+            TableRow {
+                label: "a.rs".to_string(),
+                values: vec![format_diff_value(1, 0), format_diff_value(1, 0)],
+            },
+            TableRow {
+                label: "b.rs".to_string(),
+                values: vec![format_diff_value(9, 0), format_diff_value(9, 0)],
+            },
+        ];
+        let footer = TableRow {
+            label: "Total (2 files)".to_string(),
+            values: vec![format_diff_value(100, 0), format_diff_value(100, 0)],
+        };
+
+        let widths = compute_value_widths(&headers, &rows, &footer);
+        assert_eq!(widths.len(), 2);
+        // Footer wins both columns: "+100/-0/100" is 11 visible chars.
+        assert_eq!(widths[0], visible_width("+100/-0/100"));
+        assert_eq!(widths[1], visible_width("+100/-0/100"));
+        // Every per-row value fits within its column — the total never
+        // has fewer digits than any row entry.
+        for row in &rows {
+            for (i, v) in row.values.iter().enumerate() {
+                assert!(visible_width(v) <= widths[i]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_value_widths_at_least_header_width() {
+        // If every value is short ("0"), each column must still be wide
+        // enough to fit its header word.
+        let result = sample_count_result();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        );
+        let table = LOCTable::from_count_queryset(&qs);
+
+        // headers[1..] = Code, Tests, Examples, Docs, Comments, Blanks, Total
+        for (i, header) in table.headers[1..].iter().enumerate() {
+            assert!(
+                table.value_widths[i] >= header.len(),
+                "column {} ({}) width {} < header {}",
+                i,
+                header,
+                table.value_widths[i],
+                header.len()
+            );
+        }
     }
 }
