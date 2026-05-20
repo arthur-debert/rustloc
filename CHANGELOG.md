@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-05-20
+
 ### Fixed
 
 - `diff` no longer renders every other row's label in red. The
@@ -376,7 +378,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Acknowledgments**:
   - Parsing logic adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc) by Maxim Gritsenko
 
-[Unreleased]: https://github.com/arthur-debert/rustloc/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/arthur-debert/rustloc/compare/v0.17.1...HEAD
+[0.17.1]: https://github.com/arthur-debert/rustloc/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/arthur-debert/rustloc/compare/v0.13.1...v0.17.0
 [0.13.1]: https://github.com/arthur-debert/rustloc/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/arthur-debert/rustloc/compare/v0.12.0...v0.13.0
