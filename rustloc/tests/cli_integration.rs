@@ -1,6 +1,6 @@
 //! Integration tests for rustloc CLI
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::sync::OnceLock;
 
@@ -47,19 +47,28 @@ fn run_rustloc_with_code(args: &[&str]) -> (String, String, Option<i32>) {
 // has ≥6 commits and tags `v0.14.0` and `v0.14.2` so the historical
 // HEAD~5..HEAD / tag-range tests keep their original shape.
 
-/// Layout of the fixture repo, in commit order:
-///   1. add foo.rs (10 non-blank code lines)
-///   2. add bar.rs (20 non-blank code lines)
-///   3. tag v0.14.0 (lightweight, on commit 2)
-///   4. modify foo.rs (+5 code lines)
-///   5. add baz.rs (15 code lines)
-///   6. modify bar.rs (+3 code lines)
-///   7. add qux.rs (8 code lines) — tag v0.14.2 (annotated) on this commit
+/// Layout of the fixture repo.
 ///
-/// HEAD~5..HEAD therefore spans commits 3..7 in absolute terms (commit
-/// 3 is the tag-only commit, but git rev-walk still counts the boundary
-/// the same way). Concretely: HEAD~5 = commit 2 (post `git log`'s 0-indexed
-/// "5 steps back from HEAD"), so the range covers commits 3-7.
+/// Six commits (tags don't create commits — they just label an existing
+/// one):
+///
+///   commit 1: add foo.rs (`rust_fn("foo_one", 10)` → 12 code lines)
+///   commit 2: add bar.rs (`rust_fn("bar_one", 20)` → 22 code lines)
+///             — tag `v0.14.0` (lightweight) on this commit
+///   commit 3: extend foo.rs (+`rust_fn("foo_two", 5)` → +7 code lines)
+///   commit 4: add baz.rs (`rust_fn("baz_one", 15)` → 17 code lines)
+///   commit 5: extend bar.rs (+`rust_fn("bar_two", 3)` → +5 code lines)
+///   commit 6: add qux.rs (`rust_fn("qux_one", 8)` → 10 code lines)
+///             — tag `v0.14.2` (annotated) on this commit
+///
+/// `rust_fn(name, n)` always emits `n + 2` code lines (the signature line
+/// and the closing brace count as code too), so the "code lines" column
+/// above is `n + 2` per call.
+///
+/// HEAD-relative resolution (6 commits total, HEAD = commit 6):
+///   HEAD~5 = commit 1
+///   HEAD~5..HEAD covers commits 2, 3, 4, 5, 6 (5 commits)
+///   v0.14.0..v0.14.2 covers commits 3, 4, 5, 6 (4 commits)
 fn build_fixture_repo() -> TempDir {
     let dir = tempfile::Builder::new()
         .prefix("rustloc-fixture-")
@@ -76,40 +85,42 @@ fn build_fixture_repo() -> TempDir {
     git(path, &["config", "commit.gpgsign", "false"]);
     git(path, &["config", "tag.gpgsign", "false"]);
 
-    // Commit 1: add foo.rs (10 code lines)
+    // Commit 1: add foo.rs (12 code lines = 10 + signature + brace)
     write_file(&path.join("foo.rs"), &rust_fn("foo_one", 10));
     git(path, &["add", "foo.rs"]);
     commit(path, "add foo.rs");
 
-    // Commit 2: add bar.rs (20 code lines)
+    // Commit 2: add bar.rs (22 code lines = 20 + signature + brace)
     write_file(&path.join("bar.rs"), &rust_fn("bar_one", 20));
     git(path, &["add", "bar.rs"]);
     commit(path, "add bar.rs");
 
-    // Tag v0.14.0 (lightweight tag — the gix peel path handles both
-    // annotated and lightweight; we cover annotated below at v0.14.2).
+    // Tag v0.14.0 on commit 2 (lightweight tag — the gix peel path handles
+    // both annotated and lightweight; we cover annotated below at v0.14.2).
+    // A tag is not a commit, so this doesn't advance HEAD.
     git(path, &["tag", "v0.14.0"]);
 
-    // Commit 3: modify foo.rs (+5 lines via second fn)
+    // Commit 3: extend foo.rs (+7 code lines = 5 + signature + brace)
     let mut foo_v2 = rust_fn("foo_one", 10);
     foo_v2.push_str(&rust_fn("foo_two", 5));
     write_file(&path.join("foo.rs"), &foo_v2);
     git(path, &["add", "foo.rs"]);
     commit(path, "extend foo.rs");
 
-    // Commit 4: add baz.rs (15 code lines)
+    // Commit 4: add baz.rs (17 code lines = 15 + signature + brace)
     write_file(&path.join("baz.rs"), &rust_fn("baz_one", 15));
     git(path, &["add", "baz.rs"]);
     commit(path, "add baz.rs");
 
-    // Commit 5: modify bar.rs (+3 lines)
+    // Commit 5: extend bar.rs (+5 code lines = 3 + signature + brace)
     let mut bar_v2 = rust_fn("bar_one", 20);
     bar_v2.push_str(&rust_fn("bar_two", 3));
     write_file(&path.join("bar.rs"), &bar_v2);
     git(path, &["add", "bar.rs"]);
     commit(path, "extend bar.rs");
 
-    // Commit 6: add qux.rs (8 code lines) and tag v0.14.2 (annotated)
+    // Commit 6: add qux.rs (10 code lines = 8 + signature + brace),
+    // then tag v0.14.2 (annotated) on this commit.
     write_file(&path.join("qux.rs"), &rust_fn("qux_one", 8));
     git(path, &["add", "qux.rs"]);
     commit(path, "add qux.rs");
@@ -171,7 +182,7 @@ fn commit(dir: &Path, message: &str) {
     );
 }
 
-fn write_file(path: &PathBuf, contents: &str) {
+fn write_file(path: &Path, contents: &str) {
     std::fs::write(path, contents).unwrap_or_else(|e| panic!("write {:?}: {}", path, e));
 }
 
