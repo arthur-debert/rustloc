@@ -1,99 +1,34 @@
 name: CI
 
+# Thin caller for the canonical reusable Rust CI workflow at
+# arthur-debert/release. Replaces the previously hand-rolled
+# setup-rust + Swatinem cache + fmt/clippy/test sequence and the
+# multi-OS matrix that lived here.
+#
+# See docs/per-stack/rust-ci.md in arthur-debert/release for the
+# full input reference. dodot is the reference adopter.
+#
+# `binary-name: rustloc` causes the check job to build and upload
+# `rustloc-linux` (the workspace package name and the produced
+# binary file match — see Cargo.toml). No bats e2e suite here.
+#
+# NOTE: the previous hand-rolled ci.yml ran a cross-OS matrix
+# (ubuntu/macos/windows) and per-target release builds. PR-time
+# matrix coverage is intentionally NOT part of rust-ci.yml — the
+# fleet convention is one Linux runner at PR time, full
+# cross-platform validation at release time via rust-cli.yml.
+# If multi-OS PR coverage is needed it should be a separate job.
+
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
-    branches: [main]
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: -Dwarnings
+permissions:
+  contents: read
 
 jobs:
-  check:
-    name: Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0  # Full history needed for diff tests
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Run tests
-        run: cargo test --all
-
-  # Test on multiple platforms
-  test:
-    name: Test (${{ matrix.os }})
-    needs: check
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0  # Full history needed for diff tests
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run tests
-        run: cargo test --all
-
-  # Build release binaries to ensure they compile
-  build:
-    name: Build (${{ matrix.target }})
-    needs: check
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cross-compilation tools (Linux ARM)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+  ci:
+    uses: arthur-debert/release/.github/workflows/rust-ci.yml@take-iii
+    with:
+      binary-name: rustloc
