@@ -1,11 +1,3 @@
-<!-- generated - do not edit. See CHANGELOG/README.txt -->
-
-# Changelog
-
-## Unreleased
-
-- Migrate changelog handling to the fragment-directory model (#201).
-
 
 All notable changes to this project will be documented in this file.
 
