@@ -1,11 +1,3 @@
-<!-- generated - do not edit. See CHANGELOG/README.txt -->
-
-# Changelog
-
-## Unreleased
-
-- Migrate changelog handling to the fragment-directory model (#201).
-
 
 All notable changes to this project will be documented in this file.
 
@@ -13,16 +5,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.17.1] - 2026-05-20
-
-### Fixed
-
-- `diff` no longer renders every other row's label in red. The
-  `[table_row_even]` wrap that alternating rows used resolves to an
-  empty style in the default theme, which made standout-bbparser strip
-  the inner `[additions]`/`[deletions]` resets without re-emitting one.
-  The last cell's fg color then bled into the next row's label. The
-  bare-row branch is now emitted unwrapped, so cell resets survive and
-  the file/crate label stays in the default color, matching `count`.
 
 ### Fixed
 
@@ -49,17 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separators line up across every row including the Total footer.
   Without this, the additions/removals/net positions drifted from row
   to row in a column whenever digit counts varied.
-
-### Added
-
-- Composite GitHub Action published from the repo root (`action.yml`).
-  Consumers can drop `uses: arthur-debert/rustloc@v0` into a `pull_request`
-  workflow to download the prebuilt release binary, run
-  `rustloc diff <base>...<head>`, and post the result as a sticky PR
-  comment (subsequent runs edit the existing comment in place via a
-  hidden `<!-- rustloc-diff -->` marker). Supports Linux x86_64/arm64
-  and macOS arm64 runners. See the "GitHub Action" section in the
-  README for inputs and a minimal workflow example.
 
 ## [0.16.0] - 2026-05-16
 

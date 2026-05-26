@@ -1,0 +1,37 @@
+# Managed by release-sync. Do not edit.
+synced_from: arthur-debert/release
+ref: origin/main
+sha: 245ccc855ad47e90320bd067274c52ea11b3237e
+synced_at: 2026-05-24T16:43:31Z
+stack: rust
+components:
+  - shell-quality
+  - rust-quality
+files:
+  - .claude/settings.json
+  - .editorconfig
+  - .github/CODEOWNERS
+  - .github/copilot-instructions.md
+  - .github/dependabot.yml
+  - .github/pull_request_template.md
+  - .github/workflows/copilot-review.yml
+  - .markdownlint.json
+  - .release-sync-state.yaml
+  - .shellcheckrc
+  - .yamllint
+  - bin/build
+  - bin/changelog
+  - bin/changelog-add
+  - bin/changelog-cut
+  - bin/changelog-render
+  - bin/check
+  - bin/check-fmt
+  - bin/check-lint
+  - bin/check-tests
+  - bin/diff-since-release
+  - CHANGELOG/README.txt
+  - lefthook.yml
+  - scripts/setup-dev-env.sh
+  - vendor/semver-tool/LICENSE
+  - vendor/semver-tool/README.md
+  - vendor/semver-tool/semver

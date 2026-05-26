@@ -1,6 +1,10 @@
 //! Integration tests for rustloc CLI
 
+use std::path::Path;
 use std::process::Command;
+use std::sync::OnceLock;
+
+use tempfile::TempDir;
 
 fn run_rustloc(args: &[&str]) -> (String, String, bool) {
     let (stdout, stderr, code) = run_rustloc_with_code(args);
@@ -23,6 +27,177 @@ fn run_rustloc_with_code(args: &[&str]) -> (String, String, Option<i32>) {
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     (stdout, stderr, output.status.code())
+}
+
+// ============================================================================
+// Hermetic fixture repo for diff-command tests
+// ============================================================================
+//
+// The earlier version of these tests invoked `rustloc diff HEAD~5..HEAD`
+// against the rustloc repo's OWN git history. That coupled test
+// correctness to commit cadence (output drifts with every merge) and
+// forced CI to use `fetch-depth: 0` so HEAD~5 actually existed. The
+// rust-ci reusable workflow defaults to shallow checkout, so the only
+// hermetic fix is to give the tests their own deterministic git repo.
+//
+// `fixture_repo()` builds a small repo in a TempDir on first call and
+// caches it for the lifetime of the test binary. Every test that needs
+// a diff target passes its path via rustloc's `--path` flag — the diff
+// command resolves the git repo from there, not from cwd. The fixture
+// has ≥6 commits and tags `v0.14.0` and `v0.14.2` so the historical
+// HEAD~5..HEAD / tag-range tests keep their original shape.
+
+/// Layout of the fixture repo.
+///
+/// Six commits (tags don't create commits — they just label an existing
+/// one):
+///
+///   commit 1: add foo.rs (`rust_fn("foo_one", 10)` → 12 code lines)
+///   commit 2: add bar.rs (`rust_fn("bar_one", 20)` → 22 code lines)
+///             — tag `v0.14.0` (lightweight) on this commit
+///   commit 3: extend foo.rs (+`rust_fn("foo_two", 5)` → +7 code lines)
+///   commit 4: add baz.rs (`rust_fn("baz_one", 15)` → 17 code lines)
+///   commit 5: extend bar.rs (+`rust_fn("bar_two", 3)` → +5 code lines)
+///   commit 6: add qux.rs (`rust_fn("qux_one", 8)` → 10 code lines)
+///             — tag `v0.14.2` (annotated) on this commit
+///
+/// `rust_fn(name, n)` always emits `n + 2` code lines (the signature line
+/// and the closing brace count as code too), so the "code lines" column
+/// above is `n + 2` per call.
+///
+/// HEAD-relative resolution (6 commits total, HEAD = commit 6):
+///   HEAD~5 = commit 1
+///   HEAD~5..HEAD covers commits 2, 3, 4, 5, 6 (5 commits)
+///   v0.14.0..v0.14.2 covers commits 3, 4, 5, 6 (4 commits)
+fn build_fixture_repo() -> TempDir {
+    let dir = tempfile::Builder::new()
+        .prefix("rustloc-fixture-")
+        .tempdir()
+        .expect("create tempdir for fixture repo");
+    let path = dir.path();
+
+    git(path, &["init", "--quiet", "--initial-branch=main"]);
+    git(
+        path,
+        &["config", "user.email", "rustloc-tests@example.invalid"],
+    );
+    git(path, &["config", "user.name", "rustloc tests"]);
+    git(path, &["config", "commit.gpgsign", "false"]);
+    git(path, &["config", "tag.gpgsign", "false"]);
+
+    // Commit 1: add foo.rs (12 code lines = 10 + signature + brace)
+    write_file(&path.join("foo.rs"), &rust_fn("foo_one", 10));
+    git(path, &["add", "foo.rs"]);
+    commit(path, "add foo.rs");
+
+    // Commit 2: add bar.rs (22 code lines = 20 + signature + brace)
+    write_file(&path.join("bar.rs"), &rust_fn("bar_one", 20));
+    git(path, &["add", "bar.rs"]);
+    commit(path, "add bar.rs");
+
+    // Tag v0.14.0 on commit 2 (lightweight tag — the gix peel path handles
+    // both annotated and lightweight; we cover annotated below at v0.14.2).
+    // A tag is not a commit, so this doesn't advance HEAD.
+    git(path, &["tag", "v0.14.0"]);
+
+    // Commit 3: extend foo.rs (+7 code lines = 5 + signature + brace)
+    let mut foo_v2 = rust_fn("foo_one", 10);
+    foo_v2.push_str(&rust_fn("foo_two", 5));
+    write_file(&path.join("foo.rs"), &foo_v2);
+    git(path, &["add", "foo.rs"]);
+    commit(path, "extend foo.rs");
+
+    // Commit 4: add baz.rs (17 code lines = 15 + signature + brace)
+    write_file(&path.join("baz.rs"), &rust_fn("baz_one", 15));
+    git(path, &["add", "baz.rs"]);
+    commit(path, "add baz.rs");
+
+    // Commit 5: extend bar.rs (+5 code lines = 3 + signature + brace)
+    let mut bar_v2 = rust_fn("bar_one", 20);
+    bar_v2.push_str(&rust_fn("bar_two", 3));
+    write_file(&path.join("bar.rs"), &bar_v2);
+    git(path, &["add", "bar.rs"]);
+    commit(path, "extend bar.rs");
+
+    // Commit 6: add qux.rs (10 code lines = 8 + signature + brace),
+    // then tag v0.14.2 (annotated) on this commit.
+    write_file(&path.join("qux.rs"), &rust_fn("qux_one", 8));
+    git(path, &["add", "qux.rs"]);
+    commit(path, "add qux.rs");
+    git(
+        path,
+        &["tag", "-a", "v0.14.2", "-m", "release v0.14.2 (fixture)"],
+    );
+
+    dir
+}
+
+/// Cached fixture repo path. The TempDir lives in a OnceLock so it's
+/// not dropped until the test process exits. All diff tests share the
+/// same fixture — building it once amortises the ~20 git invocations.
+fn fixture_repo() -> &'static Path {
+    static FIXTURE: OnceLock<TempDir> = OnceLock::new();
+    FIXTURE.get_or_init(build_fixture_repo).path()
+}
+
+/// Convenience: the fixture repo's path as a `&str` (UTF-8 path on all
+/// platforms we test on, including the tempfile-injected hex suffix).
+fn fixture_path_str() -> String {
+    fixture_repo().to_string_lossy().to_string()
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap_or_else(|e| panic!("git {:?} in {:?} failed to spawn: {}", args, dir, e));
+    assert!(
+        output.status.success(),
+        "git {:?} failed in {:?}: stdout={:?} stderr={:?}",
+        args,
+        dir,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+/// Commit with stable author/committer dates so commit hashes — though
+/// not asserted directly — at least don't drift across re-runs. Useful
+/// when debugging.
+fn commit(dir: &Path, message: &str) {
+    let env_date = "2024-01-01T00:00:00Z";
+    let output = Command::new("git")
+        .args(["commit", "--quiet", "-m", message])
+        .env("GIT_AUTHOR_DATE", env_date)
+        .env("GIT_COMMITTER_DATE", env_date)
+        .current_dir(dir)
+        .output()
+        .expect("git commit failed to spawn");
+    assert!(
+        output.status.success(),
+        "git commit failed: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+fn write_file(path: &Path, contents: &str) {
+    std::fs::write(path, contents).unwrap_or_else(|e| panic!("write {:?}: {}", path, e));
+}
+
+/// Render N lines of trivial Rust code wrapped in a function. Lines are
+/// `let _<i> = <i>;` — they count as `code` (not blank/comment/test) and
+/// the line count is exactly N + 2 (fn signature + closing brace). The
+/// classifier counts the fn signature and brace as code too, so the
+/// effective "code" delta from this helper is N + 2 per call.
+fn rust_fn(name: &str, body_lines: usize) -> String {
+    let mut s = format!("pub fn {name}() {{\n");
+    for i in 0..body_lines {
+        s.push_str(&format!("    let _{i} = {i};\n"));
+    }
+    s.push_str("}\n");
+    s
 }
 
 #[test]
@@ -192,8 +367,16 @@ fn test_csv_output_total() {
 
 #[test]
 fn test_csv_output_diff() {
-    let (stdout, _, success) =
-        run_rustloc(&["diff", "HEAD~5..HEAD", "--output", "csv", "--by-file"]);
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&[
+        "diff",
+        "HEAD~5..HEAD",
+        "--path",
+        &fixture,
+        "--output",
+        "csv",
+        "--by-file",
+    ]);
     assert!(success);
 
     let (headers, records) = parse_csv(&stdout);
@@ -271,8 +454,9 @@ fn test_diff_help() {
 
 #[test]
 fn test_diff_table_output() {
-    // Use known commits from the repo
-    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD"]);
+    // Hermetic fixture repo: 6 commits, deterministic file changes.
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--path", &fixture]);
 
     assert!(success, "diff command should succeed");
     assert!(stdout.contains("Diff:"));
@@ -289,7 +473,8 @@ fn test_diff_table_output() {
 #[test]
 fn test_diff_with_separate_commits() {
     // Test using two separate commit arguments
-    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5", "HEAD"]);
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5", "HEAD", "--path", &fixture]);
 
     assert!(success);
     assert!(stdout.contains("Diff:"));
@@ -301,8 +486,10 @@ fn test_diff_with_separate_commits() {
 fn test_diff_annotated_tag_range() {
     // Annotated tags must be peeled to their target commit by the resolver.
     // This used to fail with "expected commit, got tag" before delegating
-    // resolution to gix::Repository::rev_parse + peel_to_commit.
-    let (stdout, _, success) = run_rustloc(&["diff", "v0.14.0..v0.14.2"]);
+    // resolution to gix::Repository::rev_parse + peel_to_commit. The fixture
+    // sets `v0.14.2` as an annotated tag specifically to exercise that path.
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&["diff", "v0.14.0..v0.14.2", "--path", &fixture]);
 
     assert!(success, "tag-to-tag diff should resolve via gix rev_parse");
     assert!(stdout.contains("Diff: v0.14.0"));
@@ -312,7 +499,8 @@ fn test_diff_annotated_tag_range() {
 #[test]
 fn test_diff_single_tag_against_head() {
     // A single revspec is diffed against HEAD.
-    let (stdout, _, success) = run_rustloc(&["diff", "v0.14.2"]);
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&["diff", "v0.14.2", "--path", &fixture]);
 
     assert!(success);
     assert!(stdout.contains("Diff: v0.14.2"));
@@ -323,7 +511,11 @@ fn test_diff_single_tag_against_head() {
 fn test_diff_rejects_range_with_extra_arg() {
     // `rustloc diff a..b c` would naively become `a..b..c`, an invalid
     // revspec. The CLI should detect and reject this with a clear error.
-    let (_, stderr, success) = run_rustloc(&["diff", "HEAD~1..HEAD", "HEAD"]);
+    // This is a pure CLI-validation test (rejection happens before any
+    // git work), so we don't need the fixture — but we use it anyway to
+    // keep the test fully decoupled from the rustloc repo's own state.
+    let fixture = fixture_path_str();
+    let (_, stderr, success) = run_rustloc(&["diff", "HEAD~1..HEAD", "HEAD", "--path", &fixture]);
 
     assert!(!success, "passing a range plus a second arg should fail");
     assert!(
@@ -336,7 +528,8 @@ fn test_diff_rejects_range_with_extra_arg() {
 #[test]
 fn test_diff_merge_base_syntax() {
     // a...b should resolve to merge-base(a, b)..b.
-    let (stdout, _, success) = run_rustloc(&["diff", "v0.14.0...v0.14.2"]);
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&["diff", "v0.14.0...v0.14.2", "--path", &fixture]);
 
     assert!(success);
     assert!(stdout.contains("merge-base"));
@@ -344,7 +537,15 @@ fn test_diff_merge_base_syntax() {
 
 #[test]
 fn test_diff_json_output() {
-    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--output", "json"]);
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&[
+        "diff",
+        "HEAD~5..HEAD",
+        "--path",
+        &fixture,
+        "--output",
+        "json",
+    ]);
 
     assert!(success);
 
@@ -375,7 +576,9 @@ fn test_diff_json_output() {
 
 #[test]
 fn test_diff_by_file() {
-    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--by-file"]);
+    let fixture = fixture_path_str();
+    let (stdout, _, success) =
+        run_rustloc(&["diff", "HEAD~5..HEAD", "--path", &fixture, "--by-file"]);
 
     assert!(success);
     // New unified layout has File header and Code/Tests/Examples/Total columns
@@ -388,7 +591,8 @@ fn test_diff_by_file() {
 
 #[test]
 fn test_diff_invalid_commit() {
-    let (_, stderr, success) = run_rustloc(&["diff", "invalid_commit_hash"]);
+    let fixture = fixture_path_str();
+    let (_, stderr, success) = run_rustloc(&["diff", "invalid_commit_hash", "--path", &fixture]);
 
     assert!(!success);
     assert!(stderr.contains("Error:"));
@@ -396,8 +600,9 @@ fn test_diff_invalid_commit() {
 
 #[test]
 fn test_diff_same_commit() {
-    // Diffing a commit against itself should show no changes
-    let (stdout, _, success) = run_rustloc(&["diff", "HEAD..HEAD"]);
+    // Diffing a commit against itself should show no changes.
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&["diff", "HEAD..HEAD", "--path", &fixture]);
 
     assert!(success);
     assert!(stdout.contains("Total (0 files)"));
@@ -409,8 +614,9 @@ fn test_diff_same_commit() {
 
 #[test]
 fn test_diff_workdir() {
-    // Diff without commit args should show working directory changes
-    let (stdout, _, success) = run_rustloc(&["diff"]);
+    // Diff without commit args should show working directory changes.
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&["diff", "--path", &fixture]);
 
     assert!(success, "diff without args should succeed");
     assert!(stdout.contains("Diff: HEAD"));
@@ -421,8 +627,9 @@ fn test_diff_workdir() {
 
 #[test]
 fn test_diff_workdir_staged() {
-    // Diff with --staged should show staged changes vs HEAD
-    let (stdout, _, success) = run_rustloc(&["diff", "--staged"]);
+    // Diff with --staged should show staged changes vs HEAD.
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&["diff", "--staged", "--path", &fixture]);
 
     assert!(success, "diff --staged should succeed");
     assert!(stdout.contains("Diff: HEAD"));
@@ -433,8 +640,9 @@ fn test_diff_workdir_staged() {
 
 #[test]
 fn test_diff_workdir_cached_alias() {
-    // --cached should work as an alias for --staged
-    let (stdout, _, success) = run_rustloc(&["diff", "--cached"]);
+    // --cached should work as an alias for --staged.
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&["diff", "--cached", "--path", &fixture]);
 
     assert!(success, "diff --cached should succeed");
     assert!(stdout.contains("Diff: HEAD"));
@@ -443,7 +651,8 @@ fn test_diff_workdir_cached_alias() {
 
 #[test]
 fn test_diff_workdir_json() {
-    let (stdout, _, success) = run_rustloc(&["diff", "--output", "json"]);
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&["diff", "--path", &fixture, "--output", "json"]);
 
     assert!(success);
 
@@ -457,7 +666,8 @@ fn test_diff_workdir_json() {
 
 #[test]
 fn test_diff_workdir_by_file() {
-    let (stdout, _, success) = run_rustloc(&["diff", "--by-file"]);
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&["diff", "--by-file", "--path", &fixture]);
 
     assert!(success);
     // Should still show working tree diff
@@ -466,8 +676,9 @@ fn test_diff_workdir_by_file() {
 
 #[test]
 fn test_diff_staged_with_commits_error() {
-    // Using --staged with commit args should fail
-    let (_, stderr, success) = run_rustloc(&["diff", "HEAD~1", "--staged"]);
+    // Using --staged with commit args should fail.
+    let fixture = fixture_path_str();
+    let (_, stderr, success) = run_rustloc(&["diff", "HEAD~1", "--staged", "--path", &fixture]);
 
     assert!(!success);
     assert!(stderr.contains("--staged") || stderr.contains("--cached"));
@@ -544,7 +755,16 @@ fn test_top_larger_than_data_is_noop() {
 #[test]
 fn test_top_with_diff_by_file() {
     // --top should also work on diff output.
-    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--by-file", "--top", "2"]);
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&[
+        "diff",
+        "HEAD~5..HEAD",
+        "--path",
+        &fixture,
+        "--by-file",
+        "--top",
+        "2",
+    ]);
 
     assert!(success);
     // If there are at least 3 files changed, we'll see the truncation marker;
@@ -578,9 +798,12 @@ fn test_top_count_json_truncates_items_and_carries_total_items() {
 
 #[test]
 fn test_top_diff_json_truncates_items_and_carries_total_items() {
+    let fixture = fixture_path_str();
     let (stdout, _, success) = run_rustloc(&[
         "diff",
         "HEAD~5..HEAD",
+        "--path",
+        &fixture,
         "--by-file",
         "--top",
         "1",
@@ -819,8 +1042,16 @@ fn test_filter_non_numeric_value_errors_clearly() {
 #[test]
 fn test_filter_works_on_diff() {
     // The filter args are also injected on the diff subcommand.
-    let (stdout, _, success) =
-        run_rustloc(&["diff", "HEAD~5..HEAD", "--by-file", "--code-gte", "0"]);
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&[
+        "diff",
+        "HEAD~5..HEAD",
+        "--path",
+        &fixture,
+        "--by-file",
+        "--code-gte",
+        "0",
+    ]);
 
     assert!(success);
     assert!(stdout.contains("Diff:"));

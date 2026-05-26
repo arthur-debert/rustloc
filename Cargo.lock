@@ -2400,7 +2400,7 @@ dependencies = [
 
 [[package]]
 name = "rustloc"
-version = "0.17.0"
+version = "0.17.2-rc.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2410,11 +2410,12 @@ dependencies = [
  "serde",
  "serde_json",
  "standout",
+ "tempfile",
 ]
 
 [[package]]
 name = "rustloclib"
-version = "0.17.0"
+version = "0.17.2-rc.1"
 dependencies = [
  "cargo_metadata",
  "gix",

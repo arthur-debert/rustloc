@@ -1183,6 +1183,65 @@ fn read_blob(repo: &gix::Repository, oid: gix::ObjectId) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
+    use std::sync::OnceLock;
+    use tempfile::TempDir;
+
+    /// Hermetic two-commit git fixture for diff_revspec round-trip tests.
+    ///
+    /// Earlier versions of `test_diff_revspec_same_commit_range` and
+    /// `test_diff_revspec_short_hash` hard-coded `e3b2667`, a real
+    /// rustloc commit hash — which doesn't exist when CI runs with the
+    /// default shallow `fetch-depth: 1` checkout. The fixture below
+    /// creates a fresh repo and returns its (tempdir, full commit hash)
+    /// so those tests can pass a guaranteed-resolvable hash and a
+    /// guaranteed-resolvable 7-char short hash.
+    fn fixture_repo() -> &'static (TempDir, String) {
+        static FIXTURE: OnceLock<(TempDir, String)> = OnceLock::new();
+        FIXTURE.get_or_init(|| {
+            let dir = tempfile::Builder::new()
+                .prefix("rustloclib-diff-fixture-")
+                .tempdir()
+                .expect("tempdir");
+            let p = dir.path();
+            for args in [
+                vec!["init", "--quiet", "--initial-branch=main"],
+                vec!["config", "user.email", "rustloclib-tests@example.invalid"],
+                vec!["config", "user.name", "rustloclib tests"],
+                vec!["config", "commit.gpgsign", "false"],
+            ] {
+                let out = Command::new("git")
+                    .args(&args)
+                    .current_dir(p)
+                    .output()
+                    .expect("git spawn");
+                assert!(out.status.success(), "git {:?} failed", args);
+            }
+            std::fs::write(p.join("a.rs"), "fn a() {}\n").unwrap();
+            assert!(Command::new("git")
+                .args(["add", "a.rs"])
+                .current_dir(p)
+                .status()
+                .unwrap()
+                .success());
+            assert!(Command::new("git")
+                .args(["commit", "--quiet", "-m", "init"])
+                .env("GIT_AUTHOR_DATE", "2024-01-01T00:00:00Z")
+                .env("GIT_COMMITTER_DATE", "2024-01-01T00:00:00Z")
+                .current_dir(p)
+                .status()
+                .unwrap()
+                .success());
+            let hash = Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(p)
+                .output()
+                .expect("rev-parse")
+                .stdout;
+            let hash = String::from_utf8(hash).unwrap().trim().to_string();
+            (dir, hash)
+        })
+    }
 
     #[test]
     fn test_locs_diff_default() {
@@ -1380,22 +1439,32 @@ mod tests {
 
     #[test]
     fn test_diff_revspec_same_commit_range() {
-        let result = diff_revspec(".", "e3b2667..e3b2667", DiffOptions::new());
-        assert!(result.is_ok());
+        // Use the hermetic fixture's known commit hash rather than a real
+        // rustloc commit — the latter doesn't exist in CI's shallow checkout.
+        let (dir, hash) = fixture_repo();
+        let range = format!("{hash}..{hash}");
+        let result = diff_revspec(dir.path(), &range, DiffOptions::new());
+        assert!(result.is_ok(), "got: {:?}", result.err());
         let diff = result.unwrap();
         assert_eq!(diff.total.net_total(), 0);
     }
 
     #[test]
     fn test_diff_revspec_invalid() {
-        let result = diff_revspec(".", "definitely_not_a_real_ref_xyz", DiffOptions::new());
+        let (dir, _) = fixture_repo();
+        let result = diff_revspec(
+            dir.path(),
+            "definitely_not_a_real_ref_xyz",
+            DiffOptions::new(),
+        );
         assert!(result.is_err());
     }
 
     #[test]
     fn test_diff_revspec_single_rev_against_head() {
         // Single rev resolves to <rev>..HEAD; using HEAD itself is a no-op diff.
-        let result = diff_revspec(".", "HEAD", DiffOptions::new());
+        let (dir, _) = fixture_repo();
+        let result = diff_revspec(dir.path(), "HEAD", DiffOptions::new());
         assert!(result.is_ok());
         let diff = result.unwrap();
         assert_eq!(diff.total.net_total(), 0);
@@ -1405,7 +1474,8 @@ mod tests {
 
     #[test]
     fn test_diff_revspec_range_labels() {
-        let result = diff_revspec(".", "HEAD..HEAD", DiffOptions::new());
+        let (dir, _) = fixture_repo();
+        let result = diff_revspec(dir.path(), "HEAD..HEAD", DiffOptions::new());
         assert!(result.is_ok());
         let diff = result.unwrap();
         assert_eq!(diff.from_commit, "HEAD");
@@ -1415,7 +1485,8 @@ mod tests {
     #[test]
     fn test_diff_revspec_merge_base_syntax() {
         // a...b should resolve via merge-base; with a == b, merge-base is a.
-        let result = diff_revspec(".", "HEAD...HEAD", DiffOptions::new());
+        let (dir, _) = fixture_repo();
+        let result = diff_revspec(dir.path(), "HEAD...HEAD", DiffOptions::new());
         assert!(result.is_ok());
         let diff = result.unwrap();
         assert_eq!(diff.total.net_total(), 0);
@@ -1425,15 +1496,19 @@ mod tests {
 
     #[test]
     fn test_diff_revspec_short_hash() {
-        // Short hashes should resolve.
-        let result = diff_revspec(".", "e3b2667", DiffOptions::new());
-        assert!(result.is_ok());
+        // Short hashes (7-char prefix) should resolve. Use the fixture's
+        // actual hash so this is independent of the host repo's history.
+        let (dir, hash) = fixture_repo();
+        let short = &hash[..7];
+        let result = diff_revspec(dir.path(), short, DiffOptions::new());
+        assert!(result.is_ok(), "got: {:?}", result.err());
     }
 
     #[test]
     fn test_diff_revspec_unsupported_form() {
         // ^a (Exclude) is parseable but not a meaningful diff endpoint.
-        let result = diff_revspec(".", "^HEAD", DiffOptions::new());
+        let (dir, _) = fixture_repo();
+        let result = diff_revspec(dir.path(), "^HEAD", DiffOptions::new());
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("unsupported"), "got: {}", err);

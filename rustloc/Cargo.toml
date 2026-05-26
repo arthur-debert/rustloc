@@ -27,6 +27,7 @@ anyhow.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 csv = "1"
+tempfile = "3.10"
 
 # cargo-deb configuration. Driven by `cargo deb -p rustloc` in CI.
 # No maintainer scripts (debian/postinst, debian/prerm) — rustloc has no

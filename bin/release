@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Thin shim around the canonical release-cut CLI (arthur-debert/release/bin/release-cut).
+# release-cut handles arg parsing, semver bump, validation, and dispatches the
+# CI release workflow. Run `release-cut --help` for usage.
+#
+# What CI does (all on GitHub):
+#   1. Bumps [workspace.package] version + intra-workspace dep pin in
+#      [workspace.dependencies], refreshes Cargo.lock
+#   2. Rolls ## [Unreleased] → ## [VERSION] - DATE in CHANGELOG.md
+#   3. Commits "chore: Release vX.Y.Z" + tag, creates GitHub Release
+#   4. Builds binaries (macOS arm64+x86_64 signed+notarized, linux x86_64+arm64)
+#   5. Builds .deb packages, attaches to release
+#   6. Publishes rustloclib then rustloc to crates.io
+#   7. Pushes Homebrew formula to arthur-debert/homebrew-tools
+
+if ! command -v release-cut >/dev/null 2>&1; then
+    echo "scripts/release: release-cut not found on \$PATH" >&2
+    echo "  install: cd ~/h/release && git pull (release-cut lives in bin/)" >&2
+    exit 1
+fi
+
+exec release-cut "$@"
