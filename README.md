@@ -103,6 +103,47 @@ rustloc --output csv --output-file-path report.csv
 
 JSON output preserves the full result structure (totals, breakdowns, applied filters, total-vs-shown counts) so it round-trips through scripts cleanly.
 
+## GitHub Action
+
+`arthur-debert/rustloc` ships a composite action that posts a rustloc diff as a sticky comment on a pull request. Add it to a workflow:
+
+```yaml
+name: rustloc
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  rustloc-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # required so base...head is reachable
+      - uses: arthur-debert/rustloc@v0          # or pin to a tag like @v0.16.0
+        with:
+          args: --by-file         # any flags accepted by `rustloc diff`
+```
+
+The action downloads the prebuilt binary from the [releases page](https://github.com/arthur-debert/rustloc/releases), runs `rustloc diff <base>...<head>`, and posts the text output in a fenced block. Subsequent runs on the same PR edit the existing comment in place (matched by a hidden `<!-- rustloc-diff -->` marker).
+
+Inputs:
+
+| Input          | Default                                     | Description                                                          |
+|----------------|---------------------------------------------|----------------------------------------------------------------------|
+| `version`      | `latest`                                    | rustloc version to install (e.g. `0.16.0`), or `latest`.             |
+| `base`         | `${{ github.event.pull_request.base.sha }}` | Base git ref to diff from.                                           |
+| `head`         | `${{ github.event.pull_request.head.sha }}` | Head git ref to diff to.                                             |
+| `args`         | `--by-file`                                 | Extra args passed to `rustloc diff`.                                 |
+| `comment`      | `true`                                      | Set to `false` to skip posting; the body is still in `outputs.body`. |
+| `github-token` | `${{ github.token }}`                       | Token used to post the comment (needs `pull-requests: write`).       |
+
+Supported runners: `ubuntu-latest` (x86_64 + arm64) and `macos-latest` (arm64).
+
 ## Library
 
 rustloc is also available as a library crate, [`rustloclib`](https://docs.rs/rustloclib). Quick taste:

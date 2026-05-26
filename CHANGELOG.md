@@ -40,6 +40,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Without this, the additions/removals/net positions drifted from row
   to row in a column whenever digit counts varied.
 
+### Added
+
+- Composite GitHub Action published from the repo root (`action.yml`).
+  Consumers can drop `uses: arthur-debert/rustloc@v0` into a `pull_request`
+  workflow to download the prebuilt release binary, run
+  `rustloc diff <base>...<head>`, and post the result as a sticky PR
+  comment (subsequent runs edit the existing comment in place via a
+  hidden `<!-- rustloc-diff -->` marker). Supports Linux x86_64/arm64
+  and macOS arm64 runners. See the "GitHub Action" section in the
+  README for inputs and a minimal workflow example.
+
 ## [0.16.0] - 2026-05-16
 
 
