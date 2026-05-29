@@ -7,14 +7,18 @@ This document describes the design principles and architecture of rustloc to hel
 The project is split into two crates with a strict separation of concerns:
 
 ### `rustloclib` (Library)
+
 The library is responsible for:
+
 - **All computation and logic** - parsing, filtering, aggregation, diffing
 - **Pure data types** - returns structured data that can be serialized/deserialized
 - **Input configuration** - takes complete input (paths, filters, aggregation level, line types)
 - **No I/O formatting** - returns data, never formats for display
 
 ### `rustloc` (CLI)
+
 The CLI is responsible for:
+
 - **Argument parsing** - convert CLI args to library types
 - **Output formatting** - table, JSON, CSV formatting for display
 - **No business logic** - never compute or filter data, just present what the library returns
@@ -24,6 +28,7 @@ The CLI is responsible for:
 When adding a feature, ask: "Where does the logic live?"
 
 **Correct**: The library computes and filters data, CLI displays it.
+
 ```rust
 // Library: takes Contexts, returns filtered data
 let options = CountOptions::new().contexts(Contexts::code_only());
@@ -34,6 +39,7 @@ print_table(&result);  // No filtering logic here
 ```
 
 **Incorrect**: CLI doing computation.
+
 ```rust
 // WRONG: CLI is filtering/computing
 let result = count_workspace(path, options)?;
@@ -43,12 +49,14 @@ let filtered = result.filter(my_cli_filter);  // Should be done in library
 ## Core Library Types
 
 ### `rustloclib/src/options.rs`
+
 Input configuration types that control what the library returns:
 
 - `Contexts` - which code contexts to include (code, tests, examples)
 - `Aggregation` - result granularity (Total, ByCrate, ByModule, ByFile)
 
 ### `rustloclib/src/stats.rs`
+
 Output data types returned by the library:
 
 - `Locs` - counts for a single context (blank, logic, docs, comments)
@@ -57,6 +65,7 @@ Output data types returned by the library:
 - All types implement `filter(&self, contexts: Contexts) -> Self`
 
 ### `rustloclib/src/counter.rs`
+
 Counting API:
 
 - `CountOptions` - configuration for counting (crates, filters, aggregation, contexts)
@@ -64,6 +73,7 @@ Counting API:
 - `count_workspace()`, `count_directory()`, `count_file()` - entry points
 
 ### `rustloclib/src/diff.rs`
+
 Git diff API:
 
 - `DiffOptions` - configuration for diffing
@@ -102,6 +112,7 @@ let options = CountOptions::new().min_lines(args.min_lines);
 ## Serialization
 
 Library types derive `serde::Serialize`/`Deserialize`. JSON output is just:
+
 ```rust
 println!("{}", serde_json::to_string_pretty(&result)?);
 ```
