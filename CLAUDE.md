@@ -1,3 +1,7 @@
+<!-- BEGIN release-managed orientation — managed by release-sync; do not edit -->
+@.release/ORIENTATION.md
+<!-- END release-managed orientation -->
+
 # Architecture Guide for Coding Assistants
 
 This document describes the design principles and architecture of rustloc to help coding assistants understand the codebase.
