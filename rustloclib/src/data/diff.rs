@@ -319,7 +319,7 @@ pub fn diff_workdir(
         .map_err(|e| RustlocError::GitError(format!("Failed to discover git repository: {}", e)))?;
 
     let repo_root = repo
-        .work_dir()
+        .workdir()
         .ok_or_else(|| RustlocError::GitError("Repository has no work directory".to_string()))?
         .to_path_buf();
 
@@ -746,7 +746,7 @@ pub fn diff_revspec(
         .map_err(|e| RustlocError::GitError(format!("Failed to discover git repository: {}", e)))?;
 
     let repo_root = repo
-        .work_dir()
+        .workdir()
         .ok_or_else(|| RustlocError::GitError("Repository has no work directory".to_string()))?
         .to_path_buf();
 
@@ -1005,8 +1005,6 @@ fn compute_tree_diff(
     from_tree: &gix::Tree<'_>,
     to_tree: &gix::Tree<'_>,
 ) -> Result<Vec<FileChange>> {
-    use gix::object::tree::diff::Action;
-
     let mut changes = Vec::new();
 
     from_tree
@@ -1075,7 +1073,7 @@ fn compute_tree_diff(
             if let Some(fc) = file_change {
                 changes.push(fc);
             }
-            Ok::<_, std::convert::Infallible>(Action::Continue)
+            Ok::<_, std::convert::Infallible>(std::ops::ControlFlow::Continue(()))
         })
         .map_err(|e| RustlocError::GitError(format!("Failed to compute tree diff: {}", e)))?;
 
