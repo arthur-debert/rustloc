@@ -1,0 +1,1 @@
+- Add unit tests for Locs arithmetic (saturating sub, add-assign) and stats aggregation/filter invariants
