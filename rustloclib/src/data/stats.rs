@@ -351,4 +351,274 @@ mod tests {
         locs.recompute_total();
         assert_eq!(locs.total, 225);
     }
+
+    #[test]
+    fn test_locs_add_assign() {
+        let mut a = Locs {
+            code: 10,
+            tests: 5,
+            examples: 2,
+            docs: 3,
+            comments: 1,
+            blanks: 4,
+            total: 25,
+        };
+        a += Locs {
+            code: 1,
+            tests: 2,
+            examples: 3,
+            docs: 4,
+            comments: 5,
+            blanks: 6,
+            total: 21,
+        };
+        assert_eq!(a.code, 11);
+        assert_eq!(a.tests, 7);
+        assert_eq!(a.examples, 5);
+        assert_eq!(a.docs, 7);
+        assert_eq!(a.comments, 6);
+        assert_eq!(a.blanks, 10);
+        assert_eq!(a.total, 46);
+    }
+
+    #[test]
+    fn test_locs_sub_basic() {
+        let a = Locs {
+            code: 100,
+            tests: 50,
+            examples: 20,
+            docs: 30,
+            comments: 10,
+            blanks: 15,
+            total: 225,
+        };
+        let b = Locs {
+            code: 40,
+            tests: 10,
+            examples: 5,
+            docs: 10,
+            comments: 4,
+            blanks: 5,
+            total: 74,
+        };
+        let diff = a - b;
+        assert_eq!(diff.code, 60);
+        assert_eq!(diff.tests, 40);
+        assert_eq!(diff.examples, 15);
+        assert_eq!(diff.docs, 20);
+        assert_eq!(diff.comments, 6);
+        assert_eq!(diff.blanks, 10);
+        assert_eq!(diff.total, 151);
+    }
+
+    #[test]
+    fn test_locs_sub_saturates_at_zero_no_panic() {
+        // Subtraction must saturate, never underflow-panic: this invariant is what
+        // lets diff computation subtract a larger "before" from a smaller "after"
+        // per-field without crashing (fields move independently of the total).
+        let small = Locs {
+            code: 1,
+            tests: 1,
+            examples: 1,
+            docs: 1,
+            comments: 1,
+            blanks: 1,
+            total: 6,
+        };
+        let large = Locs {
+            code: 100,
+            tests: 100,
+            examples: 100,
+            docs: 100,
+            comments: 100,
+            blanks: 100,
+            total: 600,
+        };
+        let diff = small - large;
+        assert_eq!(diff, Locs::new()); // every field clamped to 0, including total
+    }
+
+    #[test]
+    fn test_locs_sub_assign_saturates_at_zero() {
+        let mut a = Locs {
+            code: 5,
+            tests: 0,
+            examples: 3,
+            docs: 0,
+            comments: 2,
+            blanks: 0,
+            total: 10,
+        };
+        a -= Locs {
+            code: 10, // larger than a.code -> clamps to 0
+            tests: 0,
+            examples: 1,
+            docs: 7, // larger than a.docs -> clamps to 0
+            comments: 2,
+            blanks: 0,
+            total: 20, // larger than a.total -> clamps to 0
+        };
+        assert_eq!(a.code, 0);
+        assert_eq!(a.tests, 0);
+        assert_eq!(a.examples, 2);
+        assert_eq!(a.docs, 0);
+        assert_eq!(a.comments, 0);
+        assert_eq!(a.blanks, 0);
+        assert_eq!(a.total, 0);
+    }
+
+    #[test]
+    fn test_locs_filter_empty_zeros_all_but_total() {
+        // `LineTypes::new()` selects no component types (code/tests/.../blanks all
+        // off; its `total` flag is on by default but is irrelevant here, since
+        // `Locs::filter` preserves `total` unconditionally). So filtering by it
+        // zeros every component while still reporting the file's true size.
+        let locs = Locs {
+            code: 7,
+            tests: 8,
+            examples: 9,
+            docs: 1,
+            comments: 2,
+            blanks: 3,
+            total: 30,
+        };
+        let filtered = locs.filter(LineTypes::new());
+        assert_eq!(filtered.code, 0);
+        assert_eq!(filtered.tests, 0);
+        assert_eq!(filtered.examples, 0);
+        assert_eq!(filtered.docs, 0);
+        assert_eq!(filtered.comments, 0);
+        assert_eq!(filtered.blanks, 0);
+        assert_eq!(filtered.total, 30); // preserved even with nothing selected
+    }
+
+    #[test]
+    fn test_file_stats_filter_preserves_path_and_total() {
+        let locs = Locs {
+            code: 10,
+            tests: 5,
+            examples: 0,
+            docs: 2,
+            comments: 1,
+            blanks: 3,
+            total: 21,
+        };
+        let fs = FileStats::new(PathBuf::from("src/lib.rs"), locs);
+        let filtered = fs.filter(LineTypes::new().with_tests());
+        assert_eq!(filtered.path, PathBuf::from("src/lib.rs"));
+        assert_eq!(filtered.stats.tests, 5);
+        assert_eq!(filtered.stats.code, 0);
+        assert_eq!(filtered.stats.total, 21); // total preserved through filter
+    }
+
+    #[test]
+    fn test_module_stats_add_file_aggregates_and_tracks_files() {
+        let mut module = ModuleStats::new("foo".to_string());
+        assert_eq!(module.stats, Locs::new());
+        assert!(module.files.is_empty());
+
+        let a = Locs {
+            code: 10,
+            tests: 0,
+            examples: 0,
+            docs: 0,
+            comments: 0,
+            blanks: 2,
+            total: 12,
+        };
+        let b = Locs {
+            code: 5,
+            tests: 4,
+            examples: 0,
+            docs: 1,
+            comments: 0,
+            blanks: 0,
+            total: 10,
+        };
+        module.add_file(PathBuf::from("foo/a.rs"), a);
+        module.add_file(PathBuf::from("foo/b.rs"), b);
+
+        // Aggregated stats are the per-field sum.
+        assert_eq!(module.stats.code, 15);
+        assert_eq!(module.stats.tests, 4);
+        assert_eq!(module.stats.blanks, 2);
+        assert_eq!(module.stats.docs, 1);
+        assert_eq!(module.stats.total, 22);
+        // Both contributing files are tracked in order.
+        assert_eq!(
+            module.files,
+            vec![PathBuf::from("foo/a.rs"), PathBuf::from("foo/b.rs")]
+        );
+    }
+
+    #[test]
+    fn test_crate_stats_add_file_aggregates_and_keeps_filestats() {
+        let mut krate = CrateStats::new("mylib".to_string(), PathBuf::from("/work/mylib"));
+        let f1 = FileStats::new(
+            PathBuf::from("/work/mylib/src/lib.rs"),
+            Locs {
+                code: 20,
+                tests: 0,
+                examples: 0,
+                docs: 5,
+                comments: 0,
+                blanks: 0,
+                total: 25,
+            },
+        );
+        let f2 = FileStats::new(
+            PathBuf::from("/work/mylib/tests/it.rs"),
+            Locs {
+                code: 0,
+                tests: 30,
+                examples: 0,
+                docs: 0,
+                comments: 0,
+                blanks: 0,
+                total: 30,
+            },
+        );
+        krate.add_file(f1);
+        krate.add_file(f2);
+
+        assert_eq!(krate.stats.code, 20);
+        assert_eq!(krate.stats.tests, 30);
+        assert_eq!(krate.stats.docs, 5);
+        assert_eq!(krate.stats.total, 55);
+        // The full FileStats records are retained for detailed output.
+        assert_eq!(krate.files.len(), 2);
+        assert_eq!(krate.files[1].stats.tests, 30);
+    }
+
+    #[test]
+    fn test_crate_stats_filter_applies_to_aggregate_and_each_file() {
+        // CrateStats::filter must filter both the rolled-up aggregate AND every
+        // nested FileStats, while preserving each total — otherwise detailed and
+        // summary views disagree.
+        let mut krate = CrateStats::new("mylib".to_string(), PathBuf::from("/work/mylib"));
+        krate.add_file(FileStats::new(
+            PathBuf::from("/work/mylib/src/lib.rs"),
+            Locs {
+                code: 20,
+                tests: 7,
+                examples: 0,
+                docs: 5,
+                comments: 0,
+                blanks: 0,
+                total: 32,
+            },
+        ));
+        let filtered = krate.filter(LineTypes::new().with_code());
+
+        // Aggregate: only code survives, total preserved.
+        assert_eq!(filtered.stats.code, 20);
+        assert_eq!(filtered.stats.tests, 0);
+        assert_eq!(filtered.stats.total, 32);
+        // Nested file: same filtering, total preserved, path + crate metadata intact.
+        assert_eq!(filtered.files[0].stats.code, 20);
+        assert_eq!(filtered.files[0].stats.tests, 0);
+        assert_eq!(filtered.files[0].stats.total, 32);
+        assert_eq!(filtered.name, "mylib");
+        assert_eq!(filtered.path, PathBuf::from("/work/mylib"));
+    }
 }
