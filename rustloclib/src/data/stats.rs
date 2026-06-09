@@ -469,8 +469,10 @@ mod tests {
 
     #[test]
     fn test_locs_filter_empty_zeros_all_but_total() {
-        // An empty LineTypes selection zeros every component but preserves total,
-        // so a "show nothing" filter still reports the file's true size.
+        // `LineTypes::new()` selects no component types (code/tests/.../blanks all
+        // off; its `total` flag is on by default but is irrelevant here, since
+        // `Locs::filter` preserves `total` unconditionally). So filtering by it
+        // zeros every component while still reporting the file's true size.
         let locs = Locs {
             code: 7,
             tests: 8,
