@@ -234,6 +234,159 @@ fn test_table_output() {
     assert!(stdout.contains("Total (") && stdout.contains("files)"));
 }
 
+// ============================================================================
+// Table line-structure regression tests (issue #84)
+// ============================================================================
+//
+// The table layout has silently regressed more than once: a stray Jinja
+// whitespace-trim marker (`{#-` in stats_table.jinja, commit 4a4efd7) ate
+// the newline after the header separator, so the first data row — or the
+// Total footer when there are no rows — rendered on the same line as the
+// `────` rule. Nothing asserted the line structure, so it shipped (v0.17.1).
+//
+// These tests pin the structure down: separator lines must contain nothing
+// but `─`, the header must sit on its own line directly above a separator,
+// and the footer must not share a line with a rule. Any future trim bug in
+// the template collapses two of these lines into one and fails the "pure
+// separator" assertion.
+
+/// True when `line` is a horizontal rule and nothing else.
+fn is_pure_separator(line: &str) -> bool {
+    !line.is_empty() && line.chars().all(|c| c == '─')
+}
+
+/// Assert the structural invariants of a rendered table:
+///
+/// - every line containing `─` contains ONLY `─` (a jammed row/footer is
+///   exactly how the v0.17.1 regression manifested),
+/// - there are exactly `expected_separators` rule lines (1 when the table
+///   has no breakdown rows, 2 when rows sit between header and footer),
+/// - the line directly above the first rule is the column header,
+/// - the line directly below each rule is non-empty (a data row or the
+///   footer — never a continuation jammed into the rule itself),
+/// - the `Total (` footer line carries no rule characters.
+fn assert_table_line_structure(stdout: &str, expected_separators: usize) {
+    let lines: Vec<&str> = stdout.lines().collect();
+
+    for line in &lines {
+        if line.contains('─') {
+            assert!(
+                is_pure_separator(line),
+                "separator line is jammed with other content: {line:?}\nfull output:\n{stdout}"
+            );
+        }
+    }
+
+    let separator_indices: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| is_pure_separator(l))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(
+        separator_indices.len(),
+        expected_separators,
+        "expected {expected_separators} separator lines, got {}:\n{stdout}",
+        separator_indices.len()
+    );
+
+    let first = separator_indices[0];
+    assert!(first > 0, "separator must not be the first line:\n{stdout}");
+    let header = lines[first - 1];
+    assert!(
+        header.contains("Code") && header.contains("Total"),
+        "line above the first separator must be the column header, got {header:?}:\n{stdout}"
+    );
+
+    for &idx in &separator_indices {
+        let below = lines
+            .get(idx + 1)
+            .unwrap_or_else(|| panic!("separator must not be the last line:\n{stdout}"));
+        assert!(
+            !below.trim().is_empty(),
+            "line below a separator must be a data row or the footer:\n{stdout}"
+        );
+    }
+
+    let footer = lines
+        .iter()
+        .find(|l| l.contains("Total ("))
+        .unwrap_or_else(|| panic!("missing `Total (` footer line:\n{stdout}"));
+    assert!(
+        !footer.contains('─'),
+        "footer must not share a line with a rule: {footer:?}\n{stdout}"
+    );
+}
+
+#[test]
+fn test_count_total_table_line_structure() {
+    // Total aggregation: no breakdown rows, so a single rule between the
+    // header and the footer.
+    let (stdout, _, success) = run_rustloc(&["."]);
+
+    assert!(success);
+    assert_table_line_structure(&stdout, 1);
+}
+
+#[test]
+fn test_count_by_file_table_line_structure() {
+    // Breakdown rows present: header rule + footer rule, rows in between.
+    let (stdout, _, success) = run_rustloc(&[".", "--by-file"]);
+
+    assert!(success);
+    assert_table_line_structure(&stdout, 2);
+
+    // The line right after the header rule must be a data row (a file
+    // path), not the footer — i.e. rows actually sit between the rules.
+    let lines: Vec<&str> = stdout.lines().collect();
+    let first_sep = lines.iter().position(|l| is_pure_separator(l)).unwrap();
+    let first_row = lines[first_sep + 1];
+    assert!(
+        first_row.contains(".rs"),
+        "expected a file row right after the header separator, got {first_row:?}:\n{stdout}"
+    );
+}
+
+#[test]
+fn test_count_by_crate_table_line_structure() {
+    let (stdout, _, success) = run_rustloc(&[".", "--by-crate"]);
+
+    assert!(success);
+    assert_table_line_structure(&stdout, 2);
+}
+
+#[test]
+fn test_diff_total_table_line_structure() {
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&["diff", "HEAD~5..HEAD", "--path", &fixture]);
+
+    assert!(success);
+    assert_table_line_structure(&stdout, 1);
+}
+
+#[test]
+fn test_diff_by_file_table_line_structure() {
+    let fixture = fixture_path_str();
+    let (stdout, _, success) =
+        run_rustloc(&["diff", "HEAD~5..HEAD", "--path", &fixture, "--by-file"]);
+
+    assert!(success);
+    assert_table_line_structure(&stdout, 2);
+}
+
+#[test]
+fn test_diff_zero_files_table_line_structure() {
+    // The exact shape from the original report: a diff with no changed
+    // files still renders header / rule / footer — the footer must not be
+    // jammed onto the rule.
+    let fixture = fixture_path_str();
+    let (stdout, _, success) = run_rustloc(&["diff", "HEAD..HEAD", "--path", &fixture]);
+
+    assert!(success);
+    assert!(stdout.contains("Total (0 files)"));
+    assert_table_line_structure(&stdout, 1);
+}
+
 #[test]
 fn test_json_output() {
     let (stdout, _, success) = run_rustloc(&[".", "--output", "json"]);
