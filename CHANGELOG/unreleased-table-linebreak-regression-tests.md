@@ -1,0 +1,1 @@
+- Add regression tests pinning table line structure (separator, header, and footer each on their own line) so the v0.17.1 jammed-separator bug can't ship again (#84).
