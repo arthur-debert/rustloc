@@ -1,0 +1,1 @@
+- Composite GitHub Action published from the repo root (`action.yml`): drop `uses: arthur-debert/rustloc@v0` into a `pull_request` workflow to run `rustloc diff <base>...<head>` and post the result as a sticky PR comment (#50).

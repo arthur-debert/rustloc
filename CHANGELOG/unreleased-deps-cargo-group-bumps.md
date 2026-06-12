@@ -1,0 +1,1 @@
+- Update dependencies: `gix` 0.68 → 0.80, `rand` 0.8.5 → 0.8.6, and related transitive bumps in the cargo group (#71).
