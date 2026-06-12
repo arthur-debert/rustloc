@@ -1,1 +1,0 @@
-- Fix table rendering regression from v0.17.1 where the first data row was jammed onto the same line as the header separator (a leading dash in a Jinja comment swallowed the separator's newline).

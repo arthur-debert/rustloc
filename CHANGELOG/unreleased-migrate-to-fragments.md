@@ -1,1 +1,0 @@
-- Migrate changelog handling to the fragment-directory model (#201).
