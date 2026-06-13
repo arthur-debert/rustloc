@@ -1,9 +1,9 @@
 name: Release
 
 # Thin caller — the canonical pipeline lives at
-# arthur-debert/release/.github/workflows/rust-cli.yml@v2.
+# arthur-debert/release/.github/workflows/rust-cli.yml@v3.
 # Bug fixes and improvements to the release pipeline come in via a
-# bump of the @v1 floating ref, no changes here.
+# bump of the @v3 floating ref, no changes here.
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   release:
-    uses: arthur-debert/release/.github/workflows/rust-cli.yml@v2
+    uses: arthur-debert/release/.github/workflows/rust-cli.yml@v3
     with:
       version: ${{ inputs.version }}
       crates: rustloclib,rustloc
