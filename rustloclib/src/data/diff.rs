@@ -1532,12 +1532,7 @@ mod tests {
             vec!["config", "user.name", "rustloclib tests"],
             vec!["config", "commit.gpgsign", "false"],
         ] {
-            let out = Command::new("git")
-                .args(&args)
-                .current_dir(p)
-                .output()
-                .expect("git spawn");
-            assert!(out.status.success(), "git {:?} failed", args);
+            run_git(p, &args);
         }
         for (name, content) in initial {
             let full = p.join(name);
@@ -1545,31 +1540,46 @@ mod tests {
                 std::fs::create_dir_all(parent).unwrap();
             }
             std::fs::write(&full, content).unwrap();
-            assert!(Command::new("git")
-                .args(["add", name])
-                .current_dir(p)
-                .status()
-                .unwrap()
-                .success());
+            run_git(p, &["add", name]);
         }
-        assert!(Command::new("git")
+        let out = Command::new("git")
             .args(["commit", "--quiet", "-m", "init"])
             .env("GIT_AUTHOR_DATE", "2024-01-01T00:00:00Z")
             .env("GIT_COMMITTER_DATE", "2024-01-01T00:00:00Z")
             .current_dir(p)
-            .status()
-            .unwrap()
-            .success());
+            .output()
+            .expect("git spawn");
+        assert!(
+            out.status.success(),
+            "git commit failed (status={:?})\nstdout: {}\nstderr: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
         dir
     }
 
-    fn git_add(dir: &Path, name: &str) {
-        assert!(Command::new("git")
-            .args(["add", name])
+    /// Run `git <args>` in `dir`, capturing both streams and surfacing them
+    /// on failure. Hides nothing from CI logs — a missing-git or unexpected-
+    /// git-version regression is diagnosable from the assertion text alone.
+    fn run_git(dir: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .args(args)
             .current_dir(dir)
-            .status()
-            .unwrap()
-            .success());
+            .output()
+            .expect("git spawn");
+        assert!(
+            out.status.success(),
+            "git {:?} failed (status={:?})\nstdout: {}\nstderr: {}",
+            args,
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+    }
+
+    fn git_add(dir: &Path, name: &str) {
+        run_git(dir, &["add", name]);
     }
 
     #[test]
@@ -1876,12 +1886,7 @@ mod tests {
     fn test_diff_workdir_staged_deleted_rs_file() {
         let dir = workdir_repo(&[("a.rs", "fn a() {}\nfn b() {}\n")]);
         // Stage the deletion (git rm).
-        assert!(Command::new("git")
-            .args(["rm", "--quiet", "a.rs"])
-            .current_dir(dir.path())
-            .status()
-            .unwrap()
-            .success());
+        run_git(dir.path(), &["rm", "--quiet", "a.rs"]);
         let result = diff_workdir(dir.path(), WorkdirDiffMode::Staged, DiffOptions::new()).unwrap();
         assert!(result.total.removed.code > 0);
         assert_eq!(result.total.added.code, 0);
@@ -1904,8 +1909,12 @@ mod tests {
         let dir = workdir_repo(&[("README.md", "line one\nline two\nline three\n")]);
         std::fs::remove_file(dir.path().join("README.md")).unwrap();
         let result = diff_workdir(dir.path(), WorkdirDiffMode::All, DiffOptions::new()).unwrap();
+        // `count_lines()` is `content.lines().count()` and the input is
+        // fully controlled (three lines, trailing newline), so this is
+        // deterministic — assert exact to catch off-by-ones the way the
+        // other `non_rust_*` assertions in this module do.
         assert_eq!(result.non_rust_added, 0);
-        assert!(result.non_rust_removed >= 3);
+        assert_eq!(result.non_rust_removed, 3);
     }
 
     #[test]
@@ -1921,12 +1930,7 @@ mod tests {
     #[test]
     fn test_diff_workdir_staged_non_rust_deleted() {
         let dir = workdir_repo(&[("notes.txt", "one\ntwo\nthree\n")]);
-        assert!(Command::new("git")
-            .args(["rm", "--quiet", "notes.txt"])
-            .current_dir(dir.path())
-            .status()
-            .unwrap()
-            .success());
+        run_git(dir.path(), &["rm", "--quiet", "notes.txt"]);
         let result = diff_workdir(dir.path(), WorkdirDiffMode::Staged, DiffOptions::new()).unwrap();
         assert_eq!(result.non_rust_added, 0);
         assert_eq!(result.non_rust_removed, 3);
