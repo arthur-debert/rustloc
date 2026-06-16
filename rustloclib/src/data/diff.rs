@@ -1511,4 +1511,489 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(err.contains("unsupported"), "got: {}", err);
     }
+
+    // ---------------------------------------------------------------------
+    // diff_workdir + filter() helpers — exercising the working-directory
+    // diff path that the revspec fixture above doesn't touch.
+    // ---------------------------------------------------------------------
+
+    /// Build a fresh repo, write the listed files, stage and commit them.
+    /// Returned `TempDir` is per-test (not shared via OnceLock) because
+    /// every workdir test mutates the working tree.
+    fn workdir_repo(initial: &[(&str, &str)]) -> TempDir {
+        let dir = tempfile::Builder::new()
+            .prefix("rustloclib-workdir-")
+            .tempdir()
+            .expect("tempdir");
+        let p = dir.path();
+        for args in [
+            vec!["init", "--quiet", "--initial-branch=main"],
+            vec!["config", "user.email", "rustloclib-tests@example.invalid"],
+            vec!["config", "user.name", "rustloclib tests"],
+            vec!["config", "commit.gpgsign", "false"],
+        ] {
+            let out = Command::new("git")
+                .args(&args)
+                .current_dir(p)
+                .output()
+                .expect("git spawn");
+            assert!(out.status.success(), "git {:?} failed", args);
+        }
+        for (name, content) in initial {
+            let full = p.join(name);
+            if let Some(parent) = full.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&full, content).unwrap();
+            assert!(Command::new("git")
+                .args(["add", name])
+                .current_dir(p)
+                .status()
+                .unwrap()
+                .success());
+        }
+        assert!(Command::new("git")
+            .args(["commit", "--quiet", "-m", "init"])
+            .env("GIT_AUTHOR_DATE", "2024-01-01T00:00:00Z")
+            .env("GIT_COMMITTER_DATE", "2024-01-01T00:00:00Z")
+            .current_dir(p)
+            .status()
+            .unwrap()
+            .success());
+        dir
+    }
+
+    fn git_add(dir: &Path, name: &str) {
+        assert!(Command::new("git")
+            .args(["add", name])
+            .current_dir(dir)
+            .status()
+            .unwrap()
+            .success());
+    }
+
+    #[test]
+    fn test_locs_diff_filter_zeros_unselected_types() {
+        let diff = LocsDiff {
+            added: Locs {
+                code: 10,
+                tests: 5,
+                examples: 3,
+                docs: 2,
+                comments: 1,
+                blanks: 4,
+                total: 25,
+            },
+            removed: Locs {
+                code: 1,
+                tests: 1,
+                examples: 1,
+                docs: 1,
+                comments: 1,
+                blanks: 1,
+                total: 6,
+            },
+        };
+        let only_code = diff.filter(LineTypes::code_only());
+        assert_eq!(only_code.added.code, 10);
+        assert_eq!(only_code.added.tests, 0);
+        assert_eq!(only_code.added.docs, 0);
+        assert_eq!(only_code.removed.code, 1);
+        assert_eq!(only_code.removed.tests, 0);
+        // total is preserved by Locs::filter
+        assert_eq!(only_code.added.total, 25);
+        assert_eq!(only_code.removed.total, 6);
+    }
+
+    #[test]
+    fn test_locs_diff_add_assign() {
+        let mut a = LocsDiff {
+            added: Locs {
+                code: 5,
+                total: 5,
+                ..Locs::default()
+            },
+            removed: Locs {
+                code: 2,
+                total: 2,
+                ..Locs::default()
+            },
+        };
+        let b = LocsDiff {
+            added: Locs {
+                code: 3,
+                total: 3,
+                ..Locs::default()
+            },
+            removed: Locs {
+                code: 1,
+                total: 1,
+                ..Locs::default()
+            },
+        };
+        a += b;
+        assert_eq!(a.added.code, 8);
+        assert_eq!(a.removed.code, 3);
+        assert_eq!(a.net_code(), 5);
+    }
+
+    #[test]
+    fn test_file_diff_stats_filter_preserves_path_and_change_type() {
+        let stats = FileDiffStats {
+            path: PathBuf::from("src/a.rs"),
+            change_type: FileChangeType::Modified,
+            diff: LocsDiff {
+                added: Locs {
+                    code: 10,
+                    tests: 5,
+                    ..Locs::default()
+                },
+                removed: Locs::default(),
+            },
+        };
+        let filtered = stats.filter(LineTypes::tests_only());
+        assert_eq!(filtered.path, PathBuf::from("src/a.rs"));
+        assert_eq!(filtered.change_type, FileChangeType::Modified);
+        assert_eq!(filtered.diff.added.code, 0);
+        assert_eq!(filtered.diff.added.tests, 5);
+    }
+
+    #[test]
+    fn test_crate_diff_stats_new_is_empty() {
+        let c = CrateDiffStats::new("foo".to_string(), PathBuf::from("/tmp/foo"));
+        assert_eq!(c.name, "foo");
+        assert_eq!(c.path, PathBuf::from("/tmp/foo"));
+        assert_eq!(c.files.len(), 0);
+        assert_eq!(c.diff.net_total(), 0);
+    }
+
+    #[test]
+    fn test_crate_diff_stats_add_file_accumulates_diff() {
+        let mut c = CrateDiffStats::new("foo".to_string(), PathBuf::from("/tmp/foo"));
+        c.add_file(FileDiffStats {
+            path: PathBuf::from("a.rs"),
+            change_type: FileChangeType::Added,
+            diff: LocsDiff {
+                added: Locs {
+                    code: 10,
+                    total: 10,
+                    ..Locs::default()
+                },
+                removed: Locs::default(),
+            },
+        });
+        c.add_file(FileDiffStats {
+            path: PathBuf::from("b.rs"),
+            change_type: FileChangeType::Modified,
+            diff: LocsDiff {
+                added: Locs {
+                    code: 5,
+                    total: 5,
+                    ..Locs::default()
+                },
+                removed: Locs {
+                    code: 2,
+                    total: 2,
+                    ..Locs::default()
+                },
+            },
+        });
+        assert_eq!(c.files.len(), 2);
+        assert_eq!(c.diff.added.code, 15);
+        assert_eq!(c.diff.removed.code, 2);
+        assert_eq!(c.diff.net_code(), 13);
+    }
+
+    #[test]
+    fn test_crate_diff_stats_filter_recurses_into_files() {
+        let mut c = CrateDiffStats::new("foo".to_string(), PathBuf::from("/tmp/foo"));
+        c.add_file(FileDiffStats {
+            path: PathBuf::from("a.rs"),
+            change_type: FileChangeType::Added,
+            diff: LocsDiff {
+                added: Locs {
+                    code: 10,
+                    docs: 4,
+                    total: 14,
+                    ..Locs::default()
+                },
+                removed: Locs::default(),
+            },
+        });
+        let filtered = c.filter(LineTypes::code_only());
+        assert_eq!(filtered.files.len(), 1);
+        assert_eq!(filtered.files[0].diff.added.code, 10);
+        assert_eq!(filtered.files[0].diff.added.docs, 0);
+        assert_eq!(filtered.diff.added.docs, 0);
+    }
+
+    #[test]
+    fn test_diff_result_filter_recurses_and_preserves_metadata() {
+        let result = DiffResult {
+            root: PathBuf::from("/r"),
+            from_commit: "a".to_string(),
+            to_commit: "b".to_string(),
+            total: LocsDiff {
+                added: Locs {
+                    code: 10,
+                    docs: 4,
+                    total: 14,
+                    ..Locs::default()
+                },
+                removed: Locs::default(),
+            },
+            crates: vec![CrateDiffStats::new(
+                "foo".to_string(),
+                PathBuf::from("/r/foo"),
+            )],
+            files: vec![FileDiffStats {
+                path: PathBuf::from("a.rs"),
+                change_type: FileChangeType::Added,
+                diff: LocsDiff {
+                    added: Locs {
+                        code: 10,
+                        docs: 4,
+                        total: 14,
+                        ..Locs::default()
+                    },
+                    removed: Locs::default(),
+                },
+            }],
+            non_rust_added: 7,
+            non_rust_removed: 3,
+        };
+        let filtered = result.filter(LineTypes::code_only());
+        // Metadata preserved
+        assert_eq!(filtered.root, PathBuf::from("/r"));
+        assert_eq!(filtered.from_commit, "a");
+        assert_eq!(filtered.to_commit, "b");
+        assert_eq!(filtered.non_rust_added, 7);
+        assert_eq!(filtered.non_rust_removed, 3);
+        // Filter applied recursively
+        assert_eq!(filtered.total.added.code, 10);
+        assert_eq!(filtered.total.added.docs, 0);
+        assert_eq!(filtered.files[0].diff.added.docs, 0);
+        assert_eq!(filtered.crates.len(), 1);
+    }
+
+    #[test]
+    fn test_diff_options_default_matches_new() {
+        let a = DiffOptions::default();
+        let b = DiffOptions::new();
+        assert_eq!(a.crate_filter, b.crate_filter);
+        assert_eq!(a.aggregation, b.aggregation);
+        assert_eq!(a.line_types, b.line_types);
+    }
+
+    #[test]
+    fn test_diff_options_line_types_setter() {
+        let opts = DiffOptions::new().line_types(LineTypes::everything());
+        assert!(opts.line_types.code);
+        assert!(opts.line_types.tests);
+        assert!(opts.line_types.examples);
+        assert!(opts.line_types.blanks);
+    }
+
+    #[test]
+    fn test_diff_options_filter_setter() {
+        let cfg = FilterConfig::new();
+        let _opts = DiffOptions::new().filter(cfg);
+        // Just exercising the builder; FilterConfig has no PartialEq.
+    }
+
+    #[test]
+    fn test_diff_workdir_clean_tree_returns_zero_diff() {
+        let dir = workdir_repo(&[("a.rs", "fn a() {}\n")]);
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::All, DiffOptions::new()).unwrap();
+        assert_eq!(result.from_commit, "HEAD");
+        assert_eq!(result.to_commit, "working tree");
+        assert_eq!(result.total.net_total(), 0);
+        assert_eq!(result.non_rust_added, 0);
+        assert_eq!(result.non_rust_removed, 0);
+    }
+
+    #[test]
+    fn test_diff_workdir_staged_label() {
+        let dir = workdir_repo(&[("a.rs", "fn a() {}\n")]);
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::Staged, DiffOptions::new()).unwrap();
+        assert_eq!(result.from_commit, "HEAD");
+        assert_eq!(result.to_commit, "index");
+    }
+
+    #[test]
+    fn test_diff_workdir_all_modified_rs_file() {
+        let dir = workdir_repo(&[("a.rs", "fn a() {}\n")]);
+        // Add a new line of code in the working tree (uncommitted, unstaged).
+        std::fs::write(
+            dir.path().join("a.rs"),
+            "fn a() {}\nfn b() { println!(\"hi\"); }\n",
+        )
+        .unwrap();
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::All, DiffOptions::new()).unwrap();
+        // Should see code added but not removed.
+        assert!(
+            result.total.added.code > 0,
+            "expected code lines added, got {:?}",
+            result.total
+        );
+        assert_eq!(result.total.removed.code, 0);
+    }
+
+    #[test]
+    fn test_diff_workdir_all_deleted_rs_file() {
+        let dir = workdir_repo(&[("a.rs", "fn a() {}\nfn b() {}\n")]);
+        std::fs::remove_file(dir.path().join("a.rs")).unwrap();
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::All, DiffOptions::new()).unwrap();
+        // Should see code removed but not added.
+        assert!(
+            result.total.removed.code > 0,
+            "expected code lines removed, got {:?}",
+            result.total
+        );
+        assert_eq!(result.total.added.code, 0);
+    }
+
+    #[test]
+    fn test_diff_workdir_staged_added_rs_file() {
+        let dir = workdir_repo(&[("a.rs", "fn a() {}\n")]);
+        std::fs::write(dir.path().join("b.rs"), "fn b() { let x = 1; }\n").unwrap();
+        git_add(dir.path(), "b.rs");
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::Staged, DiffOptions::new()).unwrap();
+        assert!(result.total.added.code > 0);
+        assert_eq!(result.total.removed.code, 0);
+    }
+
+    #[test]
+    fn test_diff_workdir_staged_modified_rs_file() {
+        let dir = workdir_repo(&[("a.rs", "fn a() {}\n")]);
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}\nfn b() {}\n").unwrap();
+        git_add(dir.path(), "a.rs");
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::Staged, DiffOptions::new()).unwrap();
+        assert!(result.total.added.code > 0);
+    }
+
+    #[test]
+    fn test_diff_workdir_staged_deleted_rs_file() {
+        let dir = workdir_repo(&[("a.rs", "fn a() {}\nfn b() {}\n")]);
+        // Stage the deletion (git rm).
+        assert!(Command::new("git")
+            .args(["rm", "--quiet", "a.rs"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap()
+            .success());
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::Staged, DiffOptions::new()).unwrap();
+        assert!(result.total.removed.code > 0);
+        assert_eq!(result.total.added.code, 0);
+    }
+
+    #[test]
+    fn test_diff_workdir_all_non_rust_modified() {
+        let dir = workdir_repo(&[("README.md", "old\nlines\n")]);
+        std::fs::write(dir.path().join("README.md"), "old\nlines\nnew\nlines\n").unwrap();
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::All, DiffOptions::new()).unwrap();
+        // Two new lines added, zero removed (saturating_sub clamps at zero).
+        assert_eq!(result.non_rust_added, 2);
+        assert_eq!(result.non_rust_removed, 0);
+        // Non-Rust changes never count as code.
+        assert_eq!(result.total.net_total(), 0);
+    }
+
+    #[test]
+    fn test_diff_workdir_all_non_rust_deleted() {
+        let dir = workdir_repo(&[("README.md", "line one\nline two\nline three\n")]);
+        std::fs::remove_file(dir.path().join("README.md")).unwrap();
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::All, DiffOptions::new()).unwrap();
+        assert_eq!(result.non_rust_added, 0);
+        assert!(result.non_rust_removed >= 3);
+    }
+
+    #[test]
+    fn test_diff_workdir_staged_non_rust_added() {
+        let dir = workdir_repo(&[("a.rs", "fn a() {}\n")]);
+        std::fs::write(dir.path().join("notes.txt"), "alpha\nbeta\ngamma\n").unwrap();
+        git_add(dir.path(), "notes.txt");
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::Staged, DiffOptions::new()).unwrap();
+        assert_eq!(result.non_rust_added, 3);
+        assert_eq!(result.non_rust_removed, 0);
+    }
+
+    #[test]
+    fn test_diff_workdir_staged_non_rust_deleted() {
+        let dir = workdir_repo(&[("notes.txt", "one\ntwo\nthree\n")]);
+        assert!(Command::new("git")
+            .args(["rm", "--quiet", "notes.txt"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap()
+            .success());
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::Staged, DiffOptions::new()).unwrap();
+        assert_eq!(result.non_rust_added, 0);
+        assert_eq!(result.non_rust_removed, 3);
+    }
+
+    #[test]
+    fn test_diff_workdir_all_by_file_aggregation_populates_files() {
+        let dir = workdir_repo(&[("a.rs", "fn a() {}\n")]);
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}\nfn b() {}\n").unwrap();
+        let opts = DiffOptions::new().aggregation(Aggregation::ByFile);
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::All, opts).unwrap();
+        assert!(
+            !result.files.is_empty(),
+            "expected per-file breakdown, got none"
+        );
+        assert_eq!(result.files[0].path, PathBuf::from("a.rs"));
+    }
+
+    #[test]
+    fn test_diff_workdir_total_aggregation_omits_files() {
+        let dir = workdir_repo(&[("a.rs", "fn a() {}\n")]);
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}\nfn b() {}\n").unwrap();
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::All, DiffOptions::new()).unwrap();
+        assert!(result.files.is_empty());
+        assert!(result.crates.is_empty());
+    }
+
+    #[test]
+    fn test_diff_workdir_crate_filter_no_match_drops_everything() {
+        let dir = workdir_repo(&[("a.rs", "fn a() {}\n")]);
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}\nfn b() {}\n").unwrap();
+        // No Cargo workspace in this fixture, so `crate_for_path` always
+        // returns None; with a non-empty crate filter every file is dropped.
+        let opts = DiffOptions::new().crates(vec!["does-not-exist".to_string()]);
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::All, opts).unwrap();
+        assert_eq!(result.total.net_total(), 0);
+    }
+
+    #[test]
+    fn test_diff_workdir_non_git_path_errors() {
+        let dir = tempfile::Builder::new()
+            .prefix("rustloclib-not-a-repo-")
+            .tempdir()
+            .unwrap();
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::All, DiffOptions::new());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("git") || err.contains("Git"),
+            "expected git-related error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_diff_workdir_respects_line_type_filter() {
+        // Add a doc comment in the working tree; with code_only() the doc
+        // addition should be zeroed in the returned totals.
+        let dir = workdir_repo(&[("a.rs", "fn a() {}\n")]);
+        std::fs::write(
+            dir.path().join("a.rs"),
+            "/// doc line\nfn a() {}\nfn b() {}\n",
+        )
+        .unwrap();
+        let opts = DiffOptions::new().line_types(LineTypes::code_only());
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::All, opts).unwrap();
+        assert_eq!(result.total.added.docs, 0);
+        assert!(result.total.added.code > 0);
+    }
 }
