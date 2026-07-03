@@ -1,6 +1,6 @@
 //! File filtering and discovery with glob pattern support.
 //!
-//! This module provides functionality to discover Rust source files
+//! This module provides functionality to discover supported source files
 //! with support for include/exclude glob patterns.
 
 use std::path::{Path, PathBuf};
@@ -15,14 +15,14 @@ use crate::Result;
 /// Configuration for file filtering.
 #[derive(Debug, Clone, Default)]
 pub struct FilterConfig {
-    /// Glob patterns to include (if empty, include all .rs files)
+    /// Glob patterns to include (if empty, include all supported source files)
     pub include: Vec<Pattern>,
     /// Glob patterns to exclude
     pub exclude: Vec<Pattern>,
 }
 
 impl FilterConfig {
-    /// Create a new empty filter config (includes all .rs files).
+    /// Create a new empty filter config (includes all supported source files).
     pub fn new() -> Self {
         Self::default()
     }
@@ -106,9 +106,9 @@ fn should_skip_dir(name: &str) -> bool {
     name.starts_with('.') || name == "target"
 }
 
-/// Discover Rust source files in a directory.
+/// Discover supported source files in a directory.
 ///
-/// Walks the directory tree and returns all .rs files that match the filter.
+/// Walks the directory tree and returns all supported files that match the filter.
 pub fn discover_files(root: impl AsRef<Path>, filter: &FilterConfig) -> Result<Vec<PathBuf>> {
     let root = root.as_ref();
 
@@ -158,7 +158,7 @@ pub fn discover_files(root: impl AsRef<Path>, filter: &FilterConfig) -> Result<V
     Ok(files)
 }
 
-/// Discover Rust source files in multiple directories.
+/// Discover supported source files in multiple directories.
 pub fn discover_files_in_dirs(dirs: &[&Path], filter: &FilterConfig) -> Result<Vec<PathBuf>> {
     let mut all_files = Vec::new();
 
@@ -207,6 +207,8 @@ mod tests {
 
         assert!(filter.matches(Path::new("src/main.rs")));
         assert!(filter.matches(Path::new("lib.rs")));
+        assert!(filter.matches(Path::new("src/app.py")));
+        assert!(filter.matches(Path::new("tests/app.test.js")));
         assert!(!filter.matches(Path::new("README.md")));
         assert!(!filter.matches(Path::new("Cargo.toml")));
     }
