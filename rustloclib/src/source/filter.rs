@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use glob::Pattern;
 use walkdir::WalkDir;
 
+use crate::data::BackendRegistry;
 use crate::error::RustlocError;
 use crate::Result;
 
@@ -65,12 +66,12 @@ impl FilterConfig {
     /// Check if a path matches the filter criteria.
     ///
     /// A path matches if:
-    /// 1. It's a .rs file
+    /// 1. It is supported by a registered language backend
     /// 2. It matches at least one include pattern (or include is empty)
     /// 3. It doesn't match any exclude pattern
     pub fn matches(&self, path: &Path) -> bool {
-        // Must be a .rs file
-        if path.extension().is_none_or(|ext| ext != "rs") {
+        // Must be supported by a language backend.
+        if !BackendRegistry::new().supports_path(path) {
             return false;
         }
 

@@ -17,11 +17,16 @@
 //! println!("Total code lines: {}", result.total.code);
 //! ```
 
+pub mod backend;
 pub mod counter;
 pub mod diff;
 pub mod stats;
 pub mod visitor;
 
+pub use backend::{
+    BackendRegistry, FileAnalysis, LanguageBackend, LanguageId, LineClass, LogicContext,
+    RustBackend,
+};
 pub use counter::{
     compute_module_name, count_directory, count_file, count_workspace, CountOptions, CountResult,
 };

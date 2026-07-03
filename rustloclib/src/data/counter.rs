@@ -12,8 +12,8 @@ use crate::source::filter::{discover_files, discover_files_in_dirs, FilterConfig
 use crate::source::workspace::{CrateInfo, WorkspaceInfo};
 use crate::Result;
 
+use super::backend::BackendRegistry;
 use super::stats::{CrateStats, FileStats, Locs, ModuleStats};
-use super::visitor::gather_stats_for_path;
 
 /// Options for counting LOC.
 #[derive(Debug, Clone)]
@@ -285,13 +285,15 @@ fn aggregate_modules(
 fn count_crate(crate_info: &CrateInfo, options: &CountOptions) -> Result<CrateStats> {
     let dirs: Vec<&Path> = crate_info.all_dirs();
     let files = discover_files_in_dirs(&dirs, &options.file_filter)?;
+    let registry = BackendRegistry::new();
 
     let mut crate_stats = CrateStats::new(crate_info.name.clone(), crate_info.root.clone());
 
     for file_path in files {
-        let stats = gather_stats_for_path(&file_path)?;
-        let file_stats = FileStats::new(file_path, stats);
-        crate_stats.add_file(file_stats);
+        if let Some(stats) = analyze_file_stats(&registry, &file_path)? {
+            let file_stats = FileStats::new(file_path, stats);
+            crate_stats.add_file(file_stats);
+        }
     }
 
     Ok(crate_stats)
@@ -327,15 +329,17 @@ pub fn count_directory(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<
     }
 
     let files = discover_files(path, filter)?;
+    let registry = BackendRegistry::new();
 
     let mut result = CountResult::new();
     result.root = path.to_path_buf();
 
     for file_path in files {
-        let stats = gather_stats_for_path(&file_path)?;
-        result.total += stats;
-        result.file_count += 1;
-        result.files.push(FileStats::new(file_path, stats));
+        if let Some(stats) = analyze_file_stats(&registry, &file_path)? {
+            result.total += stats;
+            result.file_count += 1;
+            result.files.push(FileStats::new(file_path, stats));
+        }
     }
 
     Ok(result)
@@ -358,7 +362,21 @@ pub fn count_directory(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<
 /// assert_eq!(stats.code, 3);
 /// ```
 pub fn count_file(path: impl AsRef<Path>) -> Result<Locs> {
-    gather_stats_for_path(path)
+    let registry = BackendRegistry::new();
+    Ok(analyze_file_stats(&registry, path.as_ref())?.unwrap_or_default())
+}
+
+fn analyze_file_stats(registry: &BackendRegistry, path: &Path) -> Result<Option<Locs>> {
+    if registry.backend_for_path(path).is_none() {
+        return Ok(None);
+    }
+    let source = std::fs::read_to_string(path).map_err(|e| RustlocError::FileRead {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+    registry
+        .analyze_source(path, &source)
+        .map(|analysis| analysis.map(|analysis| analysis.stats))
 }
 
 #[cfg(test)]
