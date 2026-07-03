@@ -142,82 +142,102 @@ struct GenericLanguage {
 
 impl GenericLanguage {
     fn for_path(path: &Path) -> Option<Self> {
-        let ext = path.extension()?.to_str()?.to_ascii_lowercase();
-        let language = match ext.as_str() {
-            "py" | "pyw" => Self {
+        let ext = path.extension()?.to_str()?;
+        let language = if any_ext(ext, &["py", "pyw"]) {
+            Self {
                 id: "Python",
                 line_comments: &["#"],
                 block_comment: None,
-            },
-            "sh" | "bash" | "zsh" | "fish" => Self {
+            }
+        } else if any_ext(ext, &["sh", "bash", "zsh", "fish"]) {
+            Self {
                 id: "Shell",
                 line_comments: &["#"],
                 block_comment: None,
-            },
-            "rb" => Self {
+            }
+        } else if any_ext(ext, &["rb"]) {
+            Self {
                 id: "Ruby",
                 line_comments: &["#"],
                 block_comment: None,
-            },
-            "js" | "jsx" => Self {
+            }
+        } else if any_ext(ext, &["js", "jsx"]) {
+            Self {
                 id: "JavaScript",
                 line_comments: &["//"],
                 block_comment: Some(("/*", "*/")),
-            },
-            "ts" | "tsx" => Self {
+            }
+        } else if any_ext(ext, &["ts", "tsx"]) {
+            Self {
                 id: "TypeScript",
                 line_comments: &["//"],
                 block_comment: Some(("/*", "*/")),
-            },
-            "go" => Self {
+            }
+        } else if any_ext(ext, &["go"]) {
+            Self {
                 id: "Go",
                 line_comments: &["//"],
                 block_comment: Some(("/*", "*/")),
-            },
-            "java" => Self {
+            }
+        } else if any_ext(ext, &["java"]) {
+            Self {
                 id: "Java",
                 line_comments: &["//"],
                 block_comment: Some(("/*", "*/")),
-            },
-            "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => Self {
+            }
+        } else if any_ext(ext, &["c", "h", "cc", "cpp", "cxx", "hpp", "hh", "hxx"]) {
+            Self {
                 id: "C-like",
                 line_comments: &["//"],
                 block_comment: Some(("/*", "*/")),
-            },
-            "cs" => Self {
+            }
+        } else if any_ext(ext, &["cs"]) {
+            Self {
                 id: "CSharp",
                 line_comments: &["//"],
                 block_comment: Some(("/*", "*/")),
-            },
-            "php" => Self {
+            }
+        } else if any_ext(ext, &["php"]) {
+            Self {
                 id: "PHP",
                 line_comments: &["//", "#"],
                 block_comment: Some(("/*", "*/")),
-            },
-            "swift" => Self {
+            }
+        } else if any_ext(ext, &["swift"]) {
+            Self {
                 id: "Swift",
                 line_comments: &["//"],
                 block_comment: Some(("/*", "*/")),
-            },
-            "kt" | "kts" => Self {
+            }
+        } else if any_ext(ext, &["kt", "kts"]) {
+            Self {
                 id: "Kotlin",
                 line_comments: &["//"],
                 block_comment: Some(("/*", "*/")),
-            },
-            "scala" => Self {
+            }
+        } else if any_ext(ext, &["scala"]) {
+            Self {
                 id: "Scala",
                 line_comments: &["//"],
                 block_comment: Some(("/*", "*/")),
-            },
-            "css" | "scss" | "less" => Self {
+            }
+        } else if any_ext(ext, &["css", "scss", "less"]) {
+            Self {
                 id: "CSS",
                 line_comments: &[],
                 block_comment: Some(("/*", "*/")),
-            },
-            _ => return None,
+            }
+        } else {
+            return None;
         };
         Some(language)
     }
+}
+
+fn any_ext(ext: &str, candidates: &[&str]) -> bool {
+    candidates
+        .iter()
+        .any(|candidate| ext.eq_ignore_ascii_case(candidate))
 }
 
 impl LanguageBackend for GenericBackend {
@@ -227,7 +247,7 @@ impl LanguageBackend for GenericBackend {
 
     fn analyze_source(&self, path: &Path, source: &str) -> Result<FileAnalysis> {
         let language = GenericLanguage::for_path(path)
-            .ok_or_else(|| RustlocError::NotRustFile(path.to_path_buf()))?;
+            .ok_or_else(|| RustlocError::UnsupportedSourceFile(path.to_path_buf()))?;
         let context = generic_context_from_path(path);
         let mut stats = Locs::new();
         let mut in_block_comment = false;

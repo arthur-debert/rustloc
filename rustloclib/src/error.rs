@@ -29,7 +29,12 @@ pub enum RustlocError {
     #[error("no Cargo.toml found at or above: {0}")]
     CargoTomlNotFound(PathBuf),
 
-    /// Not a Rust file
+    /// Source file is not supported by any registered backend.
+    #[error("unsupported source file: {0}")]
+    UnsupportedSourceFile(PathBuf),
+
+    /// Not a Rust file.
+    #[deprecated(note = "use UnsupportedSourceFile instead")]
     #[error("not a Rust file: {0}")]
     NotRustFile(PathBuf),
 

@@ -364,7 +364,7 @@ pub fn count_directory(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<
 pub fn count_file(path: impl AsRef<Path>) -> Result<Locs> {
     let registry = BackendRegistry::new();
     analyze_file_stats(&registry, path.as_ref())?
-        .ok_or_else(|| RustlocError::NotRustFile(path.as_ref().to_path_buf()))
+        .ok_or_else(|| RustlocError::UnsupportedSourceFile(path.as_ref().to_path_buf()))
 }
 
 fn analyze_file_stats(registry: &BackendRegistry, path: &Path) -> Result<Option<Locs>> {
@@ -555,8 +555,8 @@ fn foo() {
 
         let err = count_file(&file).unwrap_err();
         match err {
-            RustlocError::NotRustFile(path) => assert_eq!(path, file),
-            other => panic!("expected NotRustFile, got {other:?}"),
+            RustlocError::UnsupportedSourceFile(path) => assert_eq!(path, file),
+            other => panic!("expected UnsupportedSourceFile, got {other:?}"),
         }
     }
 

@@ -202,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_matches_rs_files() {
+    fn test_filter_matches_supported_source_files() {
         let filter = FilterConfig::new();
 
         assert!(filter.matches(Path::new("src/main.rs")));
