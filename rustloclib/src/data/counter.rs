@@ -363,19 +363,13 @@ pub fn count_directory(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<
 /// ```
 pub fn count_file(path: impl AsRef<Path>) -> Result<Locs> {
     let registry = BackendRegistry::new();
-    Ok(analyze_file_stats(&registry, path.as_ref())?.unwrap_or_default())
+    analyze_file_stats(&registry, path.as_ref())?
+        .ok_or_else(|| RustlocError::NotRustFile(path.as_ref().to_path_buf()))
 }
 
 fn analyze_file_stats(registry: &BackendRegistry, path: &Path) -> Result<Option<Locs>> {
-    if registry.backend_for_path(path).is_none() {
-        return Ok(None);
-    }
-    let source = std::fs::read_to_string(path).map_err(|e| RustlocError::FileRead {
-        path: path.to_path_buf(),
-        source: e,
-    })?;
     registry
-        .analyze_source(path, &source)
+        .analyze_path(path)
         .map(|analysis| analysis.map(|analysis| analysis.stats))
 }
 
@@ -526,6 +520,19 @@ fn foo() {
         assert_eq!(stats.docs, 1);
         assert_eq!(stats.code, 3); // fn, let, }
         assert_eq!(stats.comments, 1);
+    }
+
+    #[test]
+    fn test_count_file_rejects_unsupported_file() {
+        let temp = tempdir().unwrap();
+        let file = temp.path().join("test.py");
+        fs::write(&file, "print('hello')\n").unwrap();
+
+        let err = count_file(&file).unwrap_err();
+        match err {
+            RustlocError::NotRustFile(path) => assert_eq!(path, file),
+            other => panic!("expected NotRustFile, got {other:?}"),
+        }
     }
 
     #[test]

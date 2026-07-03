@@ -9,10 +9,10 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::Result;
+use crate::{Result, RustlocError};
 
 use super::stats::Locs;
-use super::visitor::gather_stats;
+use super::visitor::{gather_stats, gather_stats_for_path};
 
 /// Language identified by a backend.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +92,15 @@ pub struct FileAnalysis {
 /// Backend interface for language-specific source analysis.
 pub trait LanguageBackend: Sync {
     fn supports_path(&self, path: &Path) -> bool;
+
+    fn analyze_path(&self, path: &Path) -> Result<FileAnalysis> {
+        let source = std::fs::read_to_string(path).map_err(|e| RustlocError::FileRead {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+        self.analyze_source(path, &source)
+    }
+
     fn analyze_source(&self, path: &Path, source: &str) -> Result<FileAnalysis>;
 }
 
@@ -102,6 +111,13 @@ pub struct RustBackend;
 impl LanguageBackend for RustBackend {
     fn supports_path(&self, path: &Path) -> bool {
         path.extension().is_some_and(|ext| ext == "rs")
+    }
+
+    fn analyze_path(&self, path: &Path) -> Result<FileAnalysis> {
+        Ok(FileAnalysis {
+            language: LanguageId::Rust,
+            stats: gather_stats_for_path(path)?,
+        })
     }
 
     fn analyze_source(&self, path: &Path, source: &str) -> Result<FileAnalysis> {
@@ -138,6 +154,12 @@ impl BackendRegistry {
     pub fn analyze_source(&self, path: &Path, source: &str) -> Result<Option<FileAnalysis>> {
         self.backend_for_path(path)
             .map(|backend| backend.analyze_source(path, source))
+            .transpose()
+    }
+
+    pub fn analyze_path(&self, path: &Path) -> Result<Option<FileAnalysis>> {
+        self.backend_for_path(path)
+            .map(|backend| backend.analyze_path(path))
             .transpose()
     }
 }
