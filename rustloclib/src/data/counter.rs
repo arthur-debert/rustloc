@@ -364,7 +364,7 @@ pub fn count_directory(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<
 pub fn count_file(path: impl AsRef<Path>) -> Result<Locs> {
     let registry = BackendRegistry::new();
     analyze_file_stats(&registry, path.as_ref())?
-        .ok_or_else(|| RustlocError::NotRustFile(path.as_ref().to_path_buf()))
+        .ok_or_else(|| RustlocError::UnsupportedSourceFile(path.as_ref().to_path_buf()))
 }
 
 fn analyze_file_stats(registry: &BackendRegistry, path: &Path) -> Result<Option<Locs>> {
@@ -501,6 +501,31 @@ edition = "2021"
     }
 
     #[test]
+    fn test_count_directory_includes_generic_source_files() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("tests")).unwrap();
+        fs::write(
+            root.join("app.py"),
+            "# comment\n\nprint('hello')\nprint('bye')\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("tests/test_app.py"),
+            "def test_app():\n    assert True\n",
+        )
+        .unwrap();
+
+        let result = count_directory(root, &FilterConfig::new()).unwrap();
+
+        assert_eq!(result.files.len(), 2);
+        assert_eq!(result.total.comments, 1);
+        assert_eq!(result.total.blanks, 1);
+        assert_eq!(result.total.code, 2);
+        assert_eq!(result.total.tests, 2);
+    }
+
+    #[test]
     fn test_count_file() {
         let temp = tempdir().unwrap();
         let file = temp.path().join("test.rs");
@@ -525,13 +550,13 @@ fn foo() {
     #[test]
     fn test_count_file_rejects_unsupported_file() {
         let temp = tempdir().unwrap();
-        let file = temp.path().join("test.py");
-        fs::write(&file, "print('hello')\n").unwrap();
+        let file = temp.path().join("README.md");
+        fs::write(&file, "# hello\n").unwrap();
 
         let err = count_file(&file).unwrap_err();
         match err {
-            RustlocError::NotRustFile(path) => assert_eq!(path, file),
-            other => panic!("expected NotRustFile, got {other:?}"),
+            RustlocError::UnsupportedSourceFile(path) => assert_eq!(path, file),
+            other => panic!("expected UnsupportedSourceFile, got {other:?}"),
         }
     }
 

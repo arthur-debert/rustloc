@@ -1945,6 +1945,45 @@ mod tests {
     }
 
     #[test]
+    fn test_diff_workdir_all_modified_generic_file() {
+        let dir = workdir_repo(&[("app.py", "print('old')\n")]);
+        std::fs::write(
+            dir.path().join("app.py"),
+            "# comment\nprint('old')\nprint('new')\nprint('again')\n",
+        )
+        .unwrap();
+        let result = diff_workdir(
+            dir.path(),
+            WorkdirDiffMode::All,
+            DiffOptions::new().line_types(LineTypes::everything()),
+        )
+        .unwrap();
+
+        assert_eq!(result.non_rust_added, 0);
+        assert_eq!(result.non_rust_removed, 0);
+        assert_eq!(result.total.added.comments, 1);
+        assert_eq!(result.total.added.code, 2);
+    }
+
+    #[test]
+    fn test_diff_workdir_staged_added_generic_test_file() {
+        let dir = workdir_repo(&[("a.rs", "fn a() {}\n")]);
+        std::fs::create_dir_all(dir.path().join("tests")).unwrap();
+        std::fs::write(
+            dir.path().join("tests/test_app.py"),
+            "def test_app():\n    assert True\n",
+        )
+        .unwrap();
+        git_add(dir.path(), "tests/test_app.py");
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::Staged, DiffOptions::new()).unwrap();
+
+        assert_eq!(result.non_rust_added, 0);
+        assert_eq!(result.non_rust_removed, 0);
+        assert_eq!(result.total.added.tests, 2);
+        assert_eq!(result.total.added.code, 0);
+    }
+
+    #[test]
     fn test_diff_workdir_all_non_rust_modified() {
         let dir = workdir_repo(&[("README.md", "old\nlines\n")]);
         std::fs::write(dir.path().join("README.md"), "old\nlines\nnew\nlines\n").unwrap();
