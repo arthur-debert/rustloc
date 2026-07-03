@@ -113,7 +113,7 @@ impl<'a> PythonSemanticClassifier<'a> {
 
     fn visit_suite(&mut self, suite: &Suite, context: LogicContext) {
         if let Some(docstring) = suite.first().filter(|stmt| is_docstring_stmt(stmt)) {
-            self.mark_range(docstring.range(), LineClass::Docs);
+            self.mark_range(docstring.range(), LineClass::Docs, true);
         }
 
         for statement in suite {
@@ -132,7 +132,11 @@ impl<'a> PythonSemanticClassifier<'a> {
                     context
                 };
                 if context == LogicContext::Tests {
-                    self.mark_range(function.range(), LineClass::Logic(LogicContext::Tests));
+                    self.mark_range(
+                        function.range(),
+                        LineClass::Logic(LogicContext::Tests),
+                        false,
+                    );
                 }
                 self.visit_suite(&function.body, context);
             }
@@ -146,7 +150,7 @@ impl<'a> PythonSemanticClassifier<'a> {
                     context
                 };
                 if context == LogicContext::Tests {
-                    self.mark_range(class.range(), LineClass::Logic(LogicContext::Tests));
+                    self.mark_range(class.range(), LineClass::Logic(LogicContext::Tests), false);
                 }
                 self.visit_suite(&class.body, context);
             }
@@ -185,7 +189,7 @@ impl<'a> PythonSemanticClassifier<'a> {
         }
     }
 
-    fn mark_range(&mut self, range: TextRange, class: LineClass) {
+    fn mark_range(&mut self, range: TextRange, class: LineClass, overwrite_non_logic: bool) {
         if self.line_classes.is_empty() {
             return;
         }
@@ -196,7 +200,8 @@ impl<'a> PythonSemanticClassifier<'a> {
         let end_line = self.line_for_offset(end).min(self.line_classes.len() - 1);
 
         for line_class in &mut self.line_classes[start_line..=end_line] {
-            if !matches!(line_class, LineClass::Blanks | LineClass::Comments) {
+            if overwrite_non_logic || !matches!(line_class, LineClass::Blanks | LineClass::Comments)
+            {
                 *line_class = class;
             }
         }
@@ -322,5 +327,29 @@ def test_bad(
         );
 
         assert_eq!(stats.examples, 2);
+    }
+
+    #[test]
+    fn classifies_blank_and_hash_lines_inside_multiline_docstrings_as_docs() {
+        let stats = analyze(
+            "src/service.py",
+            r#""""Module docs.
+
+# Still string content.
+"""
+
+def build():
+    """Build docs.
+
+    # Also string content.
+    """
+    return 1
+"#,
+        );
+
+        assert_eq!(stats.docs, 8);
+        assert_eq!(stats.blanks, 1);
+        assert_eq!(stats.comments, 0);
+        assert_eq!(stats.code, 2);
     }
 }

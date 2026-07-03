@@ -400,7 +400,7 @@ mod tests {
     fn registry_selects_generic_backend_for_common_source_files() {
         let registry = BackendRegistry::new();
 
-        assert!(registry.supports_path(Path::new("src/app.py")));
+        assert!(registry.supports_path(Path::new("src/app.sh")));
         assert!(registry.supports_path(Path::new("src/app.js")));
         assert!(registry.supports_path(Path::new("src/main.go")));
     }
