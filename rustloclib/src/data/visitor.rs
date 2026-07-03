@@ -27,7 +27,11 @@ use utf8_chars::BufReadCharsExt;
 use crate::error::RustlocError;
 use crate::Result;
 
+use super::backend::{LineClass, LogicContext};
 use super::stats::Locs;
+
+/// Backwards-compatible name for the logic context used by the Rust visitor.
+pub type VisitorContext = LogicContext;
 
 /// A visitor that parses Rust source files and counts lines of code.
 ///
@@ -43,20 +47,6 @@ pub struct Visitor<T: Read> {
     curr_string: String,
     curr_line_no: usize,
     debug: bool,
-}
-
-/// The context in which code is being analyzed.
-///
-/// This determines how logic lines are categorized (code/tests/examples).
-/// Comments, docs, and blanks are context-independent.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum VisitorContext {
-    /// Production code
-    Code,
-    /// Test code (in `#[test]` or `#[cfg(test)]` blocks, or `tests/` directory)
-    Tests,
-    /// Example code (in `examples/` directory)
-    Example,
 }
 
 /// Tracks what kind of content has been seen on the current line.
@@ -95,31 +85,6 @@ enum Token {
     DoubleStringBlockOpen,
     DoubleStringBlockClose,
     Other,
-}
-
-impl VisitorContext {
-    /// Determine the context from a file path.
-    ///
-    /// - Files under `tests/` or named `tests.rs` → Tests
-    /// - Files under `examples/` → Example
-    /// - Everything else → Code
-    pub fn from_file_path(path: impl AsRef<Path>) -> Self {
-        for component in path.as_ref().components() {
-            match component {
-                std::path::Component::Normal(os_str)
-                    if os_str == "tests" || os_str == "tests.rs" =>
-                {
-                    return Self::Tests;
-                }
-                std::path::Component::Normal(os_str) if os_str == "examples" => {
-                    return Self::Example;
-                }
-                _ => {}
-            }
-        }
-
-        Self::Code
-    }
 }
 
 impl Visitor<File> {
@@ -368,16 +333,18 @@ impl<T: Read> Visitor<T> {
         let line = self.curr_line_no;
         self.curr_line_no += 1;
 
-        // Always increment all (total line count)
-        self.stats.total += 1;
+        let class = if line_context.has_code {
+            LineClass::Logic(context)
+        } else if line_context.has_doc_comment_start {
+            LineClass::Docs
+        } else if line_context.has_comment_start {
+            LineClass::Comments
+        } else {
+            LineClass::Blanks
+        };
+        class.record(&mut self.stats);
 
         if line_context.has_code {
-            // Logic lines depend on context
-            match context {
-                VisitorContext::Code => self.stats.code += 1,
-                VisitorContext::Tests => self.stats.tests += 1,
-                VisitorContext::Example => self.stats.examples += 1,
-            }
             if self.debug {
                 let ctx = match context {
                     VisitorContext::Code => "CODE",
@@ -387,20 +354,14 @@ impl<T: Read> Visitor<T> {
                 eprint!("{line}: {ctx}: {curr}");
             }
         } else if line_context.has_doc_comment_start {
-            // Doc comments are context-independent
-            self.stats.docs += 1;
             if self.debug {
                 eprint!("{line}: DOCS: {curr}");
             }
         } else if line_context.has_comment_start {
-            // Regular comments are context-independent
-            self.stats.comments += 1;
             if self.debug {
                 eprint!("{line}: COMM: {curr}");
             }
         } else {
-            // Blank lines are context-independent
-            self.stats.blanks += 1;
             if self.debug {
                 eprint!("{line}: BLANK: {curr}");
             }

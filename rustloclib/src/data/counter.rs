@@ -12,8 +12,8 @@ use crate::source::filter::{discover_files, discover_files_in_dirs, FilterConfig
 use crate::source::workspace::{CrateInfo, WorkspaceInfo};
 use crate::Result;
 
+use super::backend::BackendRegistry;
 use super::stats::{CrateStats, FileStats, Locs, ModuleStats};
-use super::visitor::gather_stats_for_path;
 
 /// Options for counting LOC.
 #[derive(Debug, Clone)]
@@ -285,13 +285,15 @@ fn aggregate_modules(
 fn count_crate(crate_info: &CrateInfo, options: &CountOptions) -> Result<CrateStats> {
     let dirs: Vec<&Path> = crate_info.all_dirs();
     let files = discover_files_in_dirs(&dirs, &options.file_filter)?;
+    let registry = BackendRegistry::new();
 
     let mut crate_stats = CrateStats::new(crate_info.name.clone(), crate_info.root.clone());
 
     for file_path in files {
-        let stats = gather_stats_for_path(&file_path)?;
-        let file_stats = FileStats::new(file_path, stats);
-        crate_stats.add_file(file_stats);
+        if let Some(stats) = analyze_file_stats(&registry, &file_path)? {
+            let file_stats = FileStats::new(file_path, stats);
+            crate_stats.add_file(file_stats);
+        }
     }
 
     Ok(crate_stats)
@@ -327,15 +329,17 @@ pub fn count_directory(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<
     }
 
     let files = discover_files(path, filter)?;
+    let registry = BackendRegistry::new();
 
     let mut result = CountResult::new();
     result.root = path.to_path_buf();
 
     for file_path in files {
-        let stats = gather_stats_for_path(&file_path)?;
-        result.total += stats;
-        result.file_count += 1;
-        result.files.push(FileStats::new(file_path, stats));
+        if let Some(stats) = analyze_file_stats(&registry, &file_path)? {
+            result.total += stats;
+            result.file_count += 1;
+            result.files.push(FileStats::new(file_path, stats));
+        }
     }
 
     Ok(result)
@@ -358,7 +362,15 @@ pub fn count_directory(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<
 /// assert_eq!(stats.code, 3);
 /// ```
 pub fn count_file(path: impl AsRef<Path>) -> Result<Locs> {
-    gather_stats_for_path(path)
+    let registry = BackendRegistry::new();
+    analyze_file_stats(&registry, path.as_ref())?
+        .ok_or_else(|| RustlocError::NotRustFile(path.as_ref().to_path_buf()))
+}
+
+fn analyze_file_stats(registry: &BackendRegistry, path: &Path) -> Result<Option<Locs>> {
+    registry
+        .analyze_path(path)
+        .map(|analysis| analysis.map(|analysis| analysis.stats))
 }
 
 #[cfg(test)]
@@ -508,6 +520,19 @@ fn foo() {
         assert_eq!(stats.docs, 1);
         assert_eq!(stats.code, 3); // fn, let, }
         assert_eq!(stats.comments, 1);
+    }
+
+    #[test]
+    fn test_count_file_rejects_unsupported_file() {
+        let temp = tempdir().unwrap();
+        let file = temp.path().join("test.py");
+        fs::write(&file, "print('hello')\n").unwrap();
+
+        let err = count_file(&file).unwrap_err();
+        match err {
+            RustlocError::NotRustFile(path) => assert_eq!(path, file),
+            other => panic!("expected NotRustFile, got {other:?}"),
+        }
     }
 
     #[test]

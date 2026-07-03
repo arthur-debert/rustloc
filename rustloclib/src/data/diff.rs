@@ -31,8 +31,8 @@ use crate::source::filter::FilterConfig;
 use crate::source::workspace::WorkspaceInfo;
 use crate::Result;
 
+use super::backend::BackendRegistry;
 use super::stats::Locs;
-use super::visitor::{gather_stats, VisitorContext};
 
 /// Lines of code diff (added vs removed).
 ///
@@ -471,8 +471,8 @@ fn collect_staged_changes(
     for entry in index.entries() {
         let path = PathBuf::from(gix::path::from_bstr(entry.path(index)));
 
-        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
-            // Track non-Rust file line changes
+        if !is_supported_source_path(&path) {
+            // Track unsupported file line changes
             let index_oid = entry.id;
             if let Some(&head_oid) = head_entries.get(&path) {
                 if head_oid != index_oid {
@@ -515,7 +515,7 @@ fn collect_staged_changes(
 
     // Check for deleted files
     for (path, head_oid) in head_entries {
-        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+        if !is_supported_source_path(&path) {
             if !seen_paths.contains(&path) {
                 non_rust_removed += count_lines(&read_blob(repo, head_oid)?);
             }
@@ -586,8 +586,8 @@ fn collect_workdir_changes(
             continue;
         }
 
-        if abs_path.extension().and_then(|e| e.to_str()) != Some("rs") {
-            // Track non-Rust file line changes
+        if !is_supported_source_path(abs_path) {
+            // Track unsupported file line changes
             seen_paths.insert(rel_path.clone());
             let workdir_content = match std::fs::read_to_string(abs_path) {
                 Ok(content) => content,
@@ -635,7 +635,7 @@ fn collect_workdir_changes(
 
     // Check for deleted files
     for (path, head_oid) in head_entries {
-        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+        if !is_supported_source_path(&path) {
             if !seen_paths.contains(&path) {
                 non_rust_removed += count_lines(&read_blob(repo, head_oid)?);
             }
@@ -685,20 +685,18 @@ fn collect_tree_entries(
 
 /// Compute the LOC diff for a working directory file change
 fn compute_workdir_file_diff(change: &WorkdirFileChange, path: &Path) -> Result<FileDiffStats> {
-    let context = VisitorContext::from_file_path(path);
-
     let (old_stats, new_stats) = match change.change_type {
         FileChangeType::Added => {
-            let stats = gather_stats(change.new_content.as_ref().unwrap(), context);
+            let stats = analyze_content_stats(path, change.new_content.as_ref().unwrap())?;
             (Locs::new(), stats)
         }
         FileChangeType::Deleted => {
-            let stats = gather_stats(change.old_content.as_ref().unwrap(), context);
+            let stats = analyze_content_stats(path, change.old_content.as_ref().unwrap())?;
             (stats, Locs::new())
         }
         FileChangeType::Modified => {
-            let old_stats = gather_stats(change.old_content.as_ref().unwrap(), context);
-            let new_stats = gather_stats(change.new_content.as_ref().unwrap(), context);
+            let old_stats = analyze_content_stats(path, change.old_content.as_ref().unwrap())?;
+            let new_stats = analyze_content_stats(path, change.new_content.as_ref().unwrap())?;
             (old_stats, new_stats)
         }
     };
@@ -802,8 +800,8 @@ pub fn diff_revspec(
     for change in changes {
         let path = change.path.clone();
 
-        // Track non-Rust file line changes
-        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+        // Track unsupported file line changes.
+        if !is_supported_source_path(&path) {
             let old_lines = change
                 .old_oid
                 .and_then(|oid| read_blob(&repo, oid).ok().map(|c| count_lines(&c)))
@@ -1086,24 +1084,22 @@ fn compute_file_diff(
     change: &FileChange,
     path: &Path,
 ) -> Result<FileDiffStats> {
-    let context = VisitorContext::from_file_path(path);
-
     let (old_stats, new_stats) = match change.change_type {
         FileChangeType::Added => {
             let content = read_blob(repo, change.new_oid.unwrap())?;
-            let stats = gather_stats(&content, context);
+            let stats = analyze_content_stats(path, &content)?;
             (Locs::new(), stats)
         }
         FileChangeType::Deleted => {
             let content = read_blob(repo, change.old_oid.unwrap())?;
-            let stats = gather_stats(&content, context);
+            let stats = analyze_content_stats(path, &content)?;
             (stats, Locs::new())
         }
         FileChangeType::Modified => {
             let old_content = read_blob(repo, change.old_oid.unwrap())?;
             let new_content = read_blob(repo, change.new_oid.unwrap())?;
-            let old_stats = gather_stats(&old_content, context);
-            let new_stats = gather_stats(&new_content, context);
+            let old_stats = analyze_content_stats(path, &old_content)?;
+            let new_stats = analyze_content_stats(path, &new_content)?;
             (old_stats, new_stats)
         }
     };
@@ -1115,6 +1111,17 @@ fn compute_file_diff(
         change_type: change.change_type,
         diff,
     })
+}
+
+fn is_supported_source_path(path: &Path) -> bool {
+    BackendRegistry::new().supports_path(path)
+}
+
+fn analyze_content_stats(path: &Path, source: &str) -> Result<Locs> {
+    Ok(BackendRegistry::new()
+        .analyze_source(path, source)?
+        .map(|analysis| analysis.stats)
+        .unwrap_or_default())
 }
 
 /// Compute the diff between two Locs
@@ -1433,6 +1440,51 @@ mod tests {
     #[test]
     fn test_workdir_diff_mode_default() {
         assert_eq!(WorkdirDiffMode::default(), WorkdirDiffMode::All);
+    }
+
+    #[test]
+    fn test_workdir_diff_tracks_unsupported_file_summary() {
+        let dir = tempfile::Builder::new()
+            .prefix("rustloclib-unsupported-diff-")
+            .tempdir()
+            .expect("tempdir");
+        let p = dir.path();
+        for args in [
+            vec!["init", "--quiet", "--initial-branch=main"],
+            vec!["config", "user.email", "rustloclib-tests@example.invalid"],
+            vec!["config", "user.name", "rustloclib tests"],
+            vec!["config", "commit.gpgsign", "false"],
+        ] {
+            let out = Command::new("git")
+                .args(&args)
+                .current_dir(p)
+                .output()
+                .expect("git spawn");
+            assert!(out.status.success(), "git {:?} failed", args);
+        }
+
+        std::fs::write(p.join("README.md"), "one\ntwo\n").unwrap();
+        assert!(Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(p)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["commit", "--quiet", "-m", "init"])
+            .env("GIT_AUTHOR_DATE", "2024-01-01T00:00:00Z")
+            .env("GIT_COMMITTER_DATE", "2024-01-01T00:00:00Z")
+            .current_dir(p)
+            .status()
+            .unwrap()
+            .success());
+
+        std::fs::write(p.join("README.md"), "one\ntwo\nthree\n").unwrap();
+
+        let diff = diff_workdir(p, WorkdirDiffMode::All, DiffOptions::new()).unwrap();
+        assert_eq!(diff.total.net_total(), 0);
+        assert_eq!(diff.non_rust_added, 1);
+        assert_eq!(diff.non_rust_removed, 0);
     }
 
     #[test]
