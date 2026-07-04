@@ -139,10 +139,11 @@ pub mod error;
 
 // Re-export all public types at crate root for convenience
 pub use data::{
-    count_directory, count_file, count_workspace, diff_revspec, diff_workdir, gather_stats,
-    gather_stats_for_path, CountOptions, CountResult, CrateDiffStats, CrateStats, DiffOptions,
-    DiffResult, FileChangeType, FileDiffStats, FileStats, Locs, LocsDiff, ModuleStats,
-    VisitorContext, WorkdirDiffMode,
+    available_languages, count_directory, count_directory_with_options, count_file,
+    count_file_with_filter, count_workspace, default_languages, diff_revspec, diff_workdir,
+    gather_stats, gather_stats_for_path, CountOptions, CountResult, CrateDiffStats, CrateStats,
+    DiffOptions, DiffResult, FileChangeType, FileDiffStats, FileStats, LanguageName,
+    LanguageSelection, Locs, LocsDiff, ModuleStats, VisitorContext, WorkdirDiffMode,
 };
 pub use error::RustlocError;
 pub use output::{LOCTable, TableRow};

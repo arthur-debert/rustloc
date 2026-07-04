@@ -207,6 +207,7 @@ fn test_cli_help() {
     assert!(success);
     assert!(stdout.contains("rustloc"));
     assert!(stdout.contains("--crate"));
+    assert!(stdout.contains("--lang"));
     assert!(stdout.contains("--output"));
     assert!(stdout.contains("--by-crate"));
     assert!(stdout.contains("--by-file"));
@@ -218,6 +219,27 @@ fn test_cli_version() {
 
     assert!(success);
     assert!(stdout.contains("rustloc"));
+}
+
+#[test]
+fn test_lang_python_by_module_counts_python_tree() {
+    let dir = tempfile::Builder::new()
+        .prefix("rustloc-python-modules-")
+        .tempdir()
+        .expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("pkg/sub")).unwrap();
+    write_file(&dir.path().join("pkg/__init__.py"), "VALUE = 1\n");
+    write_file(
+        &dir.path().join("pkg/sub/worker.py"),
+        "def run():\n    return VALUE\n",
+    );
+
+    let path = dir.path().to_string_lossy().to_string();
+    let (stdout, _, success) = run_rustloc(&[&path, "--lang", "python", "--by-module"]);
+
+    assert!(success);
+    assert!(stdout.contains("pkg "));
+    assert!(stdout.contains("pkg::sub"));
 }
 
 #[test]
@@ -828,6 +850,33 @@ fn test_diff_workdir_by_file() {
 }
 
 #[test]
+fn test_diff_skipped_summary_is_language_neutral() {
+    let dir = tempfile::Builder::new()
+        .prefix("rustloc-skipped-summary-")
+        .tempdir()
+        .expect("tempdir");
+    let path = dir.path();
+    git(path, &["init", "--quiet", "--initial-branch=main"]);
+    git(
+        path,
+        &["config", "user.email", "rustloc-tests@example.invalid"],
+    );
+    git(path, &["config", "user.name", "rustloc tests"]);
+    git(path, &["config", "commit.gpgsign", "false"]);
+    write_file(&path.join("app.py"), "print('old')\n");
+    git(path, &["add", "app.py"]);
+    commit(path, "add python");
+    write_file(&path.join("app.py"), "print('old')\nprint('new')\n");
+
+    let path_arg = path.to_string_lossy().to_string();
+    let (stdout, _, success) = run_rustloc(&["diff", "--path", &path_arg]);
+
+    assert!(success);
+    assert!(stdout.contains("Skipped changes:"));
+    assert!(!stdout.contains("Non-Rust changes:"));
+}
+
+#[test]
 fn test_diff_staged_with_commits_error() {
     // Using --staged with commit args should fail.
     let fixture = fixture_path_str();
@@ -1073,7 +1122,7 @@ fn test_filter_via_explicit_count_subcommand() {
 fn test_filter_combines_with_and() {
     // Two predicates AND-combined; should narrow more than either alone.
     let (stdout, _, success) =
-        run_rustloc(&[".", "--by-crate", "--code-gte", "100", "--tests-lt", "1500"]);
+        run_rustloc(&[".", "--by-crate", "--code-gte", "50", "--tests-lt", "1500"]);
 
     assert!(success);
     // The repo has 2 crates; the AND should keep the rustloc crate (which

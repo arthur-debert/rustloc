@@ -130,6 +130,19 @@ struct CountArgs {
     #[arg(short = 'c', long = "crate", action = clap::ArgAction::Append)]
     crates: Vec<String>,
 
+    /// Language backend(s) to analyze [-l rust,python]
+    #[arg(short = 'l', long = "lang", value_delimiter = ',', action = clap::ArgAction::Append)]
+    #[arg(long_help = "\
+Language backend groups to analyze.
+
+Default: rust
+Available: rust, python, generic
+
+  -l python       Analyze Python files only
+  -l rust,python  Analyze Rust and Python files
+  -l all          Analyze all available backend groups")]
+    languages: Vec<String>,
+
     /// Only include files matching a glob [-i "src/**/*.rs"]
     #[arg(short = 'i', long = "include", action = clap::ArgAction::Append)]
     include: Vec<String>,
@@ -224,6 +237,19 @@ the resolved hash from `git rev-parse` if you need them.")]
     #[arg(short = 'c', long = "crate", action = clap::ArgAction::Append)]
     crates: Vec<String>,
 
+    /// Language backend(s) to analyze [-l rust,python]
+    #[arg(short = 'l', long = "lang", value_delimiter = ',', action = clap::ArgAction::Append)]
+    #[arg(long_help = "\
+Language backend groups to analyze.
+
+Default: rust
+Available: rust, python, generic
+
+  -l python       Analyze Python file changes only
+  -l rust,python  Analyze Rust and Python file changes
+  -l all          Analyze all available backend groups")]
+    languages: Vec<String>,
+
     /// Only include files matching a glob
     #[arg(short = 'i', long = "include", action = clap::ArgAction::Append)]
     include: Vec<String>,
@@ -292,9 +318,10 @@ truncated slice. No-op when no `--by-*` aggregation is in effect.")]
 mod handlers {
     use clap::ArgMatches;
     use rustloclib::{
-        count_directory, count_file, count_workspace, diff_revspec, diff_workdir, Aggregation,
-        CountOptions, CountQuerySet, CountResult, DiffOptions, DiffQuerySet, FilterConfig,
-        LOCTable, LineTypes, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
+        available_languages, count_directory_with_options, count_file_with_filter, count_workspace,
+        default_languages, diff_revspec, diff_workdir, Aggregation, CountOptions, CountQuerySet,
+        CountResult, DiffOptions, DiffQuerySet, FilterConfig, LOCTable, LanguageName,
+        LanguageSelection, LineTypes, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
     };
     use standout::cli::{CommandContext, HandlerResult, Output};
 
@@ -401,7 +428,7 @@ mod handlers {
                     ..Locs::default()
                 },
             };
-            rows.push(diff_row("NON_RUST", &non_rust));
+            rows.push(diff_row("SKIPPED", &non_rust));
         }
 
         rows.push(diff_row("TOTAL", &qs.total));
@@ -444,15 +471,10 @@ mod handlers {
         let is_workspace = path_ref.is_dir() && path_ref.join("Cargo.toml").exists()
             || path_ref.is_file() && path_ref.file_name() == Some("Cargo.toml".as_ref());
 
-        if !is_workspace && matches!(aggregation, Aggregation::ByCrate | Aggregation::ByModule) {
-            let flag = if matches!(aggregation, Aggregation::ByCrate) {
-                "--by-crate"
-            } else {
-                "--by-module"
-            };
+        if !is_workspace && matches!(aggregation, Aggregation::ByCrate) {
             return Err(anyhow::anyhow!(
                 "{} requires a Cargo workspace (directory with Cargo.toml), but '{}' is not a workspace",
-                flag,
+                "--by-crate",
                 path,
             ));
         }
@@ -465,14 +487,20 @@ mod handlers {
                 .line_types(effective_line_types);
             count_workspace(path, options)?
         } else if path_ref.is_file() {
-            let stats = count_file(path)?;
+            let stats = count_file_with_filter(path, &filter)?;
             let mut r = CountResult::new();
             r.root = path_ref.to_path_buf();
             r.file_count = 1;
             r.total = stats;
             r
         } else {
-            count_directory(path, &filter)?
+            count_directory_with_options(
+                path,
+                CountOptions::new()
+                    .filter(filter)
+                    .aggregation(aggregation)
+                    .line_types(effective_line_types),
+            )?
         };
 
         let top = extract_top(matches);
@@ -681,7 +709,7 @@ mod handlers {
     }
 
     fn build_filter(matches: &ArgMatches) -> Result<FilterConfig, anyhow::Error> {
-        let mut filter = FilterConfig::new();
+        let mut filter = FilterConfig::new().languages(extract_languages(matches)?);
 
         if let Some(includes) = matches.get_many::<String>("include") {
             for pattern in includes {
@@ -696,6 +724,27 @@ mod handlers {
         }
 
         Ok(filter)
+    }
+
+    fn extract_languages(matches: &ArgMatches) -> Result<LanguageSelection, anyhow::Error> {
+        let values: Vec<&str> = matches
+            .get_many::<String>("languages")
+            .map(|v| v.map(|s| s.as_str()).collect())
+            .unwrap_or_default();
+
+        if values.is_empty() {
+            return Ok(LanguageSelection::new(default_languages()));
+        }
+
+        if values.iter().any(|value| value.eq_ignore_ascii_case("all")) {
+            return Ok(LanguageSelection::new(available_languages()));
+        }
+
+        let mut languages = Vec::new();
+        for value in values {
+            languages.push(value.parse::<LanguageName>().map_err(anyhow::Error::msg)?);
+        }
+        Ok(LanguageSelection::new(&languages))
     }
 
     fn extract_crates(matches: &ArgMatches) -> Vec<String> {

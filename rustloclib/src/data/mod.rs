@@ -25,11 +25,13 @@ pub mod stats;
 pub mod visitor;
 
 pub use backend::{
-    BackendRegistry, FileAnalysis, GenericBackend, LanguageBackend, LanguageId, LineClass,
-    LogicContext, RustBackend,
+    available_languages, default_languages, BackendRegistry, FileAnalysis, GenericBackend,
+    LanguageBackend, LanguageId, LanguageName, LanguageSelection, LineClass, LogicContext,
+    RustBackend,
 };
 pub use counter::{
-    compute_module_name, count_directory, count_file, count_workspace, CountOptions, CountResult,
+    compute_module_name, count_directory, count_directory_with_options, count_file,
+    count_file_with_filter, count_workspace, CountOptions, CountResult,
 };
 pub use diff::{
     diff_revspec, diff_workdir, CrateDiffStats, DiffOptions, DiffResult, FileChangeType,
