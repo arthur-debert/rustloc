@@ -223,7 +223,7 @@ impl<'a> PythonSemanticClassifier<'a> {
         for alias in names {
             let imported = alias.name.as_str();
             let local = alias.asname.as_ref().unwrap_or(&alias.name).as_str();
-            if imported == "unittest" || imported.starts_with("unittest.") {
+            if imported == "unittest" || imported == "unittest.case" {
                 self.unittest_modules.insert(local.to_string());
             }
         }
