@@ -1,15 +1,16 @@
 //! # rustloclib
 //!
-//! A Rust-aware lines of code counter library with a simple, flat data model.
+//! A language-aware lines of code counter library with a simple, flat data model.
 //!
 //! ## Overview
 //!
-//! Unlike generic LOC counters (tokei, cloc, scc), this library understands Rust's
-//! unique structure where tests live alongside production code. It uses AST-aware
-//! parsing to categorize lines into one of 6 types:
+//! Unlike generic LOC counters (tokei, cloc, scc), this library has semantic
+//! backends for languages where tests can live alongside production code. Rust is
+//! enabled by default; Python and generic source backends can be selected through
+//! [`FilterConfig`]. It categorizes lines into one of 6 types:
 //!
-//! - **code**: Production code logic lines (in src/, not in test blocks)
-//! - **tests**: Test code logic lines (#[test], #[cfg(test)], tests/)
+//! - **code**: Production code logic lines
+//! - **tests**: Test code logic lines (same-file test constructs or test paths)
 //! - **examples**: Example code logic lines (examples/)
 //! - **docs**: Documentation comments (///, //!, /** */, /*! */)
 //! - **comments**: Regular comments (//, /* */)

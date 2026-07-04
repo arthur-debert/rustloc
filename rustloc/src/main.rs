@@ -1,19 +1,20 @@
 //! # rustloc
 //!
-//! A CLI tool for counting lines of code in Rust projects with test/code separation.
+//! A CLI tool for counting lines of code with language-aware test/code separation.
 //!
 //! ## Overview
 //!
 //! rustloc is built on top of rustloclib and provides a command-line interface for
-//! analyzing Rust codebases. It understands Rust's test structure and can separate
-//! production code from test code, even when they're in the same file.
+//! analyzing Rust, Python, and generic source trees. It separates production code
+//! from test code, even when a language backend can find both in the same file.
 //!
 //! ## Features
 //!
-//! - **Rust-aware**: Distinguishes code, tests, examples, comments, docs, and blanks
+//! - **Language-aware**: Distinguishes code, tests, examples, comments, docs, and blanks
+//! - **Language selection**: Rust by default; opt into Python or generic counting
 //! - **Cargo workspace support**: Filter by crate with `--crate` or `-c`
 //! - **Glob filtering**: Include/exclude files with glob patterns
-//! - **Multiple output formats**: Table (default), JSON
+//! - **Multiple output formats**: Table (default), JSON, YAML, XML, CSV
 //! - **Git diff analysis**: Compare LOC between commits
 //!
 //! ## Usage
@@ -33,6 +34,9 @@
 //!
 //! # Show only code and tests (exclude docs, comments, blanks)
 //! rustloc . --type code,tests
+//!
+//! # Analyze Python instead of the default Rust backend
+//! rustloc . --lang python
 //!
 //! # Diff between commits
 //! rustloc diff HEAD~5..HEAD
@@ -56,16 +60,16 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use standout::cli::{App, Dispatch, RunResult};
 use standout::{embed_styles, embed_templates};
 
-/// Rust-aware lines of code counter with test/code separation
+/// Language-aware lines of code counter with test/code separation
 #[derive(Parser)]
 #[command(name = "rustloc")]
 #[command(version, author = "Arthur Debert")]
 #[command(long_about = "\
-Rust-aware lines of code counter with test/code separation.
+Language-aware lines of code counter with test/code separation.
 
-Parses Rust source files and categorizes each line as code, tests, examples,
-docs, comments, or blanks. Understands #[cfg(test)] blocks, doc comments,
-and Cargo workspace structure.")]
+Rust is analyzed by default. Python and generic source files can be selected
+with --lang. Rust and Python backends classify same-file test code; the generic
+backend uses file paths for code/test/example context.")]
 #[command(after_help = "Use --help for examples")]
 #[command(after_long_help = "\
 Examples:
@@ -75,8 +79,11 @@ Examples:
   rustloc --by-file                    Group by file
   rustloc --by-file -o -code           Sort files by code (descending)
   rustloc -t code,tests               Only code and test lines
+  rustloc --lang python                Analyze Python files only
+  rustloc --lang rust,python           Analyze Rust and Python files
   rustloc -c my-lib                    Only a specific crate
   rustloc diff                         Changes since last commit
+  rustloc diff --lang python           Python changes since last commit
   rustloc diff HEAD~5..HEAD --by-file  Per-file diff between commits")]
 struct Cli {
     #[command(subcommand)]
@@ -412,11 +419,11 @@ mod handlers {
             .map(|item| diff_row(&item.label, &item.stats))
             .collect();
 
-        // Preserve the non-Rust summary that the text footer and JSON
-        // output expose. We have no per-line-type breakdown for non-Rust
+        // Preserve the skipped-file summary that the text footer and JSON
+        // output expose. We have no per-line-type breakdown for skipped
         // files, so only the *_total fields carry data; everything else
         // is left at zero. Skip the row entirely when there's nothing to
-        // show, so a pure-Rust diff stays clean.
+        // show, so a fully analyzed diff stays clean.
         if qs.non_rust_added > 0 || qs.non_rust_removed > 0 {
             let non_rust = LocsDiff {
                 added: Locs {

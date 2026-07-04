@@ -1,1 +1,3 @@
-- Add language selection and Python module grouping
+- Add `--lang` language selection for count and diff commands, defaulting to Rust while allowing opt-in Python, generic, or all-language analysis
+- Rename the diff footer/CSV skipped-file summary from non-Rust terminology to language-neutral skipped changes
+- Allow `--by-module` to group Python package/module paths outside Cargo workspaces

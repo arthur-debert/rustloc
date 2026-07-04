@@ -90,10 +90,10 @@ pub struct DiffQuerySet {
     pub from_commit: String,
     /// Target commit
     pub to_commit: String,
-    /// Lines added in non-Rust files
+    /// Lines added in files skipped by the active language selection.
     #[serde(default)]
     pub non_rust_added: u64,
-    /// Lines removed in non-Rust files
+    /// Lines removed in files skipped by the active language selection.
     #[serde(default)]
     pub non_rust_removed: u64,
     /// Count of rows before any user-driven reduction (`top` or `filter`).

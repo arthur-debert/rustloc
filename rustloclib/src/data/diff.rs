@@ -222,10 +222,10 @@ pub struct DiffResult {
     pub crates: Vec<CrateDiffStats>,
     /// Per-file diff (optional, for detailed output).
     pub files: Vec<FileDiffStats>,
-    /// Lines added in non-Rust files.
+    /// Lines added in files skipped by the active language selection.
     #[serde(default)]
     pub non_rust_added: u64,
-    /// Lines removed in non-Rust files.
+    /// Lines removed in files skipped by the active language selection.
     #[serde(default)]
     pub non_rust_removed: u64,
 }
@@ -2120,7 +2120,7 @@ mod tests {
         // Two new lines added, zero removed (saturating_sub clamps at zero).
         assert_eq!(result.non_rust_added, 2);
         assert_eq!(result.non_rust_removed, 0);
-        // Non-Rust changes never count as code.
+        // Skipped changes never count as code.
         assert_eq!(result.total.net_total(), 0);
     }
 

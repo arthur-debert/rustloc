@@ -1,7 +1,7 @@
 //! Data collection: parse files and collect statistics.
 //!
-//! This module handles the second stage of the pipeline - parsing Rust source
-//! files and collecting LOC statistics. It provides:
+//! This module handles the second stage of the pipeline - routing source files
+//! through language backends and collecting LOC statistics. It provides:
 //!
 //! - **Parsing**: AST-aware visitor that categorizes lines
 //! - **Statistics**: Core data structures (`Locs`, `FileStats`, etc.)
