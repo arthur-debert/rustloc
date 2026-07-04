@@ -389,6 +389,7 @@ pub fn count_directory_with_options(
 
     if matches!(options.aggregation, Aggregation::ByModule) {
         result.modules = aggregate_directory_modules(&result.files, path);
+        result.files.clear();
     }
 
     Ok(result.filter(options.line_types))
