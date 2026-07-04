@@ -221,15 +221,18 @@ pub fn compute_module_name(file_path: &Path, src_root: &Path) -> String {
 
     // Get the filename
     let filename = components.pop().unwrap_or("");
-    let stem = filename.strip_suffix(".rs").unwrap_or(filename);
+    let stem = Path::new(filename)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(filename);
 
     // Special case: root module files
-    if components.is_empty() && (stem == "lib" || stem == "main" || stem == "mod") {
+    if components.is_empty() && matches!(stem, "lib" | "main" | "mod" | "__init__") {
         return String::new();
     }
 
     // mod.rs belongs to parent module
-    if stem == "mod" {
+    if matches!(stem, "mod" | "__init__") {
         return components.join("::");
     }
 
@@ -281,6 +284,28 @@ fn aggregate_modules(
     module_map.into_values().collect()
 }
 
+/// Aggregate file stats into directory/module groups for a non-workspace tree.
+fn aggregate_directory_modules(files: &[FileStats], root: &Path) -> Vec<ModuleStats> {
+    let mut module_map: HashMap<String, ModuleStats> = HashMap::new();
+
+    for file in files {
+        let module_name = compute_module_name(&file.path, root);
+        let display_name = if module_name.is_empty() {
+            "(root)".to_string()
+        } else {
+            module_name
+        };
+        let module = module_map
+            .entry(display_name.clone())
+            .or_insert_with(|| ModuleStats::new(display_name));
+        module.add_file(file.path.clone(), file.stats);
+    }
+
+    let mut modules: Vec<_> = module_map.into_values().collect();
+    modules.sort_by(|a, b| a.name.cmp(&b.name));
+    modules
+}
+
 /// Count LOC in a single crate.
 fn count_crate(crate_info: &CrateInfo, options: &CountOptions) -> Result<CrateStats> {
     let dirs: Vec<&Path> = crate_info.all_dirs();
@@ -322,27 +347,51 @@ fn count_crate(crate_info: &CrateInfo, options: &CountOptions) -> Result<CrateSt
 /// assert_eq!(result.files.len(), 2);
 /// ```
 pub fn count_directory(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<CountResult> {
+    count_directory_with_options(
+        path,
+        CountOptions::new()
+            .filter(filter.clone())
+            .aggregation(Aggregation::ByFile)
+            .line_types(LineTypes::everything()),
+    )
+}
+
+/// Count LOC in a directory using full count options.
+pub fn count_directory_with_options(
+    path: impl AsRef<Path>,
+    options: CountOptions,
+) -> Result<CountResult> {
     let path = path.as_ref();
 
     if !path.exists() {
         return Err(RustlocError::PathNotFound(path.to_path_buf()));
     }
 
-    let files = discover_files(path, filter)?;
+    let files = discover_files(path, &options.file_filter)?;
     let registry = BackendRegistry::new();
 
     let mut result = CountResult::new();
     result.root = path.to_path_buf();
+    let include_files = matches!(
+        options.aggregation,
+        Aggregation::ByFile | Aggregation::ByModule
+    );
 
     for file_path in files {
         if let Some(stats) = analyze_file_stats(&registry, &file_path)? {
             result.total += stats;
             result.file_count += 1;
-            result.files.push(FileStats::new(file_path, stats));
+            if include_files {
+                result.files.push(FileStats::new(file_path, stats));
+            }
         }
     }
 
-    Ok(result)
+    if matches!(options.aggregation, Aggregation::ByModule) {
+        result.modules = aggregate_directory_modules(&result.files, path);
+    }
+
+    Ok(result.filter(options.line_types))
 }
 
 /// Count LOC in a single file.
@@ -362,9 +411,18 @@ pub fn count_directory(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<
 /// assert_eq!(stats.code, 3);
 /// ```
 pub fn count_file(path: impl AsRef<Path>) -> Result<Locs> {
+    count_file_with_filter(path, &FilterConfig::new())
+}
+
+/// Count LOC in a single file if it matches the provided filter.
+pub fn count_file_with_filter(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<Locs> {
     let registry = BackendRegistry::new();
-    analyze_file_stats(&registry, path.as_ref())?
-        .ok_or_else(|| RustlocError::UnsupportedSourceFile(path.as_ref().to_path_buf()))
+    let path = path.as_ref();
+    if !filter.matches(path) {
+        return Err(RustlocError::UnsupportedSourceFile(path.to_path_buf()));
+    }
+    analyze_file_stats(&registry, path)?
+        .ok_or_else(|| RustlocError::UnsupportedSourceFile(path.to_path_buf()))
 }
 
 fn analyze_file_stats(registry: &BackendRegistry, path: &Path) -> Result<Option<Locs>> {
@@ -516,13 +574,61 @@ edition = "2021"
         )
         .unwrap();
 
-        let result = count_directory(root, &FilterConfig::new()).unwrap();
+        let result = count_directory(
+            root,
+            &FilterConfig::new().languages(crate::data::LanguageSelection::new(&[
+                crate::data::LanguageName::Python,
+            ])),
+        )
+        .unwrap();
 
         assert_eq!(result.files.len(), 2);
         assert_eq!(result.total.comments, 1);
         assert_eq!(result.total.blanks, 1);
         assert_eq!(result.total.code, 2);
         assert_eq!(result.total.tests, 2);
+    }
+
+    #[test]
+    fn test_count_directory_defaults_to_rust_language_only() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        fs::write(root.join("app.py"), "print('hello')\n").unwrap();
+        create_rust_file(&root.join("main.rs"), "fn main() {}\n");
+
+        let result = count_directory(root, &FilterConfig::new()).unwrap();
+
+        assert_eq!(result.files.len(), 1);
+        assert_eq!(result.total.code, 1);
+    }
+
+    #[test]
+    fn test_count_directory_by_module_groups_python_files() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("pkg/sub")).unwrap();
+        fs::write(root.join("pkg/__init__.py"), "VALUE = 1\n").unwrap();
+        fs::write(
+            root.join("pkg/sub/worker.py"),
+            "def run():\n    return VALUE\n",
+        )
+        .unwrap();
+
+        let result = count_directory_with_options(
+            root,
+            CountOptions::new()
+                .filter(
+                    FilterConfig::new().languages(crate::data::LanguageSelection::new(&[
+                        crate::data::LanguageName::Python,
+                    ])),
+                )
+                .aggregation(Aggregation::ByModule),
+        )
+        .unwrap();
+
+        let module_names: Vec<_> = result.modules.iter().map(|m| m.name.as_str()).collect();
+        assert!(module_names.contains(&"pkg"));
+        assert!(module_names.contains(&"pkg::sub"));
     }
 
     #[test]
@@ -627,6 +733,14 @@ fn foo() {
         assert_eq!(
             compute_module_name(Path::new("/project/src/error.rs"), src),
             "error"
+        );
+        assert_eq!(
+            compute_module_name(Path::new("/project/src/app.py"), src),
+            "app"
+        );
+        assert_eq!(
+            compute_module_name(Path::new("/project/src/__init__.py"), src),
+            ""
         );
     }
 

@@ -5,7 +5,10 @@
 //! backend gives other common source files file-level code/test/example
 //! classification until language-specific backends are added.
 
+use std::collections::BTreeSet;
+use std::fmt;
 use std::path::Path;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +25,95 @@ pub enum LanguageId {
     Python,
     External(String),
     Unknown,
+}
+
+/// User-selectable language backend group.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum LanguageName {
+    Rust,
+    Python,
+    Generic,
+}
+
+impl LanguageName {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Rust => "rust",
+            Self::Python => "python",
+            Self::Generic => "generic",
+        }
+    }
+}
+
+impl fmt::Display for LanguageName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl FromStr for LanguageName {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "rust" | "rs" => Ok(Self::Rust),
+            "python" | "py" => Ok(Self::Python),
+            "generic" => Ok(Self::Generic),
+            other => Err(format!(
+                "unknown language '{}'; available languages: {}",
+                other,
+                available_languages()
+                    .iter()
+                    .map(|lang| lang.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
+    }
+}
+
+pub const fn available_languages() -> &'static [LanguageName] {
+    &[
+        LanguageName::Rust,
+        LanguageName::Python,
+        LanguageName::Generic,
+    ]
+}
+
+pub const fn default_languages() -> &'static [LanguageName] {
+    &[LanguageName::Rust]
+}
+
+/// Active language backend groups for a count or diff operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanguageSelection {
+    enabled: BTreeSet<LanguageName>,
+}
+
+impl Default for LanguageSelection {
+    fn default() -> Self {
+        Self::new(default_languages())
+    }
+}
+
+impl LanguageSelection {
+    pub fn new(languages: &[LanguageName]) -> Self {
+        Self {
+            enabled: languages.iter().copied().collect(),
+        }
+    }
+
+    pub fn all() -> Self {
+        Self::new(available_languages())
+    }
+
+    pub fn contains(&self, language: LanguageName) -> bool {
+        self.enabled.contains(&language)
+    }
+
+    pub fn names(&self) -> Vec<&'static str> {
+        self.enabled.iter().map(|lang| lang.name()).collect()
+    }
 }
 
 /// Context for executable or logical code lines.
@@ -352,14 +444,35 @@ impl BackendRegistry {
     }
 
     pub fn backend_for_path(&self, path: &Path) -> Option<&dyn LanguageBackend> {
-        let backends: [&dyn LanguageBackend; 3] = [&self.rust, &self.python, &self.generic];
-        backends
-            .into_iter()
-            .find(|backend| backend.supports_path(path))
+        self.backend_for_path_with_languages(path, &LanguageSelection::all())
+    }
+
+    pub fn backend_for_path_with_languages(
+        &self,
+        path: &Path,
+        languages: &LanguageSelection,
+    ) -> Option<&dyn LanguageBackend> {
+        let backends: [(LanguageName, &dyn LanguageBackend); 3] = [
+            (LanguageName::Rust, &self.rust),
+            (LanguageName::Python, &self.python),
+            (LanguageName::Generic, &self.generic),
+        ];
+        backends.into_iter().find_map(|(language, backend)| {
+            if languages.contains(language) && backend.supports_path(path) {
+                Some(backend)
+            } else {
+                None
+            }
+        })
     }
 
     pub fn supports_path(&self, path: &Path) -> bool {
         self.backend_for_path(path).is_some()
+    }
+
+    pub fn supports_path_with_languages(&self, path: &Path, languages: &LanguageSelection) -> bool {
+        self.backend_for_path_with_languages(path, languages)
+            .is_some()
     }
 
     pub fn analyze_source(&self, path: &Path, source: &str) -> Result<Option<FileAnalysis>> {
@@ -368,8 +481,29 @@ impl BackendRegistry {
             .transpose()
     }
 
+    pub fn analyze_source_with_languages(
+        &self,
+        path: &Path,
+        source: &str,
+        languages: &LanguageSelection,
+    ) -> Result<Option<FileAnalysis>> {
+        self.backend_for_path_with_languages(path, languages)
+            .map(|backend| backend.analyze_source(path, source))
+            .transpose()
+    }
+
     pub fn analyze_path(&self, path: &Path) -> Result<Option<FileAnalysis>> {
         self.backend_for_path(path)
+            .map(|backend| backend.analyze_path(path))
+            .transpose()
+    }
+
+    pub fn analyze_path_with_languages(
+        &self,
+        path: &Path,
+        languages: &LanguageSelection,
+    ) -> Result<Option<FileAnalysis>> {
+        self.backend_for_path_with_languages(path, languages)
             .map(|backend| backend.analyze_path(path))
             .transpose()
     }
