@@ -1945,7 +1945,7 @@ mod tests {
     }
 
     #[test]
-    fn test_diff_workdir_all_modified_generic_file() {
+    fn test_diff_workdir_all_modified_python_file() {
         let dir = workdir_repo(&[("app.py", "print('old')\n")]);
         std::fs::write(
             dir.path().join("app.py"),
@@ -1966,7 +1966,29 @@ mod tests {
     }
 
     #[test]
-    fn test_diff_workdir_staged_added_generic_test_file() {
+    fn test_diff_workdir_all_modified_python_file_with_same_file_tests() {
+        let dir = workdir_repo(&[("app.py", "def build():\n    return 1\n")]);
+        std::fs::write(
+            dir.path().join("app.py"),
+            "def build():\n    return 1\n\n\ndef test_build():\n    assert build() == 1\n",
+        )
+        .unwrap();
+        let result = diff_workdir(
+            dir.path(),
+            WorkdirDiffMode::All,
+            DiffOptions::new().line_types(LineTypes::everything()),
+        )
+        .unwrap();
+
+        assert_eq!(result.non_rust_added, 0);
+        assert_eq!(result.non_rust_removed, 0);
+        assert_eq!(result.total.added.blanks, 2);
+        assert_eq!(result.total.added.tests, 2);
+        assert_eq!(result.total.added.code, 0);
+    }
+
+    #[test]
+    fn test_diff_workdir_staged_added_python_test_file() {
         let dir = workdir_repo(&[("a.rs", "fn a() {}\n")]);
         std::fs::create_dir_all(dir.path().join("tests")).unwrap();
         std::fs::write(

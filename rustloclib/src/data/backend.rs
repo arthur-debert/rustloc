@@ -1,9 +1,9 @@
 //! Language backend seam for source analysis.
 //!
 //! Backends classify source files into rustloc's shared [`Locs`] model. The
-//! Rust remains the deepest backend, while the generic backend gives other
-//! common source files file-level code/test/example classification until
-//! language-specific backends are added.
+//! Rust and Python backends provide semantic classification, while the generic
+//! backend gives other common source files file-level code/test/example
+//! classification until language-specific backends are added.
 
 use std::path::Path;
 
@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Result, RustlocError};
 
+use super::python::PythonBackend;
 use super::stats::Locs;
 use super::visitor::{gather_stats, gather_stats_for_path};
 
@@ -143,13 +144,7 @@ struct GenericLanguage {
 impl GenericLanguage {
     fn for_path(path: &Path) -> Option<Self> {
         let ext = path.extension()?.to_str()?;
-        let language = if any_ext(ext, &["py", "pyw"]) {
-            Self {
-                id: "Python",
-                line_comments: &["#"],
-                block_comment: None,
-            }
-        } else if any_ext(ext, &["sh", "bash", "zsh", "fish"]) {
+        let language = if any_ext(ext, &["sh", "bash", "zsh", "fish"]) {
             Self {
                 id: "Shell",
                 line_comments: &["#"],
@@ -348,6 +343,7 @@ fn classify_generic_line(
 #[derive(Debug, Default)]
 pub struct BackendRegistry {
     rust: RustBackend,
+    python: PythonBackend,
     generic: GenericBackend,
 }
 
@@ -357,7 +353,7 @@ impl BackendRegistry {
     }
 
     pub fn backend_for_path(&self, path: &Path) -> Option<&dyn LanguageBackend> {
-        let backends: [&dyn LanguageBackend; 2] = [&self.rust, &self.generic];
+        let backends: [&dyn LanguageBackend; 3] = [&self.rust, &self.python, &self.generic];
         backends
             .into_iter()
             .find(|backend| backend.supports_path(path))
@@ -404,13 +400,25 @@ mod tests {
     fn registry_selects_generic_backend_for_common_source_files() {
         let registry = BackendRegistry::new();
 
-        assert!(registry.supports_path(Path::new("src/app.py")));
+        assert!(registry.supports_path(Path::new("src/app.sh")));
         assert!(registry.supports_path(Path::new("src/app.js")));
         assert!(registry.supports_path(Path::new("src/main.go")));
     }
 
     #[test]
-    fn generic_backend_classifies_whole_test_files() {
+    fn registry_selects_python_backend_for_python_files() {
+        let registry = BackendRegistry::new();
+        let analysis = registry
+            .analyze_source(Path::new("src/app.py"), "def app():\n    return True\n")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(analysis.language, LanguageId::Python);
+        assert_eq!(analysis.stats.code, 2);
+    }
+
+    #[test]
+    fn python_backend_classifies_whole_test_files() {
         let registry = BackendRegistry::new();
         let source = r#"# module comment
 
@@ -423,10 +431,7 @@ def test_widget():
             .unwrap()
             .unwrap();
 
-        assert_eq!(
-            analysis.language,
-            LanguageId::External("Python".to_string())
-        );
+        assert_eq!(analysis.language, LanguageId::Python);
         assert_eq!(analysis.stats.comments, 1);
         assert_eq!(analysis.stats.blanks, 1);
         assert_eq!(analysis.stats.tests, 2);

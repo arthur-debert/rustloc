@@ -501,7 +501,7 @@ edition = "2021"
     }
 
     #[test]
-    fn test_count_directory_includes_generic_source_files() {
+    fn test_count_directory_includes_supported_source_files() {
         let temp = tempdir().unwrap();
         let root = temp.path();
         fs::create_dir_all(root.join("tests")).unwrap();
