@@ -43,6 +43,7 @@ pub struct Visitor<T: Read> {
     reader: BufReader<T>,
     context: VisitorContext,
     stats: Locs,
+    line_classes: Vec<LineClass>,
     lookahead: Option<char>,
     curr_string: String,
     curr_line_no: usize,
@@ -106,6 +107,7 @@ impl Visitor<File> {
             reader,
             context,
             stats: Locs::default(),
+            line_classes: Vec::new(),
             lookahead,
             curr_string: String::new(),
             curr_line_no: 1,
@@ -126,6 +128,7 @@ impl<T: Read> Visitor<T> {
             reader,
             context,
             stats: Locs::default(),
+            line_classes: Vec::new(),
             lookahead,
             curr_string: String::new(),
             curr_line_no: 1,
@@ -137,6 +140,12 @@ impl<T: Read> Visitor<T> {
     pub fn visit_file(mut self) -> Locs {
         self.visit_code(self.context);
         self.stats
+    }
+
+    /// Visit the file and return LOC statistics plus per-line classes.
+    pub fn visit_file_analysis(mut self) -> (Locs, Vec<LineClass>) {
+        self.visit_code(self.context);
+        (self.stats, self.line_classes)
     }
 
     fn visit_code(&mut self, context: VisitorContext) {
@@ -343,6 +352,7 @@ impl<T: Read> Visitor<T> {
             LineClass::Blanks
         };
         class.record(&mut self.stats);
+        self.line_classes.push(class);
 
         if line_context.has_code {
             if self.debug {
@@ -498,8 +508,7 @@ impl<T: Read> Visitor<T> {
 /// assert_eq!(stats.code, 3);
 /// ```
 pub fn gather_stats_for_path(path: impl AsRef<Path>) -> Result<Locs> {
-    let visitor = Visitor::new(path, false)?;
-    Ok(visitor.visit_file())
+    Ok(gather_analysis_for_path(path)?.stats)
 }
 
 /// Gather LOC statistics from a string of Rust source code.
@@ -526,8 +535,32 @@ pub fn gather_stats_for_path(path: impl AsRef<Path>) -> Result<Locs> {
 /// assert_eq!(stats.code, 3);
 /// ```
 pub fn gather_stats(source: &str, context: VisitorContext) -> Locs {
+    gather_analysis(source, context).stats
+}
+
+pub(crate) fn gather_analysis_for_path(
+    path: impl AsRef<Path>,
+) -> Result<super::backend::FileAnalysis> {
+    let visitor = Visitor::new(path, false)?;
+    let (stats, line_classes) = visitor.visit_file_analysis();
+    Ok(super::backend::FileAnalysis {
+        language: super::backend::LanguageId::Rust,
+        stats,
+        line_classes,
+    })
+}
+
+pub(crate) fn gather_analysis(
+    source: &str,
+    context: VisitorContext,
+) -> super::backend::FileAnalysis {
     let visitor = Visitor::from_reader(source.as_bytes(), context, false);
-    visitor.visit_file()
+    let (stats, line_classes) = visitor.visit_file_analysis();
+    super::backend::FileAnalysis {
+        language: super::backend::LanguageId::Rust,
+        stats,
+        line_classes,
+    }
 }
 
 // Keep old names as aliases for backwards compatibility during transition

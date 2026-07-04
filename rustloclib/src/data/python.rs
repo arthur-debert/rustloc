@@ -34,13 +34,14 @@ impl LanguageBackend for PythonBackend {
         }
 
         let mut stats = Locs::new();
-        for class in line_classes {
+        for class in &line_classes {
             class.record(&mut stats);
         }
 
         Ok(FileAnalysis {
             language: LanguageId::Python,
             stats,
+            line_classes,
         })
     }
 }

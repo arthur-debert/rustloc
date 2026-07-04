@@ -10,6 +10,10 @@
 //! threshold filtering. Threshold predicates on a diff query set evaluate
 //! against the net change per row (added − removed).
 //!
+//! Added and deleted files count every classified source line. Modified files
+//! classify both versions of the file, but only record lines that the textual
+//! diff marks as changed; unchanged context lines do not create LOC churn.
+//!
 //! ## Design Principle
 //!
 //! **Filtering (glob patterns, crate names) is done centrally using `FilterConfig`
@@ -21,8 +25,11 @@
 //! 4. Applies crate filter via workspace's existing mechanisms
 
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use imara_diff::intern::InternedInput;
+use imara_diff::{diff, Algorithm};
 use serde::{Deserialize, Serialize};
 
 use crate::error::RustlocError;
@@ -31,7 +38,7 @@ use crate::source::filter::FilterConfig;
 use crate::source::workspace::WorkspaceInfo;
 use crate::Result;
 
-use super::backend::BackendRegistry;
+use super::backend::{BackendRegistry, FileAnalysis, LineClass};
 use super::stats::Locs;
 
 /// Lines of code diff (added vs removed).
@@ -685,23 +692,21 @@ fn collect_tree_entries(
 
 /// Compute the LOC diff for a working directory file change
 fn compute_workdir_file_diff(change: &WorkdirFileChange, path: &Path) -> Result<FileDiffStats> {
-    let (old_stats, new_stats) = match change.change_type {
+    let diff = match change.change_type {
         FileChangeType::Added => {
             let stats = analyze_content_stats(path, change.new_content.as_ref().unwrap())?;
-            (Locs::new(), stats)
+            compute_locs_diff(&Locs::new(), &stats)
         }
         FileChangeType::Deleted => {
             let stats = analyze_content_stats(path, change.old_content.as_ref().unwrap())?;
-            (stats, Locs::new())
+            compute_locs_diff(&stats, &Locs::new())
         }
-        FileChangeType::Modified => {
-            let old_stats = analyze_content_stats(path, change.old_content.as_ref().unwrap())?;
-            let new_stats = analyze_content_stats(path, change.new_content.as_ref().unwrap())?;
-            (old_stats, new_stats)
-        }
+        FileChangeType::Modified => compute_modified_locs_diff(
+            path,
+            change.old_content.as_ref().unwrap(),
+            change.new_content.as_ref().unwrap(),
+        )?,
     };
-
-    let diff = compute_locs_diff(&old_stats, &new_stats);
 
     Ok(FileDiffStats {
         path: path.to_path_buf(),
@@ -1084,27 +1089,23 @@ fn compute_file_diff(
     change: &FileChange,
     path: &Path,
 ) -> Result<FileDiffStats> {
-    let (old_stats, new_stats) = match change.change_type {
+    let diff = match change.change_type {
         FileChangeType::Added => {
             let content = read_blob(repo, change.new_oid.unwrap())?;
             let stats = analyze_content_stats(path, &content)?;
-            (Locs::new(), stats)
+            compute_locs_diff(&Locs::new(), &stats)
         }
         FileChangeType::Deleted => {
             let content = read_blob(repo, change.old_oid.unwrap())?;
             let stats = analyze_content_stats(path, &content)?;
-            (stats, Locs::new())
+            compute_locs_diff(&stats, &Locs::new())
         }
         FileChangeType::Modified => {
             let old_content = read_blob(repo, change.old_oid.unwrap())?;
             let new_content = read_blob(repo, change.new_oid.unwrap())?;
-            let old_stats = analyze_content_stats(path, &old_content)?;
-            let new_stats = analyze_content_stats(path, &new_content)?;
-            (old_stats, new_stats)
+            compute_modified_locs_diff(path, &old_content, &new_content)?
         }
     };
-
-    let diff = compute_locs_diff(&old_stats, &new_stats);
 
     Ok(FileDiffStats {
         path: path.to_path_buf(),
@@ -1118,10 +1119,51 @@ fn is_supported_source_path(path: &Path) -> bool {
 }
 
 fn analyze_content_stats(path: &Path, source: &str) -> Result<Locs> {
+    Ok(analyze_content(path, source)?.stats)
+}
+
+fn analyze_content(path: &Path, source: &str) -> Result<FileAnalysis> {
     Ok(BackendRegistry::new()
         .analyze_source(path, source)?
-        .map(|analysis| analysis.stats)
-        .unwrap_or_default())
+        .unwrap_or_else(|| FileAnalysis {
+            language: super::backend::LanguageId::Unknown,
+            stats: Locs::new(),
+            line_classes: Vec::new(),
+        }))
+}
+
+fn compute_modified_locs_diff(path: &Path, old: &str, new: &str) -> Result<LocsDiff> {
+    let old_analysis = analyze_content(path, old)?;
+    let new_analysis = analyze_content(path, new)?;
+    let mut line_diff = LocsDiff::new();
+
+    let input = InternedInput::new(old, new);
+    diff(
+        Algorithm::Histogram,
+        &input,
+        |old_range: Range<u32>, new_range: Range<u32>| {
+            record_changed_classes(
+                &old_analysis.line_classes,
+                old_range,
+                &mut line_diff.removed,
+            );
+            record_changed_classes(&new_analysis.line_classes, new_range, &mut line_diff.added);
+        },
+    );
+
+    Ok(line_diff)
+}
+
+fn record_changed_classes(classes: &[LineClass], range: Range<u32>, stats: &mut Locs) {
+    let start = range.start as usize;
+    let end = (range.end as usize).min(classes.len());
+    if start >= end {
+        return;
+    }
+
+    for class in &classes[start..end] {
+        class.record(stats);
+    }
 }
 
 /// Compute the diff between two Locs
@@ -1435,6 +1477,32 @@ mod tests {
         assert_eq!(diff.removed.code, 0);
         assert_eq!(diff.added.docs, 0);
         assert_eq!(diff.removed.docs, 2);
+    }
+
+    #[test]
+    fn test_compute_modified_locs_diff_counts_replaced_lines() {
+        let diff = compute_modified_locs_diff(Path::new("a.rs"), "fn old() {}\n", "fn new() {}\n")
+            .unwrap();
+
+        assert_eq!(diff.added.code, 1);
+        assert_eq!(diff.removed.code, 1);
+        assert_eq!(diff.net_code(), 0);
+        assert_eq!(diff.net_total(), 0);
+    }
+
+    #[test]
+    fn test_compute_modified_locs_diff_ignores_unchanged_lines() {
+        let diff = compute_modified_locs_diff(
+            Path::new("a.rs"),
+            "/// docs\nfn a() {}\n",
+            "/// docs\nfn a() {}\nfn b() {}\n",
+        )
+        .unwrap();
+
+        assert_eq!(diff.added.docs, 0);
+        assert_eq!(diff.removed.docs, 0);
+        assert_eq!(diff.added.code, 1);
+        assert_eq!(diff.removed.code, 0);
     }
 
     #[test]
@@ -1963,6 +2031,22 @@ mod tests {
         assert_eq!(result.non_rust_removed, 0);
         assert_eq!(result.total.added.comments, 1);
         assert_eq!(result.total.added.code, 2);
+    }
+
+    #[test]
+    fn test_diff_workdir_all_modified_python_replacement_counts_both_sides() {
+        let dir = workdir_repo(&[("app.py", "print('old')\n")]);
+        std::fs::write(dir.path().join("app.py"), "print('new')\n").unwrap();
+        let result = diff_workdir(
+            dir.path(),
+            WorkdirDiffMode::All,
+            DiffOptions::new().line_types(LineTypes::everything()),
+        )
+        .unwrap();
+
+        assert_eq!(result.total.added.code, 1);
+        assert_eq!(result.total.removed.code, 1);
+        assert_eq!(result.total.net_code(), 0);
     }
 
     #[test]
