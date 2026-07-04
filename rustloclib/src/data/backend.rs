@@ -13,7 +13,7 @@ use crate::{Result, RustlocError};
 
 use super::python::PythonBackend;
 use super::stats::Locs;
-use super::visitor::{gather_stats, gather_stats_for_path};
+use super::visitor::{gather_analysis, gather_analysis_for_path};
 
 /// Language identified by a backend.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +88,8 @@ impl LineClass {
 pub struct FileAnalysis {
     pub language: LanguageId,
     pub stats: Locs,
+    #[serde(skip)]
+    pub line_classes: Vec<LineClass>,
 }
 
 /// Backend interface for language-specific source analysis.
@@ -115,18 +117,12 @@ impl LanguageBackend for RustBackend {
     }
 
     fn analyze_path(&self, path: &Path) -> Result<FileAnalysis> {
-        Ok(FileAnalysis {
-            language: LanguageId::Rust,
-            stats: gather_stats_for_path(path)?,
-        })
+        gather_analysis_for_path(path)
     }
 
     fn analyze_source(&self, path: &Path, source: &str) -> Result<FileAnalysis> {
         let context = LogicContext::from_file_path(path);
-        Ok(FileAnalysis {
-            language: LanguageId::Rust,
-            stats: gather_stats(source, context),
-        })
+        Ok(gather_analysis(source, context))
     }
 }
 
@@ -245,16 +241,19 @@ impl LanguageBackend for GenericBackend {
             .ok_or_else(|| RustlocError::UnsupportedSourceFile(path.to_path_buf()))?;
         let context = generic_context_from_path(path);
         let mut stats = Locs::new();
+        let mut line_classes = Vec::new();
         let mut in_block_comment = false;
 
         for line in source.lines() {
-            classify_generic_line(line, language, &mut in_block_comment, context)
-                .record(&mut stats);
+            let class = classify_generic_line(line, language, &mut in_block_comment, context);
+            class.record(&mut stats);
+            line_classes.push(class);
         }
 
         Ok(FileAnalysis {
             language: LanguageId::External(language.id.to_string()),
             stats,
+            line_classes,
         })
     }
 }

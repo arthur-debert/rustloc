@@ -2625,6 +2625,7 @@ dependencies = [
  "cargo_metadata",
  "gix",
  "glob",
+ "imara-diff",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
