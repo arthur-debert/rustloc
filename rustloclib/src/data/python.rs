@@ -1,6 +1,10 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 
-use ruff_python_ast::{Arguments, ExceptHandler, Expr, Stmt, Suite};
+use ruff_python_ast::{
+    visitor::{self, Visitor},
+    Alias, Arguments, ExceptHandler, Expr, Stmt, Suite,
+};
 use ruff_python_parser::parse_module;
 use ruff_text_size::{Ranged, TextRange};
 
@@ -94,6 +98,8 @@ fn classify_python_lines(source: &str, context: LogicContext) -> Vec<LineClass> 
 struct PythonSemanticClassifier<'a> {
     line_starts: Vec<usize>,
     line_classes: &'a mut [LineClass],
+    unittest_modules: BTreeSet<String>,
+    testcase_names: BTreeSet<String>,
 }
 
 impl<'a> PythonSemanticClassifier<'a> {
@@ -108,20 +114,28 @@ impl<'a> PythonSemanticClassifier<'a> {
         Self {
             line_starts,
             line_classes,
+            unittest_modules: BTreeSet::from(["unittest".to_string()]),
+            testcase_names: BTreeSet::from(["TestCase".to_string()]),
         }
     }
 
     fn visit_suite(&mut self, suite: &Suite, context: LogicContext) {
-        if let Some(docstring) = suite.first().filter(|stmt| is_docstring_stmt(stmt)) {
+        let docstring = suite.first().filter(|stmt| is_docstring_stmt(stmt));
+        if let Some(docstring) = docstring {
             self.mark_range(docstring.range(), LineClass::Docs, true);
         }
 
-        for statement in suite {
+        for (index, statement) in suite.iter().enumerate() {
+            if index == 0 && docstring.is_some() {
+                continue;
+            }
             self.visit_stmt(statement, context);
         }
     }
 
     fn visit_stmt(&mut self, statement: &Stmt, context: LogicContext) {
+        self.mark_statement_string_literals(statement, context);
+
         match statement {
             Stmt::FunctionDef(function) => {
                 let context = if context == LogicContext::Tests
@@ -143,7 +157,7 @@ impl<'a> PythonSemanticClassifier<'a> {
             Stmt::ClassDef(class) => {
                 let context = if context == LogicContext::Tests
                     || is_pytest_class(class.name.as_str())
-                    || is_unittest_class(class.arguments.as_deref())
+                    || self.is_unittest_class(class.arguments.as_deref())
                 {
                     LogicContext::Tests
                 } else {
@@ -185,7 +199,70 @@ impl<'a> PythonSemanticClassifier<'a> {
                 self.visit_suite(&stmt.orelse, context);
                 self.visit_suite(&stmt.finalbody, context);
             }
+            Stmt::Import(stmt) => self.record_imports(&stmt.names),
+            Stmt::ImportFrom(stmt) => {
+                self.record_import_from(
+                    stmt.level,
+                    stmt.module.as_ref().map(|module| module.as_str()),
+                    &stmt.names,
+                );
+            }
             _ => {}
+        }
+    }
+
+    fn mark_statement_string_literals(&mut self, statement: &Stmt, context: LogicContext) {
+        let mut marker = StringLiteralMarker {
+            classifier: self,
+            context,
+        };
+        marker.visit_stmt(statement);
+    }
+
+    fn record_imports(&mut self, names: &[Alias]) {
+        for alias in names {
+            let imported = alias.name.as_str();
+            let local = alias.asname.as_ref().unwrap_or(&alias.name).as_str();
+            if imported == "unittest" || imported.starts_with("unittest.") {
+                self.unittest_modules.insert(local.to_string());
+            }
+        }
+    }
+
+    fn record_import_from(&mut self, level: u32, module: Option<&str>, names: &[Alias]) {
+        if level != 0 || module != Some("unittest") {
+            return;
+        }
+
+        for alias in names {
+            if alias.name.as_str() == "TestCase" {
+                let local = alias.asname.as_ref().unwrap_or(&alias.name).as_str();
+                self.testcase_names.insert(local.to_string());
+            }
+        }
+    }
+
+    fn is_unittest_class(&self, arguments: Option<&Arguments>) -> bool {
+        let Some(arguments) = arguments else {
+            return false;
+        };
+
+        arguments
+            .args
+            .iter()
+            .any(|expr| self.is_unittest_base(expr))
+    }
+
+    fn is_unittest_base(&self, expr: &Expr) -> bool {
+        let Some(path) = expr_path(expr) else {
+            return false;
+        };
+
+        match path.rsplit_once('.') {
+            Some((module, name)) => {
+                self.testcase_names.contains(name) && self.unittest_modules.contains(module)
+            }
+            None => self.testcase_names.contains(path.as_str()),
         }
     }
 
@@ -214,6 +291,23 @@ impl<'a> PythonSemanticClassifier<'a> {
     }
 }
 
+struct StringLiteralMarker<'a, 'b> {
+    classifier: &'a mut PythonSemanticClassifier<'b>,
+    context: LogicContext,
+}
+
+impl<'a, 'b> Visitor<'a> for StringLiteralMarker<'_, 'b> {
+    fn visit_body(&mut self, _body: &'a [Stmt]) {}
+
+    fn visit_expr(&mut self, expr: &'a Expr) {
+        if matches!(expr, Expr::StringLiteral(_)) {
+            self.classifier
+                .mark_range(expr.range(), LineClass::Logic(self.context), true);
+        }
+        visitor::walk_expr(self, expr);
+    }
+}
+
 fn is_docstring_stmt(statement: &Stmt) -> bool {
     matches!(
         statement,
@@ -229,25 +323,14 @@ fn is_pytest_class(name: &str) -> bool {
     name.starts_with("Test")
 }
 
-fn is_unittest_class(arguments: Option<&Arguments>) -> bool {
-    let Some(arguments) = arguments else {
-        return false;
-    };
-
-    arguments.args.iter().any(is_unittest_base)
-}
-
-fn is_unittest_base(expr: &Expr) -> bool {
+fn expr_path(expr: &Expr) -> Option<String> {
     match expr {
-        Expr::Name(name) => name.id.as_str() == "TestCase",
+        Expr::Name(name) => Some(name.id.to_string()),
         Expr::Attribute(attribute) => {
-            attribute.attr.as_str() == "TestCase"
-                && matches!(
-                    attribute.value.as_ref(),
-                    Expr::Name(name) if name.id.as_str() == "unittest"
-                )
+            let parent = expr_path(&attribute.value)?;
+            Some(format!("{parent}.{}", attribute.attr))
         }
-        _ => false,
+        _ => None,
     }
 }
 
@@ -302,6 +385,61 @@ class ServiceTest(unittest.TestCase):
     }
 
     #[test]
+    fn classifies_unittest_aliases_in_production_files() {
+        let stats = analyze(
+            "src/service.py",
+            r#"import unittest as ut
+from unittest import TestCase as Case
+
+class ServiceTest(ut.TestCase):
+    def test_with_module_alias(self):
+        pass
+
+class OtherServiceTest(Case):
+    def test_with_class_alias(self):
+        pass
+
+import unittest.case as unit_case
+
+class CaseModuleTest(unit_case.TestCase):
+    def test_with_module_path_alias(self):
+        pass
+"#,
+        );
+
+        assert_eq!(stats.code, 3);
+        assert_eq!(stats.blanks, 4);
+        assert_eq!(stats.tests, 9);
+    }
+
+    #[test]
+    fn classifies_async_pytest_functions_in_production_files() {
+        let stats = analyze(
+            "src/service.py",
+            r#"async def test_build():
+    value = await build()
+    assert value
+"#,
+        );
+
+        assert_eq!(stats.tests, 3);
+    }
+
+    #[test]
+    fn classifies_nested_pytest_functions_in_production_files() {
+        let stats = analyze(
+            "src/service.py",
+            r#"if True:
+    def test_build():
+        assert build()
+"#,
+        );
+
+        assert_eq!(stats.code, 1);
+        assert_eq!(stats.tests, 2);
+    }
+
+    #[test]
     fn falls_back_to_path_level_counting_on_parse_errors() {
         let stats = analyze(
             "tests/test_bad.py",
@@ -351,5 +489,25 @@ def build():
         assert_eq!(stats.blanks, 1);
         assert_eq!(stats.comments, 0);
         assert_eq!(stats.code, 2);
+    }
+
+    #[test]
+    fn classifies_blank_and_hash_lines_inside_multiline_strings_as_logic() {
+        let stats = analyze(
+            "src/service.py",
+            r#"QUERY = """
+select *
+
+# Still string content.
+"""
+
+def build():
+    return QUERY
+"#,
+        );
+
+        assert_eq!(stats.code, 7);
+        assert_eq!(stats.blanks, 1);
+        assert_eq!(stats.comments, 0);
     }
 }
