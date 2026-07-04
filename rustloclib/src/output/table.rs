@@ -49,7 +49,7 @@ pub struct LOCTable {
     /// fewer digits than any per-row entry.
     #[serde(default)]
     pub value_widths: Vec<usize>,
-    /// Optional non-Rust changes summary (e.g., "Non-Rust changes: +10/-5/5 net")
+    /// Optional skipped-file changes summary (e.g., "Skipped changes: +10/-5/5 net")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub non_rust_summary: Option<String>,
     /// Optional legend text below the table (e.g., "+added / -removed / net")
@@ -139,9 +139,9 @@ impl LOCTable {
         let non_rust_summary = if qs.non_rust_added > 0 || qs.non_rust_removed > 0 {
             let nr_net = qs.non_rust_added as i64 - qs.non_rust_removed as i64;
             Some(format!(
-                    "Non-Rust changes: [additions]+{}[/additions] / [deletions]-{}[/deletions] / {} net",
-                    qs.non_rust_added, qs.non_rust_removed, nr_net
-                ))
+                "Skipped changes: [additions]+{}[/additions] / [deletions]-{}[/deletions] / {} net",
+                qs.non_rust_added, qs.non_rust_removed, nr_net
+            ))
         } else {
             None
         };

@@ -222,10 +222,10 @@ pub struct DiffResult {
     pub crates: Vec<CrateDiffStats>,
     /// Per-file diff (optional, for detailed output).
     pub files: Vec<FileDiffStats>,
-    /// Lines added in non-Rust files.
+    /// Lines added in files skipped by the active language selection.
     #[serde(default)]
     pub non_rust_added: u64,
-    /// Lines removed in non-Rust files.
+    /// Lines removed in files skipped by the active language selection.
     #[serde(default)]
     pub non_rust_removed: u64,
 }
@@ -346,8 +346,12 @@ pub fn diff_workdir(
 
     // Collect changes based on mode
     let (changes, non_rust_added, non_rust_removed) = match mode {
-        WorkdirDiffMode::Staged => collect_staged_changes(&repo, &head_tree, &index)?,
-        WorkdirDiffMode::All => collect_workdir_changes(&repo, &head_tree, &repo_root)?,
+        WorkdirDiffMode::Staged => {
+            collect_staged_changes(&repo, &head_tree, &index, &options.file_filter)?
+        }
+        WorkdirDiffMode::All => {
+            collect_workdir_changes(&repo, &head_tree, &repo_root, &options.file_filter)?
+        }
     };
 
     // Try to discover workspace info for crate grouping
@@ -462,6 +466,7 @@ fn collect_staged_changes(
     repo: &gix::Repository,
     head_tree: &gix::Tree<'_>,
     index: &gix::worktree::Index,
+    filter: &FilterConfig,
 ) -> Result<(Vec<WorkdirFileChange>, u64, u64)> {
     use std::collections::HashSet;
 
@@ -478,8 +483,8 @@ fn collect_staged_changes(
     for entry in index.entries() {
         let path = PathBuf::from(gix::path::from_bstr(entry.path(index)));
 
-        if !is_supported_source_path(&path) {
-            // Track unsupported file line changes
+        if !is_analyzed_source_path(&path, filter) {
+            // Track source lines outside the command's active language set.
             let index_oid = entry.id;
             if let Some(&head_oid) = head_entries.get(&path) {
                 if head_oid != index_oid {
@@ -522,7 +527,7 @@ fn collect_staged_changes(
 
     // Check for deleted files
     for (path, head_oid) in head_entries {
-        if !is_supported_source_path(&path) {
+        if !is_analyzed_source_path(&path, filter) {
             if !seen_paths.contains(&path) {
                 non_rust_removed += count_lines(&read_blob(repo, head_oid)?);
             }
@@ -547,6 +552,7 @@ fn collect_workdir_changes(
     repo: &gix::Repository,
     head_tree: &gix::Tree<'_>,
     repo_root: &Path,
+    filter: &FilterConfig,
 ) -> Result<(Vec<WorkdirFileChange>, u64, u64)> {
     use std::collections::HashSet;
 
@@ -593,8 +599,8 @@ fn collect_workdir_changes(
             continue;
         }
 
-        if !is_supported_source_path(abs_path) {
-            // Track unsupported file line changes
+        if !is_analyzed_source_path(abs_path, filter) {
+            // Track source lines outside the command's active language set.
             seen_paths.insert(rel_path.clone());
             let workdir_content = match std::fs::read_to_string(abs_path) {
                 Ok(content) => content,
@@ -642,7 +648,7 @@ fn collect_workdir_changes(
 
     // Check for deleted files
     for (path, head_oid) in head_entries {
-        if !is_supported_source_path(&path) {
+        if !is_analyzed_source_path(&path, filter) {
             if !seen_paths.contains(&path) {
                 non_rust_removed += count_lines(&read_blob(repo, head_oid)?);
             }
@@ -805,8 +811,8 @@ pub fn diff_revspec(
     for change in changes {
         let path = change.path.clone();
 
-        // Track unsupported file line changes.
-        if !is_supported_source_path(&path) {
+        // Track source lines outside the command's active language set.
+        if !is_analyzed_source_path(&path, &options.file_filter) {
             let old_lines = change
                 .old_oid
                 .and_then(|oid| read_blob(&repo, oid).ok().map(|c| count_lines(&c)))
@@ -1114,8 +1120,8 @@ fn compute_file_diff(
     })
 }
 
-fn is_supported_source_path(path: &Path) -> bool {
-    BackendRegistry::new().supports_path(path)
+fn is_analyzed_source_path(path: &Path, filter: &FilterConfig) -> bool {
+    BackendRegistry::new().supports_path_with_languages(path, &filter.languages)
 }
 
 fn analyze_content_stats(path: &Path, source: &str) -> Result<Locs> {
@@ -1702,6 +1708,12 @@ mod tests {
         run_git(dir, &["add", name]);
     }
 
+    fn python_options() -> DiffOptions {
+        DiffOptions::new().filter(FilterConfig::new().languages(
+            crate::data::LanguageSelection::new(&[crate::data::LanguageName::Python]),
+        ))
+    }
+
     #[test]
     fn test_locs_diff_filter_zeros_unselected_types() {
         let diff = LocsDiff {
@@ -2023,7 +2035,7 @@ mod tests {
         let result = diff_workdir(
             dir.path(),
             WorkdirDiffMode::All,
-            DiffOptions::new().line_types(LineTypes::everything()),
+            python_options().line_types(LineTypes::everything()),
         )
         .unwrap();
 
@@ -2040,7 +2052,7 @@ mod tests {
         let result = diff_workdir(
             dir.path(),
             WorkdirDiffMode::All,
-            DiffOptions::new().line_types(LineTypes::everything()),
+            python_options().line_types(LineTypes::everything()),
         )
         .unwrap();
 
@@ -2060,7 +2072,7 @@ mod tests {
         let result = diff_workdir(
             dir.path(),
             WorkdirDiffMode::All,
-            DiffOptions::new().line_types(LineTypes::everything()),
+            python_options().line_types(LineTypes::everything()),
         )
         .unwrap();
 
@@ -2081,12 +2093,23 @@ mod tests {
         )
         .unwrap();
         git_add(dir.path(), "tests/test_app.py");
-        let result = diff_workdir(dir.path(), WorkdirDiffMode::Staged, DiffOptions::new()).unwrap();
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::Staged, python_options()).unwrap();
 
         assert_eq!(result.non_rust_added, 0);
         assert_eq!(result.non_rust_removed, 0);
         assert_eq!(result.total.added.tests, 2);
         assert_eq!(result.total.added.code, 0);
+    }
+
+    #[test]
+    fn test_diff_workdir_python_change_is_skipped_by_default_language_selection() {
+        let dir = workdir_repo(&[("app.py", "print('old')\n")]);
+        std::fs::write(dir.path().join("app.py"), "print('old')\nprint('new')\n").unwrap();
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::All, DiffOptions::new()).unwrap();
+
+        assert_eq!(result.total.net_total(), 0);
+        assert_eq!(result.non_rust_added, 1);
+        assert_eq!(result.non_rust_removed, 0);
     }
 
     #[test]
@@ -2097,7 +2120,7 @@ mod tests {
         // Two new lines added, zero removed (saturating_sub clamps at zero).
         assert_eq!(result.non_rust_added, 2);
         assert_eq!(result.non_rust_removed, 0);
-        // Non-Rust changes never count as code.
+        // Skipped changes never count as code.
         assert_eq!(result.total.net_total(), 0);
     }
 

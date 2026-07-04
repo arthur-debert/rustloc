@@ -90,10 +90,10 @@ pub struct DiffQuerySet {
     pub from_commit: String,
     /// Target commit
     pub to_commit: String,
-    /// Lines added in non-Rust files
+    /// Lines added in files skipped by the active language selection.
     #[serde(default)]
     pub non_rust_added: u64,
-    /// Lines removed in non-Rust files
+    /// Lines removed in files skipped by the active language selection.
     #[serde(default)]
     pub non_rust_removed: u64,
     /// Count of rows before any user-driven reduction (`top` or `filter`).
@@ -402,27 +402,45 @@ fn build_diff_items(
             .collect(),
         Aggregation::ByModule => {
             let mut module_map: HashMap<String, LocsDiff> = HashMap::new();
-            for crate_diff in &result.crates {
-                let src_root = crate_diff.path.join("src");
-                let effective_root = if src_root.exists() {
-                    src_root
-                } else {
-                    crate_diff.path.clone()
-                };
-                for file in &crate_diff.files {
+            if result.crates.is_empty() {
+                for file in &result.files {
                     let abs_path = if file.path.is_absolute() {
                         file.path.clone()
                     } else {
                         result.root.join(&file.path)
                     };
-                    let local_module = compute_module_name(&abs_path, &effective_root);
-                    let full_name = if local_module.is_empty() {
-                        crate_diff.name.clone()
+                    let module_name = compute_module_name(&abs_path, &result.root);
+                    let full_name = if module_name.is_empty() {
+                        "(root)".to_string()
                     } else {
-                        format!("{}::{}", crate_diff.name, local_module)
+                        module_name
                     };
                     let entry = module_map.entry(full_name).or_default();
                     *entry += file.diff.filter(*line_types);
+                }
+            } else {
+                for crate_diff in &result.crates {
+                    let src_root = crate_diff.path.join("src");
+                    let effective_root = if src_root.exists() {
+                        src_root
+                    } else {
+                        crate_diff.path.clone()
+                    };
+                    for file in &crate_diff.files {
+                        let abs_path = if file.path.is_absolute() {
+                            file.path.clone()
+                        } else {
+                            result.root.join(&file.path)
+                        };
+                        let local_module = compute_module_name(&abs_path, &effective_root);
+                        let full_name = if local_module.is_empty() {
+                            crate_diff.name.clone()
+                        } else {
+                            format!("{}::{}", crate_diff.name, local_module)
+                        };
+                        let entry = module_map.entry(full_name).or_default();
+                        *entry += file.diff.filter(*line_types);
+                    }
                 }
             }
             module_map.into_iter().collect()

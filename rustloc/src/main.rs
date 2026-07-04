@@ -1,19 +1,20 @@
 //! # rustloc
 //!
-//! A CLI tool for counting lines of code in Rust projects with test/code separation.
+//! A CLI tool for counting lines of code with language-aware test/code separation.
 //!
 //! ## Overview
 //!
 //! rustloc is built on top of rustloclib and provides a command-line interface for
-//! analyzing Rust codebases. It understands Rust's test structure and can separate
-//! production code from test code, even when they're in the same file.
+//! analyzing Rust, Python, and generic source trees. It separates production code
+//! from test code, even when a language backend can find both in the same file.
 //!
 //! ## Features
 //!
-//! - **Rust-aware**: Distinguishes code, tests, examples, comments, docs, and blanks
+//! - **Language-aware**: Distinguishes code, tests, examples, comments, docs, and blanks
+//! - **Language selection**: Rust by default; opt into Python or generic counting
 //! - **Cargo workspace support**: Filter by crate with `--crate` or `-c`
 //! - **Glob filtering**: Include/exclude files with glob patterns
-//! - **Multiple output formats**: Table (default), JSON
+//! - **Multiple output formats**: Table (default), JSON, YAML, XML, CSV
 //! - **Git diff analysis**: Compare LOC between commits
 //!
 //! ## Usage
@@ -33,6 +34,9 @@
 //!
 //! # Show only code and tests (exclude docs, comments, blanks)
 //! rustloc . --type code,tests
+//!
+//! # Analyze Python instead of the default Rust backend
+//! rustloc . --lang python
 //!
 //! # Diff between commits
 //! rustloc diff HEAD~5..HEAD
@@ -56,16 +60,16 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use standout::cli::{App, Dispatch, RunResult};
 use standout::{embed_styles, embed_templates};
 
-/// Rust-aware lines of code counter with test/code separation
+/// Language-aware lines of code counter with test/code separation
 #[derive(Parser)]
 #[command(name = "rustloc")]
 #[command(version, author = "Arthur Debert")]
 #[command(long_about = "\
-Rust-aware lines of code counter with test/code separation.
+Language-aware lines of code counter with test/code separation.
 
-Parses Rust source files and categorizes each line as code, tests, examples,
-docs, comments, or blanks. Understands #[cfg(test)] blocks, doc comments,
-and Cargo workspace structure.")]
+Rust is analyzed by default. Python and generic source files can be selected
+with --lang. Rust and Python backends classify same-file test code; the generic
+backend uses file paths for code/test/example context.")]
 #[command(after_help = "Use --help for examples")]
 #[command(after_long_help = "\
 Examples:
@@ -75,8 +79,11 @@ Examples:
   rustloc --by-file                    Group by file
   rustloc --by-file -o -code           Sort files by code (descending)
   rustloc -t code,tests               Only code and test lines
+  rustloc --lang python                Analyze Python files only
+  rustloc --lang rust,python           Analyze Rust and Python files
   rustloc -c my-lib                    Only a specific crate
   rustloc diff                         Changes since last commit
+  rustloc diff --lang python           Python changes since last commit
   rustloc diff HEAD~5..HEAD --by-file  Per-file diff between commits")]
 struct Cli {
     #[command(subcommand)]
@@ -129,6 +136,19 @@ struct CountArgs {
     /// Only count specific crate(s) [-c my-lib -c my-cli]
     #[arg(short = 'c', long = "crate", action = clap::ArgAction::Append)]
     crates: Vec<String>,
+
+    /// Language backend(s) to analyze [-l rust,python]
+    #[arg(short = 'l', long = "lang", value_delimiter = ',', action = clap::ArgAction::Append)]
+    #[arg(long_help = "\
+Language backend groups to analyze.
+
+Default: rust
+Available: rust, python, generic
+
+  -l python       Analyze Python files only
+  -l rust,python  Analyze Rust and Python files
+  -l all          Analyze all available backend groups")]
+    languages: Vec<String>,
 
     /// Only include files matching a glob [-i "src/**/*.rs"]
     #[arg(short = 'i', long = "include", action = clap::ArgAction::Append)]
@@ -224,6 +244,19 @@ the resolved hash from `git rev-parse` if you need them.")]
     #[arg(short = 'c', long = "crate", action = clap::ArgAction::Append)]
     crates: Vec<String>,
 
+    /// Language backend(s) to analyze [-l rust,python]
+    #[arg(short = 'l', long = "lang", value_delimiter = ',', action = clap::ArgAction::Append)]
+    #[arg(long_help = "\
+Language backend groups to analyze.
+
+Default: rust
+Available: rust, python, generic
+
+  -l python       Analyze Python file changes only
+  -l rust,python  Analyze Rust and Python file changes
+  -l all          Analyze all available backend groups")]
+    languages: Vec<String>,
+
     /// Only include files matching a glob
     #[arg(short = 'i', long = "include", action = clap::ArgAction::Append)]
     include: Vec<String>,
@@ -292,9 +325,10 @@ truncated slice. No-op when no `--by-*` aggregation is in effect.")]
 mod handlers {
     use clap::ArgMatches;
     use rustloclib::{
-        count_directory, count_file, count_workspace, diff_revspec, diff_workdir, Aggregation,
-        CountOptions, CountQuerySet, CountResult, DiffOptions, DiffQuerySet, FilterConfig,
-        LOCTable, LineTypes, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
+        available_languages, count_directory_with_options, count_file_with_filter, count_workspace,
+        default_languages, diff_revspec, diff_workdir, Aggregation, CountOptions, CountQuerySet,
+        CountResult, DiffOptions, DiffQuerySet, FilterConfig, LOCTable, LanguageName,
+        LanguageSelection, LineTypes, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
     };
     use standout::cli::{CommandContext, HandlerResult, Output};
 
@@ -385,11 +419,11 @@ mod handlers {
             .map(|item| diff_row(&item.label, &item.stats))
             .collect();
 
-        // Preserve the non-Rust summary that the text footer and JSON
-        // output expose. We have no per-line-type breakdown for non-Rust
+        // Preserve the skipped-file summary that the text footer and JSON
+        // output expose. We have no per-line-type breakdown for skipped
         // files, so only the *_total fields carry data; everything else
         // is left at zero. Skip the row entirely when there's nothing to
-        // show, so a pure-Rust diff stays clean.
+        // show, so a fully analyzed diff stays clean.
         if qs.non_rust_added > 0 || qs.non_rust_removed > 0 {
             let non_rust = LocsDiff {
                 added: Locs {
@@ -401,7 +435,7 @@ mod handlers {
                     ..Locs::default()
                 },
             };
-            rows.push(diff_row("NON_RUST", &non_rust));
+            rows.push(diff_row("SKIPPED", &non_rust));
         }
 
         rows.push(diff_row("TOTAL", &qs.total));
@@ -444,15 +478,10 @@ mod handlers {
         let is_workspace = path_ref.is_dir() && path_ref.join("Cargo.toml").exists()
             || path_ref.is_file() && path_ref.file_name() == Some("Cargo.toml".as_ref());
 
-        if !is_workspace && matches!(aggregation, Aggregation::ByCrate | Aggregation::ByModule) {
-            let flag = if matches!(aggregation, Aggregation::ByCrate) {
-                "--by-crate"
-            } else {
-                "--by-module"
-            };
+        if !is_workspace && matches!(aggregation, Aggregation::ByCrate) {
             return Err(anyhow::anyhow!(
                 "{} requires a Cargo workspace (directory with Cargo.toml), but '{}' is not a workspace",
-                flag,
+                "--by-crate",
                 path,
             ));
         }
@@ -465,14 +494,20 @@ mod handlers {
                 .line_types(effective_line_types);
             count_workspace(path, options)?
         } else if path_ref.is_file() {
-            let stats = count_file(path)?;
+            let stats = count_file_with_filter(path, &filter)?;
             let mut r = CountResult::new();
             r.root = path_ref.to_path_buf();
             r.file_count = 1;
             r.total = stats;
             r
         } else {
-            count_directory(path, &filter)?
+            count_directory_with_options(
+                path,
+                CountOptions::new()
+                    .filter(filter)
+                    .aggregation(aggregation)
+                    .line_types(effective_line_types),
+            )?
         };
 
         let top = extract_top(matches);
@@ -681,7 +716,7 @@ mod handlers {
     }
 
     fn build_filter(matches: &ArgMatches) -> Result<FilterConfig, anyhow::Error> {
-        let mut filter = FilterConfig::new();
+        let mut filter = FilterConfig::new().languages(extract_languages(matches)?);
 
         if let Some(includes) = matches.get_many::<String>("include") {
             for pattern in includes {
@@ -696,6 +731,27 @@ mod handlers {
         }
 
         Ok(filter)
+    }
+
+    fn extract_languages(matches: &ArgMatches) -> Result<LanguageSelection, anyhow::Error> {
+        let values: Vec<&str> = matches
+            .get_many::<String>("languages")
+            .map(|v| v.map(|s| s.as_str()).collect())
+            .unwrap_or_default();
+
+        if values.is_empty() {
+            return Ok(LanguageSelection::new(default_languages()));
+        }
+
+        if values.iter().any(|value| value.eq_ignore_ascii_case("all")) {
+            return Ok(LanguageSelection::new(available_languages()));
+        }
+
+        let mut languages = Vec::new();
+        for value in values {
+            languages.push(value.parse::<LanguageName>().map_err(anyhow::Error::msg)?);
+        }
+        Ok(LanguageSelection::new(&languages))
     }
 
     fn extract_crates(matches: &ArgMatches) -> Vec<String> {

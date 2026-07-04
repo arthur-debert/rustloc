@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use glob::Pattern;
 use walkdir::WalkDir;
 
-use crate::data::BackendRegistry;
+use crate::data::{BackendRegistry, LanguageSelection};
 use crate::error::RustlocError;
 use crate::Result;
 
@@ -19,6 +19,8 @@ pub struct FilterConfig {
     pub include: Vec<Pattern>,
     /// Glob patterns to exclude
     pub exclude: Vec<Pattern>,
+    /// Language backend groups to analyze.
+    pub languages: LanguageSelection,
 }
 
 impl FilterConfig {
@@ -63,6 +65,12 @@ impl FilterConfig {
         Ok(self)
     }
 
+    /// Set the language backend groups this filter accepts.
+    pub fn languages(mut self, languages: LanguageSelection) -> Self {
+        self.languages = languages;
+        self
+    }
+
     /// Check if a path matches the filter criteria.
     ///
     /// A path matches if:
@@ -71,7 +79,7 @@ impl FilterConfig {
     /// 3. It doesn't match any exclude pattern
     pub fn matches(&self, path: &Path) -> bool {
         // Must be supported by a language backend.
-        if !BackendRegistry::new().supports_path(path) {
+        if !BackendRegistry::new().supports_path_with_languages(path, &self.languages) {
             return false;
         }
 
@@ -207,10 +215,29 @@ mod tests {
 
         assert!(filter.matches(Path::new("src/main.rs")));
         assert!(filter.matches(Path::new("lib.rs")));
-        assert!(filter.matches(Path::new("src/app.py")));
-        assert!(filter.matches(Path::new("tests/app.test.js")));
+        assert!(!filter.matches(Path::new("src/app.py")));
+        assert!(!filter.matches(Path::new("tests/app.test.js")));
         assert!(!filter.matches(Path::new("README.md")));
         assert!(!filter.matches(Path::new("Cargo.toml")));
+    }
+
+    #[test]
+    fn test_filter_matches_selected_languages() {
+        let filter = FilterConfig::new().languages(crate::data::LanguageSelection::new(&[
+            crate::data::LanguageName::Python,
+        ]));
+
+        assert!(filter.matches(Path::new("src/app.py")));
+        assert!(!filter.matches(Path::new("src/main.rs")));
+    }
+
+    #[test]
+    fn test_filter_matches_all_available_languages() {
+        let filter = FilterConfig::new().languages(crate::data::LanguageSelection::all());
+
+        assert!(filter.matches(Path::new("src/main.rs")));
+        assert!(filter.matches(Path::new("src/app.py")));
+        assert!(filter.matches(Path::new("tests/app.test.js")));
     }
 
     #[test]
