@@ -427,6 +427,58 @@ class CaseModuleTest(unit_case.TestCase):
     }
 
     #[test]
+    fn classifies_nested_decorated_async_docstrings() {
+        let stats = analyze(
+            "src/service.py",
+            r#""""Module docs."""
+
+def outer():
+    """Outer docs."""
+    @decorate_class
+    class Inner:
+        """Inner docs."""
+        @decorate_method
+        async def run(self):
+            """Run docs."""
+            return "not # a comment"
+    return Inner
+"#,
+        );
+
+        assert_eq!(stats.docs, 4);
+        assert_eq!(stats.comments, 0);
+        assert_eq!(stats.blanks, 1);
+        assert_eq!(stats.code, 7);
+    }
+
+    #[test]
+    fn decorated_pytest_and_unittest_context_propagates_to_bodies() {
+        let stats = analyze(
+            "src/service.py",
+            r#"from unittest import TestCase
+
+@pytest.mark.integration
+async def test_async_path():
+    """Pytest docs."""
+    assert True
+
+@suite
+class TestService(TestCase):
+    """Class docs."""
+    @case
+    def test_case(self):
+        self.assertTrue(True)
+"#,
+        );
+
+        assert_eq!(stats.code, 1);
+        assert_eq!(stats.tests, 8);
+        assert_eq!(stats.docs, 2);
+        assert_eq!(stats.blanks, 2);
+        assert_eq!(stats.comments, 0);
+    }
+
+    #[test]
     fn classifies_nested_pytest_functions_in_production_files() {
         let stats = analyze(
             "src/service.py",
@@ -510,5 +562,41 @@ def build():
         assert_eq!(stats.code, 7);
         assert_eq!(stats.blanks, 1);
         assert_eq!(stats.comments, 0);
+    }
+
+    #[test]
+    fn keeps_doc_and_comment_like_string_literals_as_logic() {
+        let stats = analyze(
+            "src/service.py",
+            r##"VALUE = """
+/** not docs */
+# not a comment
+"""
+
+def build():
+    payload = """# also not a comment"""
+    return payload  # inline comment stays logic
+
+# full line comment
+"##,
+        );
+
+        assert_eq!(stats.code, 7);
+        assert_eq!(stats.comments, 1);
+        assert_eq!(stats.blanks, 2);
+        assert_eq!(stats.docs, 0);
+    }
+
+    #[test]
+    fn fallback_handles_crlf_and_missing_trailing_newline() {
+        let stats = analyze(
+            "tests/test_bad.py",
+            "# comment\r\n\r\ndef test_bad(\r\n    assert True",
+        );
+
+        assert_eq!(stats.comments, 1);
+        assert_eq!(stats.blanks, 1);
+        assert_eq!(stats.tests, 2);
+        assert_eq!(stats.code, 0);
     }
 }
