@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+## 0.19.1 - 2026-07-05
+
+- Improve Python and TypeScript line classification stress coverage
+
 ## 0.19.0 - 2026-07-05
 
 - Add a TypeScript language backend
