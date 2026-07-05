@@ -1,12 +1,12 @@
 # rustloc
 
-A language-aware lines-of-code counter. Unlike generic LOC tools, rustloc understands when tests live alongside production code and separates them correctly — even in the same file.
+A language-aware lines-of-code counter with deep Rust, Python, and TypeScript classification. Unlike generic LOC tools, rustloc understands when tests live alongside production code and separates them correctly — even in the same file.
 
 [![CI](https://github.com/arthur-debert/rustloc/actions/workflows/ci.yml/badge.svg)](https://github.com/arthur-debert/rustloc/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/rustloc.svg)](https://crates.io/crates/rustloc)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-![Rust Aware](https://raw.githubusercontent.com/arthur-debert/rustloc/main/assets/output-by-module.png)
+![Language-aware output](https://raw.githubusercontent.com/arthur-debert/rustloc/main/assets/output-by-module.png)
 
 ## Features
 
@@ -15,7 +15,7 @@ A language-aware lines-of-code counter. Unlike generic LOC tools, rustloc unders
 - **Grouping:** by crate, module, or file
 - **Sorting and slicing:** sort by any column, take the top N
 - **Filtering:** include only rows matching a threshold (`--code-gte 1000`, `--tests-lt 500`, …)
-- **Diffs:** between any two commits, against HEAD, or the working tree
+- **Diffs:** between any two commits, against HEAD, or the working tree, classified by changed lines
 - **Output:** terminal tables, JSON, YAML, XML, CSV — pipeable to a file
 
 ## Installation
@@ -45,11 +45,28 @@ rustloc -t code,tests                # only show selected line types
 rustloc --lang typescript            # analyze TypeScript files only
 rustloc --lang rust,typescript       # analyze Rust and TypeScript files
 rustloc -c my-lib                    # restrict to a specific crate
+rustloc --lang python                # analyze Python files only
+rustloc --lang rust,python           # analyze Rust and Python files
 rustloc -i "src/**/*.rs"             # include glob
 rustloc -e "**/generated/**"         # exclude glob
 ```
 
 ![by-file output](https://raw.githubusercontent.com/arthur-debert/rustloc/main/assets/output-by-file.png)
+
+### Languages
+
+By default, rustloc analyzes Rust files. Additional backends are available but opt-in:
+
+```bash
+rustloc --lang rust                  # default
+rustloc --lang python                # Python only
+rustloc --lang typescript            # TypeScript and TSX only
+rustloc --lang rust,python           # Rust and Python
+rustloc --lang rust,typescript       # Rust and TypeScript
+rustloc --lang all                   # all available backend groups
+```
+
+Rust and Python use semantic backends that can classify tests inside production files. The TypeScript backend uses Oxc parser comment spans to classify JSDoc docs, comments, blanks, and path-level test/example files. The generic backend is file-level only: it recognizes common source extensions and uses path conventions such as `tests/` and `examples/` for context.
 
 ### Sorting and top-N
 
@@ -91,6 +108,8 @@ rustloc diff main...feature          # from the merge base of main and feature
 Revspec syntax mirrors `git diff` / `git rev-parse`: tags (annotated or lightweight), branches, short hashes, `HEAD~N`, ranges (`a..b`), and merge-base ranges (`a...b`) all work. A single rev is diffed against HEAD; tag objects are peeled to their target commit automatically.
 
 The same `--by-*`, `-o`, `--top`, `-t`, `--lang`, and filter flags work on `diff` results — diff filters operate on the net change.
+
+Diffs use the active language selection. Files outside that selection are not analyzed semantically; their added and removed physical lines are reported separately as `Skipped changes` so branch sanity checks still show that something changed outside the counted language set.
 
 ![diff output](https://raw.githubusercontent.com/arthur-debert/rustloc/main/assets/output-diff.png)
 
@@ -180,13 +199,17 @@ Rust and Python use semantic backends that can classify tests inside production 
 
 ## How it works
 
-rustloc routes files through language backends. The Rust backend uses a token-based parser with single-character lookahead. It recognizes:
+rustloc routes files through language backends. Rust is enabled by default; Python, TypeScript, and generic source counting can be selected with `--lang`.
+
+The Rust backend uses a token-based parser with single-character lookahead. It recognizes:
 
 - Test blocks via `#[test]` and `#[cfg(test)]` attributes
 - File context from paths (`tests/`, `examples/` directories)
 - All Rust comment styles including doc comments
 - Raw string literals that may contain comment-like syntax
 - Nested block comments
+
+The Python backend uses Ruff's parser and syntax ranges to classify pytest functions, unittest classes, docstrings, comments, blanks, and path-level test/example files. The TypeScript backend uses Oxc parser comment spans for JSDoc and regular comments, with path-level test/example classification. The generic backend provides file-level classification for common source extensions when selected.
 
 The parsing logic is adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc) by Maxim Gritsenko.
 

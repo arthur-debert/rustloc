@@ -1,1 +1,0 @@
-- Harden Python semantic counting for aliases and multiline strings

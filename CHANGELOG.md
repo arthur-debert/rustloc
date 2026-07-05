@@ -4,6 +4,20 @@
 
 ## Unreleased
 
+## 0.18.0 - 2026-07-04
+
+- Refactor source counting through a language backend registry
+- Use changed-line classification for modified file diffs instead of whole-file net category deltas
+- Expand unit tests for data::diff (working-tree and staged diff paths, filter recursion, skipped-file line tracking)
+- remove dead-orphan homebrew render pair
+- Count common source files with a generic backend
+- Add `--lang` language selection for count and diff commands, defaulting to Rust while allowing opt-in Python, generic, or all-language analysis
+- Rename the diff footer/CSV skipped-file summary from non-Rust terminology to language-neutral skipped changes
+- Allow `--by-module` to group Python package/module paths outside Cargo workspaces
+- Add Python semantic counting backend
+- Harden Python semantic counting for aliases and multiline strings
+- ci: migrate release reusable-workflow callers from @v2 to @v3
+
 ## 0.17.2 - 2026-06-12
 
 - Update dependencies: `gix` 0.68 → 0.80, `rand` 0.8.5 → 0.8.6, and related transitive bumps in the cargo group (#71).

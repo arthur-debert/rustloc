@@ -1,7 +1,7 @@
 //! Data collection: parse files and collect statistics.
 //!
-//! This module handles the second stage of the pipeline - parsing Rust source
-//! files and collecting LOC statistics. It provides:
+//! This module handles the second stage of the pipeline - routing source files
+//! through language backends and collecting LOC statistics. It provides:
 //!
 //! - **Parsing**: AST-aware visitor that categorizes lines
 //! - **Statistics**: Core data structures (`Locs`, `FileStats`, etc.)
@@ -31,7 +31,8 @@ pub use backend::{
     RustBackend,
 };
 pub use counter::{
-    compute_module_name, count_directory, count_file, count_workspace, CountOptions, CountResult,
+    compute_module_name, count_directory, count_directory_with_options, count_file,
+    count_file_with_filter, count_workspace, CountOptions, CountResult,
 };
 pub use diff::{
     diff_revspec, diff_workdir, CrateDiffStats, DiffOptions, DiffResult, FileChangeType,

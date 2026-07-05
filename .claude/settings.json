@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/bin/setup-dev-env.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/bin/install-release-core"
           }
         ]
       }
@@ -18,6 +18,15 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/bin/pr-loop-guard"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/bin/delegate-guard"
           }
         ]
       }

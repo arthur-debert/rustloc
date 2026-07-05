@@ -224,14 +224,21 @@ mod tests {
 
     #[test]
     fn test_filter_matches_selected_languages() {
-        let filter = FilterConfig::new().languages(crate::data::LanguageSelection::new(&[
-            crate::data::LanguageName::TypeScript,
+        let python_filter = FilterConfig::new().languages(crate::data::LanguageSelection::new(&[
+            crate::data::LanguageName::Python,
         ]));
+        let typescript_filter =
+            FilterConfig::new().languages(crate::data::LanguageSelection::new(&[
+                crate::data::LanguageName::TypeScript,
+            ]));
 
-        assert!(filter.matches(Path::new("src/app.ts")));
-        assert!(filter.matches(Path::new("src/component.tsx")));
-        assert!(!filter.matches(Path::new("src/main.rs")));
-        assert!(!filter.matches(Path::new("src/app.py")));
+        assert!(python_filter.matches(Path::new("src/app.py")));
+        assert!(!python_filter.matches(Path::new("src/main.rs")));
+        assert!(!python_filter.matches(Path::new("src/app.ts")));
+        assert!(typescript_filter.matches(Path::new("src/app.ts")));
+        assert!(typescript_filter.matches(Path::new("src/component.tsx")));
+        assert!(!typescript_filter.matches(Path::new("src/main.rs")));
+        assert!(!typescript_filter.matches(Path::new("src/app.py")));
     }
 
     #[test]

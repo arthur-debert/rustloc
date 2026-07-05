@@ -1,6 +1,6 @@
 //! # rustloclib
 //!
-//! A Rust-aware lines of code counter library with a simple, flat data model.
+//! A language-aware lines of code counter library with a simple, flat data model.
 //!
 //! ## Overview
 //!
@@ -9,8 +9,8 @@
 //! enabled by default; Python, TypeScript, and generic source backends can be
 //! selected through [`FilterConfig`]. It categorizes lines into one of 6 types:
 //!
-//! - **code**: Production code logic lines (in src/, not in test blocks)
-//! - **tests**: Test code logic lines (#[test], #[cfg(test)], tests/)
+//! - **code**: Production code logic lines
+//! - **tests**: Test code logic lines (same-file test constructs or test paths)
 //! - **examples**: Example code logic lines (examples/)
 //! - **docs**: Documentation comments (///, //!, /** */, /*! */)
 //! - **comments**: Regular comments (//, /* */)
@@ -140,10 +140,11 @@ pub mod error;
 
 // Re-export all public types at crate root for convenience
 pub use data::{
-    available_languages, count_directory, count_file, count_workspace, default_languages,
-    diff_revspec, diff_workdir, gather_stats, gather_stats_for_path, CountOptions, CountResult,
-    CrateDiffStats, CrateStats, DiffOptions, DiffResult, FileChangeType, FileDiffStats, FileStats,
-    LanguageName, LanguageSelection, Locs, LocsDiff, ModuleStats, VisitorContext, WorkdirDiffMode,
+    available_languages, count_directory, count_directory_with_options, count_file,
+    count_file_with_filter, count_workspace, default_languages, diff_revspec, diff_workdir,
+    gather_stats, gather_stats_for_path, CountOptions, CountResult, CrateDiffStats, CrateStats,
+    DiffOptions, DiffResult, FileChangeType, FileDiffStats, FileStats, LanguageName,
+    LanguageSelection, Locs, LocsDiff, ModuleStats, VisitorContext, WorkdirDiffMode,
 };
 pub use error::RustlocError;
 pub use output::{LOCTable, TableRow};
