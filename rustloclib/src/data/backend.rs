@@ -5,7 +5,10 @@
 //! backend gives other common source files file-level code/test/example
 //! classification until language-specific backends are added.
 
+use std::collections::BTreeSet;
+use std::fmt;
 use std::path::Path;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +16,7 @@ use crate::{Result, RustlocError};
 
 use super::python::PythonBackend;
 use super::stats::Locs;
+use super::typescript::TypeScriptBackend;
 use super::visitor::{gather_analysis, gather_analysis_for_path};
 
 /// Language identified by a backend.
@@ -20,8 +24,102 @@ use super::visitor::{gather_analysis, gather_analysis_for_path};
 pub enum LanguageId {
     Rust,
     Python,
+    TypeScript,
     External(String),
     Unknown,
+}
+
+/// User-selectable language backend group.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum LanguageName {
+    Rust,
+    Python,
+    TypeScript,
+    Generic,
+}
+
+impl LanguageName {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Rust => "rust",
+            Self::Python => "python",
+            Self::TypeScript => "typescript",
+            Self::Generic => "generic",
+        }
+    }
+}
+
+impl fmt::Display for LanguageName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl FromStr for LanguageName {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "rust" | "rs" => Ok(Self::Rust),
+            "python" | "py" => Ok(Self::Python),
+            "typescript" | "ts" | "tsx" => Ok(Self::TypeScript),
+            "generic" => Ok(Self::Generic),
+            other => Err(format!(
+                "unknown language '{}'; available languages: {}",
+                other,
+                available_languages()
+                    .iter()
+                    .map(|lang| lang.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
+    }
+}
+
+pub const fn available_languages() -> &'static [LanguageName] {
+    &[
+        LanguageName::Rust,
+        LanguageName::Python,
+        LanguageName::TypeScript,
+        LanguageName::Generic,
+    ]
+}
+
+pub const fn default_languages() -> &'static [LanguageName] {
+    &[LanguageName::Rust]
+}
+
+/// Active language backend groups for a count or diff operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanguageSelection {
+    enabled: BTreeSet<LanguageName>,
+}
+
+impl Default for LanguageSelection {
+    fn default() -> Self {
+        Self::new(default_languages())
+    }
+}
+
+impl LanguageSelection {
+    pub fn new(languages: &[LanguageName]) -> Self {
+        Self {
+            enabled: languages.iter().copied().collect(),
+        }
+    }
+
+    pub fn all() -> Self {
+        Self::new(available_languages())
+    }
+
+    pub fn contains(&self, language: LanguageName) -> bool {
+        self.enabled.contains(&language)
+    }
+
+    pub fn names(&self) -> Vec<&'static str> {
+        self.enabled.iter().map(|lang| lang.name()).collect()
+    }
 }
 
 /// Context for executable or logical code lines.
@@ -155,12 +253,6 @@ impl GenericLanguage {
         } else if any_ext(ext, &["js", "jsx"]) {
             Self {
                 id: "JavaScript",
-                line_comments: &["//"],
-                block_comment: Some(("/*", "*/")),
-            }
-        } else if any_ext(ext, &["ts", "tsx"]) {
-            Self {
-                id: "TypeScript",
                 line_comments: &["//"],
                 block_comment: Some(("/*", "*/")),
             }
@@ -343,6 +435,7 @@ fn classify_generic_line(
 pub struct BackendRegistry {
     rust: RustBackend,
     python: PythonBackend,
+    typescript: TypeScriptBackend,
     generic: GenericBackend,
 }
 
@@ -352,14 +445,36 @@ impl BackendRegistry {
     }
 
     pub fn backend_for_path(&self, path: &Path) -> Option<&dyn LanguageBackend> {
-        let backends: [&dyn LanguageBackend; 3] = [&self.rust, &self.python, &self.generic];
-        backends
-            .into_iter()
-            .find(|backend| backend.supports_path(path))
+        self.backend_for_path_with_languages(path, &LanguageSelection::all())
+    }
+
+    pub fn backend_for_path_with_languages(
+        &self,
+        path: &Path,
+        languages: &LanguageSelection,
+    ) -> Option<&dyn LanguageBackend> {
+        let backends: [(LanguageName, &dyn LanguageBackend); 4] = [
+            (LanguageName::Rust, &self.rust),
+            (LanguageName::Python, &self.python),
+            (LanguageName::TypeScript, &self.typescript),
+            (LanguageName::Generic, &self.generic),
+        ];
+        backends.into_iter().find_map(|(language, backend)| {
+            if languages.contains(language) && backend.supports_path(path) {
+                Some(backend)
+            } else {
+                None
+            }
+        })
     }
 
     pub fn supports_path(&self, path: &Path) -> bool {
         self.backend_for_path(path).is_some()
+    }
+
+    pub fn supports_path_with_languages(&self, path: &Path, languages: &LanguageSelection) -> bool {
+        self.backend_for_path_with_languages(path, languages)
+            .is_some()
     }
 
     pub fn analyze_source(&self, path: &Path, source: &str) -> Result<Option<FileAnalysis>> {
@@ -368,8 +483,29 @@ impl BackendRegistry {
             .transpose()
     }
 
+    pub fn analyze_source_with_languages(
+        &self,
+        path: &Path,
+        source: &str,
+        languages: &LanguageSelection,
+    ) -> Result<Option<FileAnalysis>> {
+        self.backend_for_path_with_languages(path, languages)
+            .map(|backend| backend.analyze_source(path, source))
+            .transpose()
+    }
+
     pub fn analyze_path(&self, path: &Path) -> Result<Option<FileAnalysis>> {
         self.backend_for_path(path)
+            .map(|backend| backend.analyze_path(path))
+            .transpose()
+    }
+
+    pub fn analyze_path_with_languages(
+        &self,
+        path: &Path,
+        languages: &LanguageSelection,
+    ) -> Result<Option<FileAnalysis>> {
+        self.backend_for_path_with_languages(path, languages)
             .map(|backend| backend.analyze_path(path))
             .transpose()
     }
@@ -414,6 +550,32 @@ mod tests {
 
         assert_eq!(analysis.language, LanguageId::Python);
         assert_eq!(analysis.stats.code, 2);
+    }
+
+    #[test]
+    fn registry_selects_typescript_backend_for_typescript_files() {
+        let registry = BackendRegistry::new();
+        let analysis = registry
+            .analyze_source(
+                Path::new("src/app.ts"),
+                "/** docs */\nexport const value: number = 1;\n",
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(analysis.language, LanguageId::TypeScript);
+        assert_eq!(analysis.stats.docs, 1);
+        assert_eq!(analysis.stats.code, 1);
+    }
+
+    #[test]
+    fn registry_respects_language_selection() {
+        let registry = BackendRegistry::new();
+        let rust_only = LanguageSelection::new(&[LanguageName::Rust]);
+        let typescript_only = LanguageSelection::new(&[LanguageName::TypeScript]);
+
+        assert!(!registry.supports_path_with_languages(Path::new("src/app.ts"), &rust_only));
+        assert!(registry.supports_path_with_languages(Path::new("src/app.tsx"), &typescript_only));
     }
 
     #[test]

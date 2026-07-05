@@ -22,11 +22,13 @@ pub mod counter;
 pub mod diff;
 mod python;
 pub mod stats;
+mod typescript;
 pub mod visitor;
 
 pub use backend::{
-    BackendRegistry, FileAnalysis, GenericBackend, LanguageBackend, LanguageId, LineClass,
-    LogicContext, RustBackend,
+    available_languages, default_languages, BackendRegistry, FileAnalysis, GenericBackend,
+    LanguageBackend, LanguageId, LanguageName, LanguageSelection, LineClass, LogicContext,
+    RustBackend,
 };
 pub use counter::{
     compute_module_name, count_directory, count_file, count_workspace, CountOptions, CountResult,
@@ -36,4 +38,5 @@ pub use diff::{
     FileDiffStats, LocsDiff, WorkdirDiffMode,
 };
 pub use stats::{CrateStats, FileStats, Locs, ModuleStats};
+pub use typescript::TypeScriptBackend;
 pub use visitor::{gather_stats, gather_stats_for_path, VisitorContext};

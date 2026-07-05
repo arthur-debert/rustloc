@@ -23,6 +23,9 @@ imara-diff.workspace = true
 ruff_python_ast = "0.0.3"
 ruff_python_parser = "0.0.3"
 ruff_text_size = "0.0.3"
+oxc_allocator.workspace = true
+oxc_parser.workspace = true
+oxc_span.workspace = true
 
 [dev-dependencies]
 tempfile = "3.10"

@@ -56,16 +56,16 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use standout::cli::{App, Dispatch, RunResult};
 use standout::{embed_styles, embed_templates};
 
-/// Rust-aware lines of code counter with test/code separation
+/// Language-aware lines of code counter with test/code separation
 #[derive(Parser)]
 #[command(name = "rustloc")]
 #[command(version, author = "Arthur Debert")]
 #[command(long_about = "\
-Rust-aware lines of code counter with test/code separation.
+Language-aware lines of code counter with test/code separation.
 
-Parses Rust source files and categorizes each line as code, tests, examples,
-docs, comments, or blanks. Understands #[cfg(test)] blocks, doc comments,
-and Cargo workspace structure.")]
+Rust is analyzed by default. Python, TypeScript, and generic source files can
+be selected with --lang. Language backends categorize lines as code, tests,
+examples, docs, comments, or blanks.")]
 #[command(after_help = "Use --help for examples")]
 #[command(after_long_help = "\
 Examples:
@@ -75,6 +75,8 @@ Examples:
   rustloc --by-file                    Group by file
   rustloc --by-file -o -code           Sort files by code (descending)
   rustloc -t code,tests               Only code and test lines
+  rustloc --lang typescript            Analyze TypeScript files only
+  rustloc --lang rust,typescript       Analyze Rust and TypeScript files
   rustloc -c my-lib                    Only a specific crate
   rustloc diff                         Changes since last commit
   rustloc diff HEAD~5..HEAD --by-file  Per-file diff between commits")]
@@ -129,6 +131,19 @@ struct CountArgs {
     /// Only count specific crate(s) [-c my-lib -c my-cli]
     #[arg(short = 'c', long = "crate", action = clap::ArgAction::Append)]
     crates: Vec<String>,
+
+    /// Language backend(s) to analyze [-l rust,typescript]
+    #[arg(short = 'l', long = "lang", value_delimiter = ',', action = clap::ArgAction::Append)]
+    #[arg(long_help = "\
+Language backend groups to analyze.
+
+Default: rust
+Available: rust, python, typescript, generic
+
+  -l typescript        Analyze TypeScript files only
+  -l rust,typescript   Analyze Rust and TypeScript files
+  -l all               Analyze all available backend groups")]
+    languages: Vec<String>,
 
     /// Only include files matching a glob [-i "src/**/*.rs"]
     #[arg(short = 'i', long = "include", action = clap::ArgAction::Append)]
@@ -224,6 +239,19 @@ the resolved hash from `git rev-parse` if you need them.")]
     #[arg(short = 'c', long = "crate", action = clap::ArgAction::Append)]
     crates: Vec<String>,
 
+    /// Language backend(s) to analyze [-l rust,typescript]
+    #[arg(short = 'l', long = "lang", value_delimiter = ',', action = clap::ArgAction::Append)]
+    #[arg(long_help = "\
+Language backend groups to analyze.
+
+Default: rust
+Available: rust, python, typescript, generic
+
+  -l typescript        Analyze TypeScript file changes only
+  -l rust,typescript   Analyze Rust and TypeScript file changes
+  -l all               Analyze all available backend groups")]
+    languages: Vec<String>,
+
     /// Only include files matching a glob
     #[arg(short = 'i', long = "include", action = clap::ArgAction::Append)]
     include: Vec<String>,
@@ -292,9 +320,10 @@ truncated slice. No-op when no `--by-*` aggregation is in effect.")]
 mod handlers {
     use clap::ArgMatches;
     use rustloclib::{
-        count_directory, count_file, count_workspace, diff_revspec, diff_workdir, Aggregation,
-        CountOptions, CountQuerySet, CountResult, DiffOptions, DiffQuerySet, FilterConfig,
-        LOCTable, LineTypes, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
+        available_languages, count_directory, count_file, count_workspace, default_languages,
+        diff_revspec, diff_workdir, Aggregation, CountOptions, CountQuerySet, CountResult,
+        DiffOptions, DiffQuerySet, FilterConfig, LOCTable, LanguageName, LanguageSelection,
+        LineTypes, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
     };
     use standout::cli::{CommandContext, HandlerResult, Output};
 
@@ -465,6 +494,9 @@ mod handlers {
                 .line_types(effective_line_types);
             count_workspace(path, options)?
         } else if path_ref.is_file() {
+            if !filter.matches(path_ref) {
+                return Err(anyhow::anyhow!("Unsupported source file: {}", path));
+            }
             let stats = count_file(path)?;
             let mut r = CountResult::new();
             r.root = path_ref.to_path_buf();
@@ -681,7 +713,7 @@ mod handlers {
     }
 
     fn build_filter(matches: &ArgMatches) -> Result<FilterConfig, anyhow::Error> {
-        let mut filter = FilterConfig::new();
+        let mut filter = FilterConfig::new().languages(extract_languages(matches)?);
 
         if let Some(includes) = matches.get_many::<String>("include") {
             for pattern in includes {
@@ -696,6 +728,27 @@ mod handlers {
         }
 
         Ok(filter)
+    }
+
+    fn extract_languages(matches: &ArgMatches) -> Result<LanguageSelection, anyhow::Error> {
+        let values: Vec<&str> = matches
+            .get_many::<String>("languages")
+            .map(|v| v.map(|s| s.as_str()).collect())
+            .unwrap_or_default();
+
+        if values.is_empty() {
+            return Ok(LanguageSelection::new(default_languages()));
+        }
+
+        if values.iter().any(|value| value.eq_ignore_ascii_case("all")) {
+            return Ok(LanguageSelection::new(available_languages()));
+        }
+
+        let mut languages = Vec::new();
+        for value in values {
+            languages.push(value.parse::<LanguageName>().map_err(anyhow::Error::msg)?);
+        }
+        Ok(LanguageSelection::new(&languages))
     }
 
     fn extract_crates(matches: &ArgMatches) -> Vec<String> {

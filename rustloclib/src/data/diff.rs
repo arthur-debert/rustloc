@@ -1702,6 +1702,11 @@ mod tests {
         run_git(dir, &["add", name]);
     }
 
+    fn language_options(language: crate::data::LanguageName) -> DiffOptions {
+        DiffOptions::new()
+            .filter(FilterConfig::new().languages(crate::data::LanguageSelection::new(&[language])))
+    }
+
     #[test]
     fn test_locs_diff_filter_zeros_unselected_types() {
         let diff = LocsDiff {
@@ -2023,7 +2028,7 @@ mod tests {
         let result = diff_workdir(
             dir.path(),
             WorkdirDiffMode::All,
-            DiffOptions::new().line_types(LineTypes::everything()),
+            language_options(crate::data::LanguageName::Python).line_types(LineTypes::everything()),
         )
         .unwrap();
 
@@ -2040,7 +2045,7 @@ mod tests {
         let result = diff_workdir(
             dir.path(),
             WorkdirDiffMode::All,
-            DiffOptions::new().line_types(LineTypes::everything()),
+            language_options(crate::data::LanguageName::Python).line_types(LineTypes::everything()),
         )
         .unwrap();
 
@@ -2060,7 +2065,7 @@ mod tests {
         let result = diff_workdir(
             dir.path(),
             WorkdirDiffMode::All,
-            DiffOptions::new().line_types(LineTypes::everything()),
+            language_options(crate::data::LanguageName::Python).line_types(LineTypes::everything()),
         )
         .unwrap();
 
@@ -2081,12 +2086,52 @@ mod tests {
         )
         .unwrap();
         git_add(dir.path(), "tests/test_app.py");
-        let result = diff_workdir(dir.path(), WorkdirDiffMode::Staged, DiffOptions::new()).unwrap();
+        let result = diff_workdir(
+            dir.path(),
+            WorkdirDiffMode::Staged,
+            language_options(crate::data::LanguageName::Python),
+        )
+        .unwrap();
 
         assert_eq!(result.non_rust_added, 0);
         assert_eq!(result.non_rust_removed, 0);
         assert_eq!(result.total.added.tests, 2);
         assert_eq!(result.total.added.code, 0);
+    }
+
+    #[test]
+    fn test_diff_workdir_all_modified_typescript_file() {
+        let dir = workdir_repo(&[("app.ts", "export const oldValue: number = 1;\n")]);
+        std::fs::write(
+            dir.path().join("app.ts"),
+            "/** public value */\nexport const oldValue: number = 1;\nexport const newValue = 2;\n",
+        )
+        .unwrap();
+        let result = diff_workdir(
+            dir.path(),
+            WorkdirDiffMode::All,
+            language_options(crate::data::LanguageName::TypeScript)
+                .line_types(LineTypes::everything()),
+        )
+        .unwrap();
+
+        assert_eq!(result.non_rust_added, 0);
+        assert_eq!(result.non_rust_removed, 0);
+        assert_eq!(result.total.added.docs, 1);
+        assert_eq!(result.total.added.code, 1);
+    }
+
+    #[test]
+    fn test_diff_workdir_typescript_change_is_skipped_by_default_language_selection() {
+        let dir = workdir_repo(&[("app.ts", "export const value = 1;\n")]);
+        std::fs::write(
+            dir.path().join("app.ts"),
+            "export const value = 1;\nexport const next = 2;\n",
+        )
+        .unwrap();
+        let result = diff_workdir(dir.path(), WorkdirDiffMode::All, DiffOptions::new()).unwrap();
+
+        assert_eq!(result.total.net_total(), 0);
     }
 
     #[test]

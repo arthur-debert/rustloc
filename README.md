@@ -1,6 +1,6 @@
 # rustloc
 
-A Rust-aware lines-of-code counter. Unlike generic LOC tools, rustloc understands that Rust tests live alongside production code and correctly separates them — even in the same file.
+A language-aware lines-of-code counter. Unlike generic LOC tools, rustloc understands when tests live alongside production code and separates them correctly — even in the same file.
 
 [![CI](https://github.com/arthur-debert/rustloc/actions/workflows/ci.yml/badge.svg)](https://github.com/arthur-debert/rustloc/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/rustloc.svg)](https://crates.io/crates/rustloc)
@@ -11,6 +11,7 @@ A Rust-aware lines-of-code counter. Unlike generic LOC tools, rustloc understand
 ## Features
 
 - **Line types:** code, tests, examples, docs, comments, blanks
+- **Language backends:** Rust by default; opt into Python, TypeScript, or generic source counting with `--lang`
 - **Grouping:** by crate, module, or file
 - **Sorting and slicing:** sort by any column, take the top N
 - **Filtering:** include only rows matching a threshold (`--code-gte 1000`, `--tests-lt 500`, …)
@@ -41,6 +42,8 @@ rustloc --by-crate                   # breakdown by crate
 rustloc --by-module                  # breakdown by module
 rustloc --by-file                    # breakdown by file
 rustloc -t code,tests                # only show selected line types
+rustloc --lang typescript            # analyze TypeScript files only
+rustloc --lang rust,typescript       # analyze Rust and TypeScript files
 rustloc -c my-lib                    # restrict to a specific crate
 rustloc -i "src/**/*.rs"             # include glob
 rustloc -e "**/generated/**"         # exclude glob
@@ -87,7 +90,7 @@ rustloc diff main...feature          # from the merge base of main and feature
 
 Revspec syntax mirrors `git diff` / `git rev-parse`: tags (annotated or lightweight), branches, short hashes, `HEAD~N`, ranges (`a..b`), and merge-base ranges (`a...b`) all work. A single rev is diffed against HEAD; tag objects are peeled to their target commit automatically.
 
-The same `--by-*`, `-o`, `--top`, `-t`, and filter flags work on `diff` results — diff filters operate on the net change.
+The same `--by-*`, `-o`, `--top`, `-t`, `--lang`, and filter flags work on `diff` results — diff filters operate on the net change.
 
 ![diff output](https://raw.githubusercontent.com/arthur-debert/rustloc/main/assets/output-diff.png)
 
@@ -161,9 +164,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 The library exposes a four-stage pipeline (source → data → query → output) that the CLI is built on top of. See the [API documentation](https://docs.rs/rustloclib) for the full surface area, including diffs, filtering predicates, and table rendering.
 
+## Language Backends
+
+By default, rustloc analyzes Rust files. Additional backends are opt-in:
+
+```bash
+rustloc --lang rust                  # default
+rustloc --lang python                # Python only
+rustloc --lang typescript            # TypeScript and TSX only
+rustloc --lang rust,typescript       # Rust and TypeScript
+rustloc --lang all                   # all available backend groups
+```
+
+Rust and Python use semantic backends that can classify tests inside production files. The TypeScript backend uses Oxc parser comment spans to classify JSDoc docs, comments, blanks, and path-level test/example files. The generic backend is file-level only: it recognizes common source extensions and uses path conventions such as `tests/` and `examples/` for context.
+
 ## How it works
 
-rustloc uses a token-based parser with single-character lookahead to analyze Rust source files. It recognizes:
+rustloc routes files through language backends. The Rust backend uses a token-based parser with single-character lookahead. It recognizes:
 
 - Test blocks via `#[test]` and `#[cfg(test)]` attributes
 - File context from paths (`tests/`, `examples/` directories)
