@@ -1,6 +1,6 @@
 # rustloc
 
-A language-aware lines-of-code counter with deep Rust and Python classification. Unlike generic LOC tools, rustloc understands when tests live alongside production code and separates them correctly — even in the same file.
+A language-aware lines-of-code counter with deep Rust, Python, and TypeScript classification. Unlike generic LOC tools, rustloc understands when tests live alongside production code and separates them correctly — even in the same file.
 
 [![CI](https://github.com/arthur-debert/rustloc/actions/workflows/ci.yml/badge.svg)](https://github.com/arthur-debert/rustloc/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/rustloc.svg)](https://crates.io/crates/rustloc)
@@ -11,7 +11,7 @@ A language-aware lines-of-code counter with deep Rust and Python classification.
 ## Features
 
 - **Line types:** code, tests, examples, docs, comments, blanks
-- **Language backends:** Rust by default; opt into Python or generic source counting with `--lang`
+- **Language backends:** Rust by default; opt into Python, TypeScript, or generic source counting with `--lang`
 - **Grouping:** by crate, module, or file
 - **Sorting and slicing:** sort by any column, take the top N
 - **Filtering:** include only rows matching a threshold (`--code-gte 1000`, `--tests-lt 500`, …)
@@ -42,6 +42,8 @@ rustloc --by-crate                   # breakdown by crate
 rustloc --by-module                  # breakdown by module
 rustloc --by-file                    # breakdown by file
 rustloc -t code,tests                # only show selected line types
+rustloc --lang typescript            # analyze TypeScript files only
+rustloc --lang rust,typescript       # analyze Rust and TypeScript files
 rustloc -c my-lib                    # restrict to a specific crate
 rustloc --lang python                # analyze Python files only
 rustloc --lang rust,python           # analyze Rust and Python files
@@ -58,11 +60,13 @@ By default, rustloc analyzes Rust files. Additional backends are available but o
 ```bash
 rustloc --lang rust                  # default
 rustloc --lang python                # Python only
+rustloc --lang typescript            # TypeScript and TSX only
 rustloc --lang rust,python           # Rust and Python
-rustloc --lang all                   # Rust, Python, and generic source files
+rustloc --lang rust,typescript       # Rust and TypeScript
+rustloc --lang all                   # all available backend groups
 ```
 
-Rust and Python use semantic backends that can classify tests inside production files. The generic backend is file-level only: it recognizes common source extensions and uses path conventions such as `tests/` and `examples/` for context.
+Rust and Python use semantic backends that can classify tests inside production files. The TypeScript backend uses Oxc parser comment spans to classify JSDoc docs, comments, blanks, and path-level test/example files. The generic backend is file-level only: it recognizes common source extensions and uses path conventions such as `tests/` and `examples/` for context.
 
 ### Sorting and top-N
 
@@ -179,9 +183,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 The library exposes a four-stage pipeline (source → data → query → output) that the CLI is built on top of. See the [API documentation](https://docs.rs/rustloclib) for the full surface area, including diffs, filtering predicates, and table rendering.
 
+## Language Backends
+
+By default, rustloc analyzes Rust files. Additional backends are opt-in:
+
+```bash
+rustloc --lang rust                  # default
+rustloc --lang python                # Python only
+rustloc --lang typescript            # TypeScript and TSX only
+rustloc --lang rust,typescript       # Rust and TypeScript
+rustloc --lang all                   # all available backend groups
+```
+
+Rust and Python use semantic backends that can classify tests inside production files. The TypeScript backend uses Oxc parser comment spans to classify JSDoc docs, comments, blanks, and path-level test/example files. The generic backend is file-level only: it recognizes common source extensions and uses path conventions such as `tests/` and `examples/` for context.
+
 ## How it works
 
-rustloc routes files through language backends. Rust is enabled by default; Python and generic source counting can be selected with `--lang`.
+rustloc routes files through language backends. Rust is enabled by default; Python, TypeScript, and generic source counting can be selected with `--lang`.
 
 The Rust backend uses a token-based parser with single-character lookahead. It recognizes:
 
@@ -191,7 +209,7 @@ The Rust backend uses a token-based parser with single-character lookahead. It r
 - Raw string literals that may contain comment-like syntax
 - Nested block comments
 
-The Python backend uses Ruff's parser and syntax ranges to classify pytest functions, unittest classes, docstrings, comments, blanks, and path-level test/example files. The generic backend provides file-level classification for common source extensions when selected.
+The Python backend uses Ruff's parser and syntax ranges to classify pytest functions, unittest classes, docstrings, comments, blanks, and path-level test/example files. The TypeScript backend uses Oxc parser comment spans for JSDoc and regular comments, with path-level test/example classification. The generic backend provides file-level classification for common source extensions when selected.
 
 The parsing logic is adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc) by Maxim Gritsenko.
 

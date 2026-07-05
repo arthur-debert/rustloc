@@ -217,18 +217,28 @@ mod tests {
         assert!(filter.matches(Path::new("lib.rs")));
         assert!(!filter.matches(Path::new("src/app.py")));
         assert!(!filter.matches(Path::new("tests/app.test.js")));
+        assert!(!filter.matches(Path::new("tests/app.test.ts")));
         assert!(!filter.matches(Path::new("README.md")));
         assert!(!filter.matches(Path::new("Cargo.toml")));
     }
 
     #[test]
     fn test_filter_matches_selected_languages() {
-        let filter = FilterConfig::new().languages(crate::data::LanguageSelection::new(&[
+        let python_filter = FilterConfig::new().languages(crate::data::LanguageSelection::new(&[
             crate::data::LanguageName::Python,
         ]));
+        let typescript_filter =
+            FilterConfig::new().languages(crate::data::LanguageSelection::new(&[
+                crate::data::LanguageName::TypeScript,
+            ]));
 
-        assert!(filter.matches(Path::new("src/app.py")));
-        assert!(!filter.matches(Path::new("src/main.rs")));
+        assert!(python_filter.matches(Path::new("src/app.py")));
+        assert!(!python_filter.matches(Path::new("src/main.rs")));
+        assert!(!python_filter.matches(Path::new("src/app.ts")));
+        assert!(typescript_filter.matches(Path::new("src/app.ts")));
+        assert!(typescript_filter.matches(Path::new("src/component.tsx")));
+        assert!(!typescript_filter.matches(Path::new("src/main.rs")));
+        assert!(!typescript_filter.matches(Path::new("src/app.py")));
     }
 
     #[test]
@@ -238,6 +248,7 @@ mod tests {
         assert!(filter.matches(Path::new("src/main.rs")));
         assert!(filter.matches(Path::new("src/app.py")));
         assert!(filter.matches(Path::new("tests/app.test.js")));
+        assert!(filter.matches(Path::new("tests/app.test.ts")));
     }
 
     #[test]

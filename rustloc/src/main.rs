@@ -5,13 +5,13 @@
 //! ## Overview
 //!
 //! rustloc is built on top of rustloclib and provides a command-line interface for
-//! analyzing Rust, Python, and generic source trees. It separates production code
+//! analyzing Rust, Python, TypeScript, and generic source trees. It separates production code
 //! from test code, even when a language backend can find both in the same file.
 //!
 //! ## Features
 //!
 //! - **Language-aware**: Distinguishes code, tests, examples, comments, docs, and blanks
-//! - **Language selection**: Rust by default; opt into Python or generic counting
+//! - **Language selection**: Rust by default; opt into Python, TypeScript, or generic counting
 //! - **Cargo workspace support**: Filter by crate with `--crate` or `-c`
 //! - **Glob filtering**: Include/exclude files with glob patterns
 //! - **Multiple output formats**: Table (default), JSON, YAML, XML, CSV
@@ -35,8 +35,9 @@
 //! # Show only code and tests (exclude docs, comments, blanks)
 //! rustloc . --type code,tests
 //!
-//! # Analyze Python instead of the default Rust backend
+//! # Analyze another backend instead of the default Rust backend
 //! rustloc . --lang python
+//! rustloc . --lang typescript
 //!
 //! # Diff between commits
 //! rustloc diff HEAD~5..HEAD
@@ -67,9 +68,9 @@ use standout::{embed_styles, embed_templates};
 #[command(long_about = "\
 Language-aware lines of code counter with test/code separation.
 
-Rust is analyzed by default. Python and generic source files can be selected
-with --lang. Rust and Python backends classify same-file test code; the generic
-backend uses file paths for code/test/example context.")]
+Rust is analyzed by default. Python, TypeScript, and generic source files can
+be selected with --lang. Rust and Python backends classify same-file test code;
+the TypeScript and generic backends use file paths for code/test/example context.")]
 #[command(after_help = "Use --help for examples")]
 #[command(after_long_help = "\
 Examples:
@@ -81,9 +82,12 @@ Examples:
   rustloc -t code,tests               Only code and test lines
   rustloc --lang python                Analyze Python files only
   rustloc --lang rust,python           Analyze Rust and Python files
+  rustloc --lang typescript            Analyze TypeScript files only
+  rustloc --lang rust,typescript       Analyze Rust and TypeScript files
   rustloc -c my-lib                    Only a specific crate
   rustloc diff                         Changes since last commit
   rustloc diff --lang python           Python changes since last commit
+  rustloc diff --lang typescript       TypeScript changes since last commit
   rustloc diff HEAD~5..HEAD --by-file  Per-file diff between commits")]
 struct Cli {
     #[command(subcommand)]
@@ -137,17 +141,21 @@ struct CountArgs {
     #[arg(short = 'c', long = "crate", action = clap::ArgAction::Append)]
     crates: Vec<String>,
 
-    /// Language backend(s) to analyze [-l rust,python]
+    /// Language backend(s) to analyze [-l rust,typescript]
+    ///
+    /// Example: -l rust,python or -l rust,typescript
     #[arg(short = 'l', long = "lang", value_delimiter = ',', action = clap::ArgAction::Append)]
     #[arg(long_help = "\
 Language backend groups to analyze.
 
 Default: rust
-Available: rust, python, generic
+Available: rust, python, typescript, generic
 
-  -l python       Analyze Python files only
-  -l rust,python  Analyze Rust and Python files
-  -l all          Analyze all available backend groups")]
+  -l python            Analyze Python files only
+  -l rust,python       Analyze Rust and Python files
+  -l typescript        Analyze TypeScript files only
+  -l rust,typescript   Analyze Rust and TypeScript files
+  -l all               Analyze all available backend groups")]
     languages: Vec<String>,
 
     /// Only include files matching a glob [-i "src/**/*.rs"]
@@ -244,17 +252,21 @@ the resolved hash from `git rev-parse` if you need them.")]
     #[arg(short = 'c', long = "crate", action = clap::ArgAction::Append)]
     crates: Vec<String>,
 
-    /// Language backend(s) to analyze [-l rust,python]
+    /// Language backend(s) to analyze [-l rust,typescript]
+    ///
+    /// Example: -l rust,python or -l rust,typescript
     #[arg(short = 'l', long = "lang", value_delimiter = ',', action = clap::ArgAction::Append)]
     #[arg(long_help = "\
 Language backend groups to analyze.
 
 Default: rust
-Available: rust, python, generic
+Available: rust, python, typescript, generic
 
-  -l python       Analyze Python file changes only
-  -l rust,python  Analyze Rust and Python file changes
-  -l all          Analyze all available backend groups")]
+  -l python            Analyze Python file changes only
+  -l rust,python       Analyze Rust and Python file changes
+  -l typescript        Analyze TypeScript file changes only
+  -l rust,typescript   Analyze Rust and TypeScript file changes
+  -l all               Analyze all available backend groups")]
     languages: Vec<String>,
 
     /// Only include files matching a glob

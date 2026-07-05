@@ -22,6 +22,7 @@ pub mod counter;
 pub mod diff;
 mod python;
 pub mod stats;
+mod typescript;
 pub mod visitor;
 
 pub use backend::{

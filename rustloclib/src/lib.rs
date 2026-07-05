@@ -6,8 +6,8 @@
 //!
 //! Unlike generic LOC counters (tokei, cloc, scc), this library has semantic
 //! backends for languages where tests can live alongside production code. Rust is
-//! enabled by default; Python and generic source backends can be selected through
-//! [`FilterConfig`]. It categorizes lines into one of 6 types:
+//! enabled by default; Python, TypeScript, and generic source backends can be
+//! selected through [`FilterConfig`]. It categorizes lines into one of 6 types:
 //!
 //! - **code**: Production code logic lines
 //! - **tests**: Test code logic lines (same-file test constructs or test paths)

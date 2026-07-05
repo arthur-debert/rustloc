@@ -16,6 +16,7 @@ use crate::{Result, RustlocError};
 
 use super::python::PythonBackend;
 use super::stats::Locs;
+use super::typescript::TypeScriptBackend;
 use super::visitor::{gather_analysis, gather_analysis_for_path};
 
 /// Language identified by a backend.
@@ -23,6 +24,7 @@ use super::visitor::{gather_analysis, gather_analysis_for_path};
 pub enum LanguageId {
     Rust,
     Python,
+    TypeScript,
     External(String),
     Unknown,
 }
@@ -32,6 +34,7 @@ pub enum LanguageId {
 pub enum LanguageName {
     Rust,
     Python,
+    TypeScript,
     Generic,
 }
 
@@ -40,6 +43,7 @@ impl LanguageName {
         match self {
             Self::Rust => "rust",
             Self::Python => "python",
+            Self::TypeScript => "typescript",
             Self::Generic => "generic",
         }
     }
@@ -58,6 +62,7 @@ impl FromStr for LanguageName {
         match value.to_ascii_lowercase().as_str() {
             "rust" | "rs" => Ok(Self::Rust),
             "python" | "py" => Ok(Self::Python),
+            "typescript" | "ts" | "tsx" => Ok(Self::TypeScript),
             "generic" => Ok(Self::Generic),
             other => Err(format!(
                 "unknown language '{}'; available languages: {}",
@@ -76,6 +81,7 @@ pub const fn available_languages() -> &'static [LanguageName] {
     &[
         LanguageName::Rust,
         LanguageName::Python,
+        LanguageName::TypeScript,
         LanguageName::Generic,
     ]
 }
@@ -250,12 +256,6 @@ impl GenericLanguage {
                 line_comments: &["//"],
                 block_comment: Some(("/*", "*/")),
             }
-        } else if any_ext(ext, &["ts", "tsx"]) {
-            Self {
-                id: "TypeScript",
-                line_comments: &["//"],
-                block_comment: Some(("/*", "*/")),
-            }
         } else if any_ext(ext, &["go"]) {
             Self {
                 id: "Go",
@@ -350,7 +350,7 @@ impl LanguageBackend for GenericBackend {
     }
 }
 
-fn generic_context_from_path(path: &Path) -> LogicContext {
+pub(super) fn generic_context_from_path(path: &Path) -> LogicContext {
     let mut saw_example_dir = false;
     for component in path.components() {
         let Some(value) = component.as_os_str().to_str() else {
@@ -435,6 +435,7 @@ fn classify_generic_line(
 pub struct BackendRegistry {
     rust: RustBackend,
     python: PythonBackend,
+    typescript: TypeScriptBackend,
     generic: GenericBackend,
 }
 
@@ -452,9 +453,10 @@ impl BackendRegistry {
         path: &Path,
         languages: &LanguageSelection,
     ) -> Option<&dyn LanguageBackend> {
-        let backends: [(LanguageName, &dyn LanguageBackend); 3] = [
+        let backends: [(LanguageName, &dyn LanguageBackend); 4] = [
             (LanguageName::Rust, &self.rust),
             (LanguageName::Python, &self.python),
+            (LanguageName::TypeScript, &self.typescript),
             (LanguageName::Generic, &self.generic),
         ];
         backends.into_iter().find_map(|(language, backend)| {
@@ -548,6 +550,32 @@ mod tests {
 
         assert_eq!(analysis.language, LanguageId::Python);
         assert_eq!(analysis.stats.code, 2);
+    }
+
+    #[test]
+    fn registry_selects_typescript_backend_for_typescript_files() {
+        let registry = BackendRegistry::new();
+        let analysis = registry
+            .analyze_source(
+                Path::new("src/app.ts"),
+                "/** docs */\nexport const value: number = 1;\n",
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(analysis.language, LanguageId::TypeScript);
+        assert_eq!(analysis.stats.docs, 1);
+        assert_eq!(analysis.stats.code, 1);
+    }
+
+    #[test]
+    fn registry_respects_language_selection() {
+        let registry = BackendRegistry::new();
+        let rust_only = LanguageSelection::new(&[LanguageName::Rust]);
+        let typescript_only = LanguageSelection::new(&[LanguageName::TypeScript]);
+
+        assert!(!registry.supports_path_with_languages(Path::new("src/app.ts"), &rust_only));
+        assert!(registry.supports_path_with_languages(Path::new("src/app.tsx"), &typescript_only));
     }
 
     #[test]

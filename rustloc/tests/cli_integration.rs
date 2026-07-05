@@ -222,6 +222,27 @@ fn test_cli_version() {
 }
 
 #[test]
+fn test_lang_typescript_counts_typescript_file() {
+    let dir = tempfile::Builder::new()
+        .prefix("rustloc-typescript-")
+        .tempdir()
+        .expect("tempdir");
+    write_file(
+        &dir.path().join("widget.test.ts"),
+        "/** Widget docs */\ntest('works', () => true);\n",
+    );
+
+    let path = dir.path().to_string_lossy().to_string();
+    let (stdout, _, success) = run_rustloc(&[&path, "--lang", "typescript", "--output", "json"]);
+
+    assert!(success);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    assert_eq!(parsed["total"]["docs"].as_u64(), Some(1));
+    assert_eq!(parsed["total"]["tests"].as_u64(), Some(1));
+    assert_eq!(parsed["file_count"].as_u64(), Some(1));
+}
+
+#[test]
 fn test_lang_python_by_module_counts_python_tree() {
     let dir = tempfile::Builder::new()
         .prefix("rustloc-python-modules-")
@@ -1127,8 +1148,13 @@ fn test_filter_combines_with_and() {
     assert!(success);
     // The repo has 2 crates; the AND should keep the rustloc crate (which
     // has < 1500 tests) and exclude rustloclib (which has more).
-    assert!(stdout.contains("rustloc "));
-    assert!(!stdout.contains("rustloclib "));
+    let rows: Vec<_> = stdout.lines().collect();
+    assert!(rows
+        .iter()
+        .any(|row| row.trim_start().starts_with("rustloc ")));
+    assert!(!rows
+        .iter()
+        .any(|row| row.trim_start().starts_with("rustloclib ")));
 }
 
 #[test]

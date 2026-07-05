@@ -560,7 +560,7 @@ edition = "2021"
     }
 
     #[test]
-    fn test_count_directory_includes_supported_source_files() {
+    fn test_count_directory_includes_selected_non_rust_source_files() {
         let temp = tempdir().unwrap();
         let root = temp.path();
         fs::create_dir_all(root.join("tests")).unwrap();
@@ -574,20 +574,27 @@ edition = "2021"
             "def test_app():\n    assert True\n",
         )
         .unwrap();
+        fs::write(
+            root.join("widget.test.ts"),
+            "/** docs */\ntest('works', () => true);\n",
+        )
+        .unwrap();
 
         let result = count_directory(
             root,
             &FilterConfig::new().languages(crate::data::LanguageSelection::new(&[
                 crate::data::LanguageName::Python,
+                crate::data::LanguageName::TypeScript,
             ])),
         )
         .unwrap();
 
-        assert_eq!(result.files.len(), 2);
+        assert_eq!(result.files.len(), 3);
         assert_eq!(result.total.comments, 1);
         assert_eq!(result.total.blanks, 1);
+        assert_eq!(result.total.docs, 1);
         assert_eq!(result.total.code, 2);
-        assert_eq!(result.total.tests, 2);
+        assert_eq!(result.total.tests, 3);
     }
 
     #[test]
