@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+## 0.19.0 - 2026-07-05
+
+- Add a TypeScript language backend
+
 ## 0.18.0 - 2026-07-04
 
 - Refactor source counting through a language backend registry
