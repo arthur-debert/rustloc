@@ -200,6 +200,15 @@ fn rust_fn(name: &str, body_lines: usize) -> String {
     s
 }
 
+fn expected_language_help_line() -> String {
+    let languages = rustloclib::available_languages()
+        .iter()
+        .map(|language| language.name())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("Available: {languages}")
+}
+
 #[test]
 fn test_cli_help() {
     let (stdout, _, success) = run_rustloc(&["--help"]);
@@ -211,6 +220,8 @@ fn test_cli_help() {
     assert!(stdout.contains("--output"));
     assert!(stdout.contains("--by-crate"));
     assert!(stdout.contains("--by-file"));
+    assert!(stdout.contains(&expected_language_help_line()));
+    assert!(stdout.contains("-l all"));
 }
 
 #[test]
@@ -646,6 +657,8 @@ fn test_diff_help() {
     assert!(stdout.contains("Revspec or range"));
     assert!(stdout.contains("--by-file"));
     assert!(stdout.contains("--by-crate"));
+    assert!(stdout.contains(&expected_language_help_line()));
+    assert!(stdout.contains("-l all"));
 }
 
 #[test]
