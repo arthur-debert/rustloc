@@ -190,6 +190,44 @@ export function run(): boolean {
     }
 
     #[test]
+    fn classifies_multiline_jsdoc_and_ordinary_block_comments() {
+        let analysis = analyze(
+            "src/app.ts",
+            r#"/**
+ * Public API.
+ */
+/*
+ * Internal note.
+ */
+export interface Service {
+  run(): void;
+}
+"#,
+        );
+
+        assert_eq!(analysis.stats.docs, 3);
+        assert_eq!(analysis.stats.comments, 3);
+        assert_eq!(analysis.stats.code, 3);
+        assert_eq!(analysis.stats.blanks, 0);
+    }
+
+    #[test]
+    fn classifies_triple_slash_reference_and_amd_as_docs() {
+        let analysis = analyze(
+            "src/app.ts",
+            r#"/// <reference types="node" />
+/// <amd-module name="pkg/app" />
+// regular comment
+export const value = 1;
+"#,
+        );
+
+        assert_eq!(analysis.stats.docs, 2);
+        assert_eq!(analysis.stats.comments, 1);
+        assert_eq!(analysis.stats.code, 1);
+    }
+
+    #[test]
     fn ignores_comment_markers_inside_strings() {
         let analysis = analyze(
             "src/app.ts",
@@ -200,6 +238,75 @@ const block = "not /* a comment */";
 
         assert_eq!(analysis.stats.comments, 0);
         assert_eq!(analysis.stats.code, 2);
+    }
+
+    #[test]
+    fn ignores_comment_markers_inside_regexes_and_templates() {
+        let analysis = analyze(
+            "src/app.ts",
+            r#"const slash = /\/\/ not a comment/;
+const block = `not /* a comment */ and not // a comment`;
+const url = "https://example.invalid/path";
+"#,
+        );
+
+        assert_eq!(analysis.stats.docs, 0);
+        assert_eq!(analysis.stats.comments, 0);
+        assert_eq!(analysis.stats.code, 3);
+    }
+
+    #[test]
+    fn keeps_inline_comments_as_logic_but_counts_full_line_comments() {
+        let analysis = analyze(
+            "src/app.ts",
+            r#"const first = 1; // trailing comment
+// full line comment
+/* full line block */
+const second = 2; /* trailing block */
+"#,
+        );
+
+        assert_eq!(analysis.stats.code, 2);
+        assert_eq!(analysis.stats.comments, 2);
+        assert_eq!(analysis.stats.docs, 0);
+    }
+
+    #[test]
+    fn classifies_tsx_and_decorator_shapes_as_logic() {
+        let analysis = analyze(
+            "src/components/widget.tsx",
+            r#"@sealed
+export class Widget {
+  render() {
+    return <section>{this.label}</section>;
+  }
+}
+
+export interface Props {
+  label: string;
+}
+"#,
+        );
+
+        assert_eq!(analysis.stats.code, 9);
+        assert_eq!(analysis.stats.blanks, 1);
+        assert_eq!(analysis.stats.docs, 0);
+        assert_eq!(analysis.stats.comments, 0);
+    }
+
+    #[test]
+    fn keeps_comments_from_parse_error_recovery() {
+        let analysis = analyze(
+            "src/bad.ts",
+            r#"/** Recovered docs. */
+// recovered comment
+export const value = ;
+"#,
+        );
+
+        assert_eq!(analysis.stats.docs, 1);
+        assert_eq!(analysis.stats.comments, 1);
+        assert_eq!(analysis.stats.code, 1);
     }
 
     #[test]

@@ -1512,6 +1512,40 @@ mod tests {
     }
 
     #[test]
+    fn test_compute_modified_locs_diff_uses_python_backend_classes() {
+        let diff = compute_modified_locs_diff(
+            Path::new("tests/test_app.py"),
+            "# old comment\ndef test_old():\n    assert False\n",
+            "\"\"\"Module docs.\"\"\"\n# new comment\ndef test_new():\n    assert True\n",
+        )
+        .unwrap();
+
+        assert_eq!(diff.removed.comments, 1);
+        assert_eq!(diff.removed.tests, 2);
+        assert_eq!(diff.added.docs, 1);
+        assert_eq!(diff.added.comments, 1);
+        assert_eq!(diff.added.tests, 2);
+        assert_eq!(diff.added.code, 0);
+    }
+
+    #[test]
+    fn test_compute_modified_locs_diff_uses_typescript_backend_classes() {
+        let diff = compute_modified_locs_diff(
+            Path::new("src/app.test.ts"),
+            "// old comment\nconst oldValue = 1;\n",
+            "/** public docs */\n// new comment\nconst newValue = 2;\n",
+        )
+        .unwrap();
+
+        assert_eq!(diff.removed.comments, 1);
+        assert_eq!(diff.removed.tests, 1);
+        assert_eq!(diff.added.docs, 1);
+        assert_eq!(diff.added.comments, 1);
+        assert_eq!(diff.added.tests, 1);
+        assert_eq!(diff.added.code, 0);
+    }
+
+    #[test]
     fn test_workdir_diff_mode_default() {
         assert_eq!(WorkdirDiffMode::default(), WorkdirDiffMode::All);
     }
