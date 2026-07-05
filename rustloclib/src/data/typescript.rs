@@ -6,7 +6,9 @@ use oxc_span::SourceType;
 
 use crate::Result;
 
-use super::backend::{FileAnalysis, LanguageBackend, LanguageId, LineClass, LogicContext};
+use super::backend::{
+    generic_context_from_path, FileAnalysis, LanguageBackend, LanguageId, LineClass, LogicContext,
+};
 use super::stats::Locs;
 
 /// TypeScript backend using Oxc comment spans for parser-backed classification.
@@ -21,7 +23,7 @@ impl LanguageBackend for TypeScriptBackend {
     }
 
     fn analyze_source(&self, path: &Path, source: &str) -> Result<FileAnalysis> {
-        let context = typescript_context_from_path(path);
+        let context = generic_context_from_path(path);
         let line_classes = classify_typescript_lines(path, source, context);
 
         let mut stats = Locs::new();
@@ -34,46 +36,6 @@ impl LanguageBackend for TypeScriptBackend {
             stats,
             line_classes,
         })
-    }
-}
-
-fn typescript_context_from_path(path: &Path) -> LogicContext {
-    let mut saw_example_dir = false;
-    for component in path.components() {
-        let Some(value) = component.as_os_str().to_str() else {
-            continue;
-        };
-        let value = value.to_ascii_lowercase();
-        match value.as_str() {
-            "tests" | "test" | "__tests__" | "spec" | "specs" => return LogicContext::Tests,
-            "examples" | "example" | "samples" | "sample" => saw_example_dir = true,
-            _ => {}
-        }
-    }
-
-    let filename = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let stem = path
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-
-    if stem.starts_with("test_")
-        || stem.ends_with("_test")
-        || stem.starts_with("spec_")
-        || stem.ends_with("_spec")
-        || filename.contains(".test.")
-        || filename.contains(".spec.")
-    {
-        LogicContext::Tests
-    } else if saw_example_dir || stem.starts_with("example_") || stem.ends_with("_example") {
-        LogicContext::Example
-    } else {
-        LogicContext::Code
     }
 }
 

@@ -350,7 +350,7 @@ impl LanguageBackend for GenericBackend {
     }
 }
 
-fn generic_context_from_path(path: &Path) -> LogicContext {
+pub(super) fn generic_context_from_path(path: &Path) -> LogicContext {
     let mut saw_example_dir = false;
     for component in path.components() {
         let Some(value) = component.as_os_str().to_str() else {

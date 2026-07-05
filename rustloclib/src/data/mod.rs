@@ -39,5 +39,4 @@ pub use diff::{
     FileDiffStats, LocsDiff, WorkdirDiffMode,
 };
 pub use stats::{CrateStats, FileStats, Locs, ModuleStats};
-pub use typescript::TypeScriptBackend;
 pub use visitor::{gather_stats, gather_stats_for_path, VisitorContext};
