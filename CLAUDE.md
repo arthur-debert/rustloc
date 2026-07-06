@@ -50,14 +50,14 @@ let filtered = result.filter(my_cli_filter);  // Should be done in library
 
 ## Core Library Types
 
-### `crates/rustloclib/src/options.rs`
+### `crates/rustloclib/src/query/options.rs`
 
 Input configuration types that control what the library returns:
 
 - `Contexts` - which code contexts to include (code, tests, examples)
 - `Aggregation` - result granularity (Total, ByCrate, ByModule, ByFile)
 
-### `crates/rustloclib/src/stats.rs`
+### `crates/rustloclib/src/data/stats.rs`
 
 Output data types returned by the library:
 
@@ -66,7 +66,7 @@ Output data types returned by the library:
 - `FileStats`, `ModuleStats`, `CrateStats` - breakdown types
 - All types implement `filter(&self, contexts: Contexts) -> Self`
 
-### `crates/rustloclib/src/counter.rs`
+### `crates/rustloclib/src/data/counter.rs`
 
 Counting API:
 
@@ -74,7 +74,7 @@ Counting API:
 - `CountResult` - result containing total and optional breakdowns
 - `count_workspace()`, `count_directory()`, `count_file()` - entry points
 
-### `crates/rustloclib/src/diff.rs`
+### `crates/rustloclib/src/data/diff.rs`
 
 Git diff API:
 
