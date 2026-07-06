@@ -50,14 +50,14 @@ let filtered = result.filter(my_cli_filter);  // Should be done in library
 
 ## Core Library Types
 
-### `rustloclib/src/options.rs`
+### `crates/rustloclib/src/options.rs`
 
 Input configuration types that control what the library returns:
 
 - `Contexts` - which code contexts to include (code, tests, examples)
 - `Aggregation` - result granularity (Total, ByCrate, ByModule, ByFile)
 
-### `rustloclib/src/stats.rs`
+### `crates/rustloclib/src/stats.rs`
 
 Output data types returned by the library:
 
@@ -66,7 +66,7 @@ Output data types returned by the library:
 - `FileStats`, `ModuleStats`, `CrateStats` - breakdown types
 - All types implement `filter(&self, contexts: Contexts) -> Self`
 
-### `rustloclib/src/counter.rs`
+### `crates/rustloclib/src/counter.rs`
 
 Counting API:
 
@@ -74,7 +74,7 @@ Counting API:
 - `CountResult` - result containing total and optional breakdowns
 - `count_workspace()`, `count_directory()`, `count_file()` - entry points
 
-### `rustloclib/src/diff.rs`
+### `crates/rustloclib/src/diff.rs`
 
 Git diff API:
 
@@ -123,5 +123,5 @@ No special JSON transformation in CLI - the library types are the JSON schema.
 
 ## Testing
 
-- **Library tests**: Unit tests for computation logic in `rustloclib/src/*/tests`
-- **CLI tests**: Integration tests in `rustloc/tests/cli_integration.rs`
+- **Library tests**: Unit tests for computation logic in `crates/rustloclib/src/*/tests`
+- **CLI tests**: Integration tests in `crates/rustloc/tests/cli_integration.rs`

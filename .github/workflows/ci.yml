@@ -11,7 +11,7 @@ name: CI
 #
 # No `fetch-depth: 0` — the integration tests now build a hermetic
 # tempdir git repo for every diff-command test (see
-# `fixture_repo()` in rustloc/tests/cli_integration.rs), so the
+# `fixture_repo()` in crates/rustloc/tests/cli_integration.rs), so the
 # default shallow checkout (fetch-depth: 1) is sufficient.
 
 on:
