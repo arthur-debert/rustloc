@@ -9,6 +9,14 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/bin/install-release-core"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && pixi run ./bin/shipit hook sessionstart",
+            "type": "command"
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -27,6 +35,45 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/bin/delegate-guard"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && pixi run ./bin/shipit hook pretooluse",
+            "type": "command"
+          }
+        ],
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit"
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && pixi run ./bin/shipit hook stop",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && pixi run ./bin/shipit hook subagent-stop",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && pixi run ./bin/shipit hook worktreecreate",
+            "type": "command"
           }
         ]
       }
