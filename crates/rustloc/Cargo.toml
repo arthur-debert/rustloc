@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-readme = "../README.md"
+readme = "../../README.md"
 homepage = "https://github.com/arthur-debert/rustloc"
 keywords = ["loc", "lines-of-code", "code-counter", "rust", "test-separation"]
 categories = ["command-line-utilities", "development-tools"]
@@ -36,7 +36,7 @@ tempfile = "3.10"
 [package.metadata.deb]
 maintainer = "Arthur Debert <debert@gmail.com>"
 copyright = "2026, Arthur Debert <debert@gmail.com>"
-license-file = ["../LICENSE", "0"]
+license-file = ["../../LICENSE", "0"]
 extended-description = """
 rustloc is a Rust-aware lines-of-code counter that separates production
 code from tests — even when both live in the same file (a common pattern
@@ -52,8 +52,8 @@ assets = [
     # automatically when `--target` is passed (as CI does), so this path
     # works for both native and cross-compiled builds.
     ["target/release/rustloc", "usr/bin/", "755"],
-    ["../README.md", "usr/share/doc/rustloc/README.md", "644"],
-    ["../CHANGELOG.md", "usr/share/doc/rustloc/CHANGELOG.md", "644"],
+    ["../../README.md", "usr/share/doc/rustloc/README.md", "644"],
+    ["../../CHANGELOG.md", "usr/share/doc/rustloc/CHANGELOG.md", "644"],
 ]
 
 # CI builds each architecture separately with --target, so cargo-deb

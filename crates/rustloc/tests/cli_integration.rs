@@ -20,7 +20,10 @@ fn run_rustloc_with_code(args: &[&str]) -> (String, String, Option<i32>) {
 
     let output = Command::new("cargo")
         .args(&cmd_args)
-        .current_dir(env!("CARGO_MANIFEST_DIR").to_string() + "/..")
+        // Run from the workspace root so `.` resolves to the 2-crate
+        // workspace these tests assert against. This crate lives at
+        // `<root>/crates/rustloc`, so the root is two levels up.
+        .current_dir(env!("CARGO_MANIFEST_DIR").to_string() + "/../..")
         .output()
         .expect("Failed to execute command");
 
