@@ -35,7 +35,6 @@
 - Add unit tests for Locs arithmetic (saturating sub, add-assign) and stats aggregation/filter invariants (#83).
 - Add regression tests pinning table line structure (separator, header, and footer each on their own line) so the v0.17.1 jammed-separator bug can't ship again (#84).
 
-
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
@@ -71,7 +70,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.16.0] - 2026-05-16
 
-
 ### Fixed
 
 - `--output csv` now produces a well-formed CSV with one row per item
@@ -83,8 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NON_RUST` row when non-Rust files changed (preserving the non-Rust
   summary that the text table footer and JSON output already surface).
   JSON / YAML / XML output is unchanged.
-## [0.15.3] - 2026-05-10
 
+## [0.15.3] - 2026-05-10
 
 ### Fixed
 
@@ -99,8 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sum that the table prints). To filter on a subset of types, use the
   per-field flags (`--code-gte 1000`, `--tests-gte 100`, …) — they
   already operated on the underlying field, no change there.
-## [0.15.2] - 2026-05-10
 
+## [0.15.2] - 2026-05-10
 
 ### Fixed
 
@@ -126,8 +124,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Bumped `standout` dependency from 7.2.0 to 7.6.2.
-## [0.15.1] - 2026-05-10
 
+## [0.15.1] - 2026-05-10
 
 ### Fixed
 
@@ -137,8 +135,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cargo publish` all use `Cargo.lock` (pinned to 7.2.0) so the gap
   was invisible until end users installed the crate. Added a wildcard
   arm so the build is forward-compatible with new variants.
-## [0.15.0] - 2026-05-04
 
+## [0.15.0] - 2026-05-04
 
 ### Added
 
@@ -188,8 +186,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`diff_commits(repo, from, to, options)`** — the library now exposes
   `diff_revspec(repo, revspec, options)` instead. Pass either a single
   rev (diffed against HEAD), a range `a..b`, or a merge spec `a...b`.
-## [0.14.2] - 2026-05-01
 
+## [0.14.2] - 2026-05-01
 
 ### Changed
 
@@ -206,6 +204,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Intel-mac dropped from release artifacts** (`x86_64-apple-darwin`).
   Per canonical: arm64-only macOS. Existing v0.14.1 and earlier remain
   available for Intel users via direct GH release download.
+
 ## [0.14.1] - 2026-04-28
 
 - **Fixed**:
@@ -412,7 +411,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Acknowledgments**:
   - Parsing logic adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc) by Maxim Gritsenko
 
-[Unreleased]: https://github.com/arthur-debert/rustloc/compare/v0.17.1...HEAD
 [0.17.1]: https://github.com/arthur-debert/rustloc/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/arthur-debert/rustloc/compare/v0.13.1...v0.17.0
 [0.13.1]: https://github.com/arthur-debert/rustloc/compare/v0.13.0...v0.13.1
