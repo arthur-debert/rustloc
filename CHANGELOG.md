@@ -1,8 +1,10 @@
-<!-- generated - do not edit. See CHANGELOG/README.txt -->
+<!-- generated - do not edit; fragments live in CHANGELOG/ (`shipit changelog render` regenerates this file) -->
 
 # Changelog
 
 ## Unreleased
+
+- Test CLI help language list against registered backends
 
 ## 0.19.1 - 2026-07-05
 
@@ -34,6 +36,7 @@
 - Migrate changelog handling to the fragment-directory model (#201).
 - Add unit tests for Locs arithmetic (saturating sub, add-assign) and stats aggregation/filter invariants (#83).
 - Add regression tests pinning table line structure (separator, header, and footer each on their own line) so the v0.17.1 jammed-separator bug can't ship again (#84).
+
 
 All notable changes to this project will be documented in this file.
 
