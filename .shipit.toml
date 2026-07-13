@@ -61,6 +61,47 @@ local = true
 [toolchains]
 "." = "rust"
 
+# [artifacts] — rustloc's declared Artifact set for the shipit release
+# pipeline (ADP02-WS08, arthur-debert/shipit#841; modeled on
+# arthur-debert/padz's ADP02-WS06 map — the proven consumer with this exact
+# asset shape). The legacy surface it replaces is release.yml →
+# rust-cli.yml@v3 (`crates: rustloclib,rustloc`, `bin-name: rustloc`,
+# defaults: darwin arm64 + linux gnu x86_64/aarch64, brew, apt) — which
+# stays UNTOUCHED until this repo's rc proof (removal is a later
+# coordinator-driven step). Together the two artifacts produce the LEGACY
+# ASSET PARITY set:
+#   rustloc-aarch64-apple-darwin.tar.gz
+#   rustloc-aarch64-unknown-linux-gnu.tar.gz
+#   rustloc-x86_64-unknown-linux-gnu.tar.gz
+#   rustloc_<v>-1_amd64.deb / rustloc_<v>-1_arm64.deb
+#   - [artifacts.rustloc] is the binary-tarball artifact (the brew formula
+#     subject): archive composition over the same three native-runner
+#     platforms the legacy matrix built, distributed to gh-release + crates
+#     (rustloclib then rustloc — shipit derives the workspace topo order
+#     itself) + brew (the tap is shipit's portfolio constant,
+#     arthur-debert/homebrew-tools, which carries rustloc.rb today — same
+#     as legacy). UNLIKE padz, `sign = true`: this repo signs darwin — the
+#     archive-leg raw-binary codesign+notarize (arthur-debert/shipit#800)
+#     routes the darwin leg through the mac signer, and preflight derives
+#     the Apple cert pair + notary-trio secret requirement from the bare
+#     flag.
+#   - [artifacts.rustloc-deb] is the legacy `apt: true` leg: cargo-deb
+#     against the pre-built release binary, linux platforms only,
+#     gh-release only (legacy attached the .debs to the GH release; there
+#     is no apt repository endpoint).
+[artifacts.rustloc]
+build = [{ toolchain = "rust", package = "rustloc" }]
+platforms = ["darwin-arm64", "linux-x86_64", "linux-arm64"]
+bundle = { composition = "archive" }
+sign = true
+endpoints = ["gh-release", "crates", "brew"]
+
+[artifacts.rustloc-deb]
+build = [{ toolchain = "rust", package = "rustloc" }]
+platforms = ["linux-x86_64", "linux-arm64"]
+bundle = { composition = "deb" }
+endpoints = ["gh-release"]
+
 [shipit]
 version = "c8ef2189cc57f58af425afcd383ef44575108b88"
 
