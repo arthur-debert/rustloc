@@ -26,7 +26,12 @@ name: shipit-release
 # plan has real build AND sign stages, so every `stage` choice here
 # dispatches live work.
 #
-# Secrets — exactly the plan-required set for rustloc's plan:
+# Secrets — the UNIFORM plan-required set on every secret-taking stage
+# job (shipit#896): preflight re-validates the WHOLE release plan at
+# every stage entry, so `full`, `prepare`, `sign` and `publish` all
+# forward the SAME set — narrowing a stage to "the secrets its own steps
+# consume" fails that stage's preflight on the rest of the plan.
+# (`build` takes no secrets block: its called workflow declares none.)
 #   RELEASE_TOKEN         prepare's tag+branch push through the ruleset
 #                         (a GITHUB_TOKEN push would not re-trigger
 #                         workflows).
@@ -34,16 +39,13 @@ name: shipit-release
 #                         from this repo's legacy-named CRATES_IO_KEY
 #                         secret (NOT renamed: the legacy release.yml
 #                         still consumes it under that name until the
-#                         post-rc-proof retirement). Forwarded to the
-#                         stages that can publish crates (`full`,
-#                         `publish`); the RC guard drops the crates
-#                         endpoint on an -release-rc version centrally.
+#                         post-rc-proof retirement). The RC guard drops
+#                         the crates endpoint on an -release-rc version
+#                         centrally.
 #   HOMEBREW_TAP_TOKEN    the brew endpoint's tap push
 #                         (arthur-debert/homebrew-tools carries
-#                         rustloc.rb today); forwarded with the crates
-#                         token to `full` and `publish`.
-#   The mac sign set (forwarded to `full` and `sign` — the stages that
-#   run the signer):
+#                         rustloc.rb today).
+#   The mac sign set:
 #     APPLE_CERTIFICATE            mapped from this repo's legacy-named
 #                                  APPLE_CERTIFICATE_P12_BASE64 secret
 #                                  (NOT renamed, same rationale as
@@ -138,6 +140,13 @@ jobs:
       unsigned: ${{ inputs.unsigned }}
     secrets:
       RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_KEY }}
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      ASC_API_KEY_BASE64: ${{ secrets.ASC_API_KEY_BASE64 }}
+      ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+      ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
 
   build:
     if: inputs.stage == 'build'
@@ -152,6 +161,9 @@ jobs:
       tag: ${{ inputs.tag }}
       run-id: ${{ inputs.run-id }}
     secrets:
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_KEY }}
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       ASC_API_KEY_BASE64: ${{ secrets.ASC_API_KEY_BASE64 }}
@@ -166,5 +178,11 @@ jobs:
       run-id: ${{ inputs.run-id }}
       unsigned: ${{ inputs.unsigned }}
     secrets:
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
       CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_KEY }}
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      ASC_API_KEY_BASE64: ${{ secrets.ASC_API_KEY_BASE64 }}
+      ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+      ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
