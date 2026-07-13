@@ -26,12 +26,20 @@ name: shipit-release
 # plan has real build AND sign stages, so every `stage` choice here
 # dispatches live work.
 #
-# Secrets — the UNIFORM plan-required set on every secret-taking stage
-# job (shipit#896): preflight re-validates the WHOLE release plan at
-# every stage entry, so `full`, `prepare`, `sign` and `publish` all
-# forward the SAME set — narrowing a stage to "the secrets its own steps
-# consume" fails that stage's preflight on the rest of the plan.
-# (`build` takes no secrets block: its called workflow declares none.)
+# Secrets — the PER-STAGE INTERSECTION set (shipit#903): each stage job
+# forwards exactly `plan-required ∩ block-declared`, NOT a uniform full
+# set. Forwarding a secret a reusable workflow does not declare fails
+# workflow VALIDATION at startup (startup_failure on every dispatch,
+# even a gated stage), so each `uses:` block gets only the secrets its
+# called workflow declares:
+#   `full` (wf-release.yml) and `prepare` (wf-prepare.yml) — the whole
+#     8-secret set: they compose/preflight the entire plan.
+#   `build` (wf-build.yml) — none: its called workflow declares no
+#     secrets block.
+#   `sign` (wf-sign-mac.yml) — the mac sign set ONLY.
+#   `publish` (wf-publish.yml) — CARGO_REGISTRY_TOKEN + HOMEBREW_TAP_TOKEN
+#     ONLY (the crates + brew endpoint tokens).
+# The secrets and their per-repo name mappings:
 #   RELEASE_TOKEN         prepare's tag+branch push through the ruleset
 #                         (a GITHUB_TOKEN push would not re-trigger
 #                         workflows).
@@ -161,9 +169,6 @@ jobs:
       tag: ${{ inputs.tag }}
       run-id: ${{ inputs.run-id }}
     secrets:
-      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-      CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_KEY }}
-      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       ASC_API_KEY_BASE64: ${{ secrets.ASC_API_KEY_BASE64 }}
@@ -178,11 +183,5 @@ jobs:
       run-id: ${{ inputs.run-id }}
       unsigned: ${{ inputs.unsigned }}
     secrets:
-      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
       CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_KEY }}
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      ASC_API_KEY_BASE64: ${{ secrets.ASC_API_KEY_BASE64 }}
-      ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
-      ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
