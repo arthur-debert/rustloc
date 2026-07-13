@@ -103,7 +103,7 @@ bundle = { composition = "deb" }
 endpoints = ["gh-release"]
 
 [shipit]
-version = "2fbfd7753e3f88d905617ea8bd28632e8d610471"
+version = "0a8a4410923b8ccf4db98ac131d0b9c7d5bc5ef0"
 
 [managed]
 "skills/coordinating/SKILL.md" = "sha256:065a793b117dcfbb1e97fea0a80b405c69995850af9a350061dbcc1f4ea4976a"
