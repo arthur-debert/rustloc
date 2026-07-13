@@ -1,4 +1,4 @@
-@.claude/IMPORTANT-RELEASE.md
+@AGENTS.md
 
 # Architecture Guide for Coding Assistants
 
