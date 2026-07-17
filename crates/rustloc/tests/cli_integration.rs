@@ -639,12 +639,13 @@ fn test_crate_filter() {
 
     assert!(success);
     // Only the `rustloc` crate's own files are counted: src/main.rs,
-    // src/table.rs, and tests/cli_integration.rs. Bump this when the crate
-    // gains a file. Asserting the footer (rather than a bare `contains("2")`,
-    // which any stray digit satisfies) is what actually proves the filter ran.
+    // src/command.rs, src/application.rs, src/table.rs, and
+    // tests/cli_integration.rs. Bump this when the crate gains a file.
+    // Asserting the footer (rather than a bare `contains("2")`, which any
+    // stray digit satisfies) is what actually proves the filter ran.
     assert!(
-        stdout.contains("Total (3 files)"),
-        "expected the crate filter to narrow to rustloc's 3 files, got:\n{stdout}"
+        stdout.contains("Total (5 files)"),
+        "expected the crate filter to narrow to rustloc's 5 files, got:\n{stdout}"
     );
 }
 
@@ -1168,11 +1169,14 @@ fn test_filter_via_explicit_count_subcommand() {
 fn test_filter_combines_with_and() {
     // Two predicates AND-combined; should narrow more than either alone.
     let (stdout, _, success) =
-        run_rustloc(&[".", "--by-crate", "--code-gte", "50", "--tests-lt", "1500"]);
+        run_rustloc(&[".", "--by-crate", "--code-gte", "50", "--tests-lt", "2400"]);
 
     assert!(success);
     // The repo has 2 crates; the AND should keep the rustloc crate (which
-    // has < 1500 tests) and exclude rustloclib (which has more).
+    // has < 2400 tests) and exclude rustloclib (which has more). The
+    // threshold is a real count of this repo, so it drifts as the crates
+    // grow: it sits roughly midway between the two crates' test counts to
+    // leave headroom on both sides. Re-centre it if either crate crosses.
     let rows: Vec<_> = stdout.lines().collect();
     assert!(rows
         .iter()
@@ -1607,4 +1611,76 @@ fn test_count_csv_matches_compat_fixture() {
         fixture("count_by_file.csv"),
         "public count CSV changed unintentionally"
     );
+}
+
+// ============================================================================
+// Strict ordering parsing (issue #121)
+// ============================================================================
+//
+// `--ordering` is parsed by a clap `value_parser`, so an unknown field is a
+// usage error *before* dispatch. The bug this guards: ordering used to be
+// parsed inside the handler with `.unwrap_or_default()`, so `-o -coed`
+// silently sorted by label and exited 0 — a script asking for the wrong field
+// got plausible output and no signal. These tests assert the three things a
+// caller can observe: exit 2, clap's message on stderr, and empty stdout.
+
+/// Every prefix form of an unknown field must be rejected: plain, `-`
+/// (descending), and `+` (ascending). The prefixed forms matter most —
+/// `allow_hyphen_values` lets them reach the parser as values rather than
+/// flags, so they are exactly where a swallowed error could hide.
+#[test]
+fn test_invalid_ordering_is_a_usage_error() {
+    for bad in ["coed", "-coed", "+coed"] {
+        let (stdout, stderr, code) = run_rustloc_with_code(&[".", "--by-crate", "-o", bad]);
+
+        assert_eq!(code, Some(2), "`-o {bad}` should exit 2, got {code:?}");
+        assert!(
+            stderr.contains("error:") && stderr.contains("--ordering"),
+            "`-o {bad}` should name --ordering on stderr, got {stderr:?}"
+        );
+        assert!(
+            stdout.is_empty(),
+            "`-o {bad}` must produce no stdout, got {stdout:?}"
+        );
+    }
+}
+
+/// The error must reach every call shape, not just the bare form: the default
+/// command, the explicit `count` subcommand, and `diff` each parse ordering
+/// through their own arg definition.
+#[test]
+fn test_invalid_ordering_is_rejected_on_every_subcommand() {
+    for args in [
+        vec![".", "-o", "coed"],
+        vec!["count", ".", "-o", "coed"],
+        vec!["diff", "-o", "coed"],
+    ] {
+        let (_, _, code) = run_rustloc_with_code(&args);
+        assert_eq!(code, Some(2), "{args:?} should exit 2, got {code:?}");
+    }
+}
+
+/// The invalid-value message names the offending value and the field, so the
+/// user can see what to fix rather than just that something was wrong.
+#[test]
+fn test_invalid_ordering_message_names_the_bad_value() {
+    let (_, stderr, _) = run_rustloc_with_code(&[".", "-o", "coed"]);
+    assert!(
+        stderr.contains("invalid value 'coed'") && stderr.contains("Unknown order field: coed"),
+        "expected a message naming the bad value, got {stderr:?}"
+    );
+}
+
+/// The strictness must not cost us the valid forms: bare field, both explicit
+/// direction prefixes, and the aliases the library's `OrderBy` accepts.
+#[test]
+fn test_valid_ordering_forms_still_parse() {
+    for good in ["code", "-code", "+code", "label", "total", "name", "test"] {
+        let (_, stderr, code) = run_rustloc_with_code(&[".", "--by-file", "-o", good]);
+        assert_eq!(
+            code,
+            Some(0),
+            "`-o {good}` should succeed, got stderr={stderr:?}"
+        );
+    }
 }

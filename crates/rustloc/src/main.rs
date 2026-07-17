@@ -58,9 +58,12 @@
 use std::process::ExitCode;
 
 use clap::{Args, CommandFactory, Parser, Subcommand};
+use rustloclib::Ordering;
 use standout::cli::{App, Dispatch, RunResult};
 use standout::{embed_styles, embed_templates};
 
+mod application;
+mod command;
 mod table;
 
 /// Language-aware lines of code counter with test/code separation
@@ -194,11 +197,15 @@ Values: code, tests, examples, docs, comments, blanks, total
     by_module: bool,
 
     /// Sort by field [-o FIELD, prefix - for desc: -o -code]
+    // `allow_hyphen_values` keeps `-o -code` from being read as a flag;
+    // `value_parser` makes an unknown field a clap usage error at parse time
+    // rather than a silent fall back to the default ordering.
     #[arg(
         short = 'o',
         long = "ordering",
         value_name = "FIELD",
-        allow_hyphen_values = true
+        allow_hyphen_values = true,
+        value_parser = command::parse_ordering
     )]
     #[arg(long_help = "\
 Sort by field. Prefix with - for descending, + for ascending.
@@ -210,7 +217,7 @@ Default direction: descending for numeric fields, ascending for label.
   -o -code        Sort by code lines (descending, explicit)
   -o +code        Sort by code lines (ascending)
   -o label        Sort by name (ascending)")]
-    ordering: Option<String>,
+    ordering: Option<Ordering>,
 
     /// Show only the top N rows after sorting [requires --by-* aggregation]
     #[arg(long = "top", value_name = "N")]
@@ -305,11 +312,15 @@ Values: code, tests, examples, docs, comments, blanks, total
     by_module: bool,
 
     /// Sort by field [-o FIELD, prefix - for desc: -o -code]
+    // `allow_hyphen_values` keeps `-o -code` from being read as a flag;
+    // `value_parser` makes an unknown field a clap usage error at parse time
+    // rather than a silent fall back to the default ordering.
     #[arg(
         short = 'o',
         long = "ordering",
         value_name = "FIELD",
-        allow_hyphen_values = true
+        allow_hyphen_values = true,
+        value_parser = command::parse_ordering
     )]
     #[arg(long_help = "\
 Sort by field. Prefix with - for descending, + for ascending.
@@ -321,7 +332,7 @@ Default direction: descending for numeric fields, ascending for label.
   -o -code        Sort by code lines (descending, explicit)
   -o +code        Sort by code lines (ascending)
   -o label        Sort by name (ascending)")]
-    ordering: Option<String>,
+    ordering: Option<Ordering>,
 
     /// Show only the top N rows after sorting [requires --by-* aggregation]
     #[arg(long = "top", value_name = "N")]
@@ -335,302 +346,46 @@ truncated slice. No-op when no `--by-*` aggregation is in effect.")]
     top: Option<usize>,
 }
 
-/// Command handlers.
+/// Command handlers — the dispatch boundary.
 ///
-/// Handlers are **pure with respect to presentation**: each builds and returns
-/// the one canonical typed response for its command ([`CountQuerySet`] /
-/// [`DiffQuerySet`]) and never inspects the output mode. Choosing how that
-/// response is presented — human table, CSV rows, or direct serialization —
-/// belongs to [`super::presentation`], which runs at the render boundary.
+/// Handlers are deliberately **thin**: each converts `ArgMatches` into a typed
+/// request ([`crate::command`]), hands it to typed orchestration
+/// ([`crate::application`]), and wraps the canonical response in
+/// [`Output::Render`]. Nothing else. Every decision worth testing — parsing,
+/// validation, library selection, query narrowing — sits on one side of this
+/// seam or the other, reachable without building an `ArgMatches`.
+///
+/// Handlers are also **pure with respect to presentation**: they return the one
+/// canonical response for their command ([`CountQuerySet`] / [`DiffQuerySet`])
+/// and never inspect the output mode. How that response is presented — human
+/// table, CSV rows, or direct serialization — belongs to
+/// [`super::presentation`], which runs at the render boundary.
+///
+/// Standout's `#[handler]` macro would normally generate this bridge from typed
+/// parameters, but it maps one parameter per named clap arg, and the count/diff
+/// grammar includes the 42 dynamically registered `--<field>-<op>` filter flags
+/// (see [`super::filter_args`]) that no fixed parameter list can express. Its
+/// `#[matches]` escape hatch would hand the raw matches back to the handler
+/// anyway, so we keep the plain dispatch signature and put the typed seam in
+/// `command` + `application` instead — the same separation, minus a macro that
+/// cannot cover the grammar.
 mod handlers {
+    use crate::application;
+    use crate::command::{CountRequest, DiffRequest};
     use clap::ArgMatches;
-    use rustloclib::{
-        available_languages, count_directory_with_options, count_file_with_filter, count_workspace,
-        default_languages, diff_revspec, diff_workdir, Aggregation, CountOptions, CountQuerySet,
-        CountResult, DiffOptions, DiffQuerySet, FilterConfig, LanguageName, LanguageSelection,
-        LineTypes, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
-    };
+    use rustloclib::{CountQuerySet, DiffQuerySet};
     use standout::cli::{CommandContext, HandlerResult, Output};
 
-    /// Handler for count command.
-    ///
-    /// Returns the canonical [`CountQuerySet`] regardless of output mode.
+    /// Handler for the count command (also the default command).
     pub fn count(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<CountQuerySet> {
-        let path = matches
-            .get_one::<String>("path")
-            .map(|s| s.as_str())
-            .unwrap_or(".");
-        let filter = build_filter(matches)?;
-        let line_types = extract_line_types(matches);
-        let crates = extract_crates(matches);
-        let ordering = extract_ordering(matches);
-
-        let by_file = matches.get_flag("by_file");
-        let by_module = matches.get_flag("by_module");
-        let by_crate = matches.get_flag("by_crate");
-
-        let aggregation = if by_file {
-            Aggregation::ByFile
-        } else if by_module {
-            Aggregation::ByModule
-        } else if by_crate {
-            Aggregation::ByCrate
-        } else {
-            Aggregation::Total
-        };
-
-        let path_ref = std::path::Path::new(path);
-        let is_workspace = path_ref.is_dir() && path_ref.join("Cargo.toml").exists()
-            || path_ref.is_file() && path_ref.file_name() == Some("Cargo.toml".as_ref());
-
-        if !is_workspace && matches!(aggregation, Aggregation::ByCrate) {
-            return Err(anyhow::anyhow!(
-                "{} requires a Cargo workspace (directory with Cargo.toml), but '{}' is not a workspace",
-                "--by-crate",
-                path,
-            ));
-        }
-
-        // The canonical response always carries complete counts; `line_types`
-        // only describes the requested view and is applied when rendering.
-        let result: CountResult = if is_workspace {
-            let options = CountOptions::new()
-                .crates(crates)
-                .filter(filter)
-                .aggregation(aggregation)
-                .line_types(LineTypes::everything());
-            count_workspace(path, options)?
-        } else if path_ref.is_file() {
-            let stats = count_file_with_filter(path, &filter)?;
-            let mut r = CountResult::new();
-            r.root = path_ref.to_path_buf();
-            r.file_count = 1;
-            r.total = stats;
-            r
-        } else {
-            count_directory_with_options(
-                path,
-                CountOptions::new()
-                    .filter(filter)
-                    .aggregation(aggregation)
-                    .line_types(LineTypes::everything()),
-            )?
-        };
-
-        let top = extract_top(matches);
-        let preds = super::filter_args::extract(matches);
-        // Apply filter first, then top, so `--top` slices the already-
-        // filtered set rather than slicing first and dropping rows that
-        // happened to be in the top-N but failed the predicate.
-        let apply_post = |qs: CountQuerySet| {
-            let qs = qs.filter(&preds);
-            match top {
-                Some(n) => qs.top(n),
-                None => qs,
-            }
-        };
-
-        Ok(Output::Render(apply_post(CountQuerySet::from_result(
-            &result,
-            aggregation,
-            line_types,
-            ordering,
-        ))))
+        let request = CountRequest::from_matches(matches)?;
+        Ok(Output::Render(application::count(&request)?))
     }
 
-    /// Handler for diff command.
-    ///
-    /// Returns the canonical [`DiffQuerySet`] regardless of output mode.
+    /// Handler for the diff command.
     pub fn diff(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<DiffQuerySet> {
-        let path = matches
-            .get_one::<String>("path")
-            .map(|s| s.as_str())
-            .unwrap_or(".");
-        let filter = build_filter(matches)?;
-        let line_types = extract_line_types(matches);
-        let crates = extract_crates(matches);
-        let ordering = extract_ordering(matches);
-        let staged = matches.get_flag("staged");
-
-        let by_file = matches.get_flag("by_file");
-        let by_module = matches.get_flag("by_module");
-        let by_crate = matches.get_flag("by_crate");
-
-        let aggregation = if by_file {
-            Aggregation::ByFile
-        } else if by_module {
-            Aggregation::ByModule
-        } else if by_crate {
-            Aggregation::ByCrate
-        } else {
-            Aggregation::Total
-        };
-
-        // The canonical response always carries complete counts; `line_types`
-        // only describes the requested view and is applied when rendering.
-        let options = DiffOptions::new()
-            .crates(crates)
-            .filter(filter)
-            .aggregation(aggregation)
-            .line_types(LineTypes::everything());
-
-        let from = matches.get_one::<String>("from");
-        let to = matches.get_one::<String>("to");
-
-        let result = if let Some(from_str) = from {
-            // Commit diff: pass the revspec straight through to the library,
-            // which delegates parsing to gix's rev_parse. Two positional args
-            // (e.g. `rustloc diff main feature`) are joined as `<a>..<b>` so
-            // gix sees a single range expression.
-            if staged {
-                return Err(anyhow::anyhow!(
-                    "--staged/--cached can only be used without commit arguments"
-                ));
-            }
-            let revspec = match to {
-                Some(to_str) => {
-                    if from_str.contains("..") {
-                        return Err(anyhow::anyhow!(
-                            "Pass either a single range/revspec (e.g. `a..b`) \
-                             or two revs as separate args (e.g. `a b`), not both."
-                        ));
-                    }
-                    format!("{}..{}", from_str, to_str)
-                }
-                None => from_str.clone(),
-            };
-            diff_revspec(path, &revspec, options)?
-        } else {
-            // Working directory diff
-            let mode = if staged {
-                WorkdirDiffMode::Staged
-            } else {
-                WorkdirDiffMode::All
-            };
-            diff_workdir(path, mode, options)?
-        };
-
-        let top = extract_top(matches);
-        let preds = super::filter_args::extract(matches);
-        let apply_post = |qs: DiffQuerySet| {
-            let qs = qs.filter(&preds);
-            match top {
-                Some(n) => qs.top(n),
-                None => qs,
-            }
-        };
-
-        Ok(Output::Render(apply_post(DiffQuerySet::from_result(
-            &result,
-            aggregation,
-            line_types,
-            ordering,
-        ))))
-    }
-
-    // Helper functions
-
-    fn parse_ordering(s: &str) -> Result<Ordering, String> {
-        let (direction, field) = if let Some(stripped) = s.strip_prefix('-') {
-            (OrderDirection::Descending, stripped)
-        } else if let Some(stripped) = s.strip_prefix('+') {
-            (OrderDirection::Ascending, stripped)
-        } else {
-            let order_by: OrderBy = s.parse()?;
-            let direction = if order_by == OrderBy::Label {
-                OrderDirection::Ascending
-            } else {
-                OrderDirection::Descending
-            };
-            return Ok(Ordering {
-                by: order_by,
-                direction,
-            });
-        };
-
-        let order_by: OrderBy = field.parse()?;
-        Ok(Ordering {
-            by: order_by,
-            direction,
-        })
-    }
-
-    fn extract_ordering(matches: &ArgMatches) -> Ordering {
-        matches
-            .get_one::<String>("ordering")
-            .map(|s| parse_ordering(s).unwrap_or_default())
-            .unwrap_or_default()
-    }
-
-    fn extract_top(matches: &ArgMatches) -> Option<usize> {
-        matches.get_one::<usize>("top").copied()
-    }
-
-    fn extract_line_types(matches: &ArgMatches) -> LineTypes {
-        let types: Vec<&str> = matches
-            .get_many::<String>("line_types")
-            .map(|v| v.map(|s| s.as_str()).collect())
-            .unwrap_or_default();
-
-        if types.is_empty() {
-            LineTypes::default()
-        } else {
-            LineTypes {
-                code: types.contains(&"code"),
-                tests: types.contains(&"tests"),
-                examples: types.contains(&"examples"),
-                docs: types.contains(&"docs"),
-                comments: types.contains(&"comments"),
-                blanks: types.contains(&"blanks"),
-                total: types.contains(&"total") || types.is_empty(),
-            }
-        }
-    }
-
-    fn build_filter(matches: &ArgMatches) -> Result<FilterConfig, anyhow::Error> {
-        let mut filter = FilterConfig::new().languages(extract_languages(matches)?);
-
-        if let Some(includes) = matches.get_many::<String>("include") {
-            for pattern in includes {
-                filter = filter.include(pattern)?;
-            }
-        }
-
-        if let Some(excludes) = matches.get_many::<String>("exclude") {
-            for pattern in excludes {
-                filter = filter.exclude(pattern)?;
-            }
-        }
-
-        Ok(filter)
-    }
-
-    fn extract_languages(matches: &ArgMatches) -> Result<LanguageSelection, anyhow::Error> {
-        let values: Vec<&str> = matches
-            .get_many::<String>("languages")
-            .map(|v| v.map(|s| s.as_str()).collect())
-            .unwrap_or_default();
-
-        if values.is_empty() {
-            return Ok(LanguageSelection::new(default_languages()));
-        }
-
-        if values.iter().any(|value| value.eq_ignore_ascii_case("all")) {
-            return Ok(LanguageSelection::new(available_languages()));
-        }
-
-        let mut languages = Vec::new();
-        for value in values {
-            languages.push(value.parse::<LanguageName>().map_err(anyhow::Error::msg)?);
-        }
-        Ok(LanguageSelection::new(&languages))
-    }
-
-    fn extract_crates(matches: &ArgMatches) -> Vec<String> {
-        matches
-            .get_many::<String>("crates")
-            .map(|v| v.cloned().collect())
-            .unwrap_or_default()
+        let request = DiffRequest::from_matches(matches)?;
+        Ok(Output::Render(application::diff(&request)?))
     }
 }
 

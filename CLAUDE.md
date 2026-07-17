@@ -25,6 +25,31 @@ The CLI is responsible for:
 - **Output formatting** - table, JSON, CSV formatting for display
 - **No business logic** - never compute or filter data, just present what the library returns
 
+#### CLI internal layering
+
+The CLI has its own seam so no single layer spans "clap syntax → library call →
+formatted output". Each module owns one step, in order:
+
+| Module | Owns | Never touches |
+| --- | --- | --- |
+| `command` | The **parsing boundary**. The only reader of `ArgMatches`; converts CLI syntax into typed requests (`CountRequest` / `DiffRequest`), failing fast on invalid values. | Library calls, output mode |
+| `application` | Typed **orchestration**. Takes a request, picks the `rustloclib` entry point, returns the canonical response. | clap types, output mode |
+| `handlers` | The **dispatch bridge**. Request → orchestration → `Output::Render`. Three lines each. | Everything else |
+| `presentation` | The **render boundary**. The one place allowed to read the output mode and pick table / CSV / direct serialization. | Command logic |
+| `table` | Formatting a response into a `LOCTable`. | Command logic |
+
+Two rules follow from this, and reviewers should enforce both:
+
+- **Conversions that can fail, fail at the parsing boundary** as clap usage
+  errors — never with a silent fallback to a default further downstream. An
+  invalid `--ordering` must exit non-zero, not quietly sort by label.
+- **Orchestration is directly testable.** `application::count`/`diff` take a
+  request struct, so tests construct one instead of building an `ArgMatches`.
+
+Command-specific orchestration belongs in `application`, not `rustloclib`:
+"`--by-crate` requires a workspace" is a rule about *this CLI's flags*. Only
+genuinely reusable domain behavior moves into the library.
+
 ## Key Design Principle: Library Does All Computation
 
 When adding a feature, ask: "Where does the logic live?"
