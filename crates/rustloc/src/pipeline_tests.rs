@@ -120,6 +120,57 @@ fn path_of(dir: &TempDir) -> String {
     dir.path().to_str().unwrap().to_string()
 }
 
+/// Deterministic source tree used by the checked-in JSON/CSV compatibility
+/// fixtures. It includes production code, inline tests, docs, comments, and
+/// blanks so every public count column is nontrivial.
+fn compatibility_tree() -> TempDir {
+    let dir = TempDir::new().expect("create compatibility tree");
+    let src = dir.path().join("src");
+    std::fs::create_dir_all(&src).expect("create src");
+    std::fs::write(
+        src.join("lib.rs"),
+        "\
+/// Adds two numbers.
+/// Deliberately trivial.
+pub fn add(a: u64, b: u64) -> u64 {
+    a + b
+}
+
+// A plain comment.
+pub fn double(x: u64) -> u64 {
+    x * 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adds() {
+        assert_eq!(add(1, 2), 3);
+    }
+}
+",
+    )
+    .expect("write lib.rs");
+    std::fs::write(
+        src.join("util.rs"),
+        "\
+/// A helper.
+pub fn noop() {}
+",
+    )
+    .expect("write util.rs");
+    dir
+}
+
+fn compatibility_fixture(name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read fixture {path:?}: {e}"))
+}
+
 // ---------------------------------------------------------------------------
 // Routing: the default command and the explicit subcommands
 // ---------------------------------------------------------------------------
@@ -174,6 +225,82 @@ fn structured_modes_carry_the_same_canonical_numbers() {
     assert_eq!(
         json, yaml,
         "json and yaml must serialize the same canonical response"
+    );
+}
+
+/// XML has its own serializer. Parse it in-process and compare the canonical
+/// total with JSON so malformed XML or a mode-specific response fails here,
+/// below the process boundary.
+#[test]
+fn xml_is_well_formed_and_carries_the_canonical_total() {
+    use quick_xml::events::Event;
+    use quick_xml::Reader;
+
+    let dir = compatibility_tree();
+    let path = path_of(&dir);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout(&[&path, "--output", "json"])).unwrap();
+    let xml = stdout(&[&path, "--output", "xml"]);
+
+    let mut reader = Reader::from_str(&xml);
+    let mut path_stack: Vec<String> = Vec::new();
+    let mut xml_code: Option<u64> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buf)
+            .expect("XML must be well formed")
+        {
+            Event::Start(element) => {
+                path_stack.push(String::from_utf8_lossy(element.name().as_ref()).into())
+            }
+            Event::End(_) => {
+                path_stack.pop();
+            }
+            Event::Text(text) => {
+                if path_stack.ends_with(&["total".to_string(), "code".to_string()]) {
+                    xml_code = text.unescape().unwrap().parse::<u64>().ok();
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    assert_eq!(
+        xml_code.expect("XML should contain total/code"),
+        json["total"]["code"].as_u64().unwrap()
+    );
+}
+
+/// The public JSON fixture pins the complete decoded schema and values at the
+/// in-process serializer boundary; key order is intentionally not a contract.
+#[test]
+fn count_json_matches_the_compatibility_fixture() {
+    let dir = compatibility_tree();
+    let actual: serde_json::Value =
+        serde_json::from_str(&stdout(&[&path_of(&dir), "--by-file", "--output", "json"])).unwrap();
+    let expected: serde_json::Value =
+        serde_json::from_str(&compatibility_fixture("count_by_file.after.json")).unwrap();
+
+    assert_eq!(
+        actual, expected,
+        "public count JSON changed unintentionally"
+    );
+}
+
+/// CSV column order and delimiters are byte-level public behavior, so keep the
+/// checked-in parity fixture while exercising it through `run_to_string`.
+#[test]
+fn count_csv_matches_the_compatibility_fixture_byte_for_byte() {
+    let dir = compatibility_tree();
+    let actual = stdout(&[&path_of(&dir), "--by-file", "--output", "csv"]);
+
+    assert_eq!(
+        actual,
+        compatibility_fixture("count_by_file.csv"),
+        "public count CSV changed unintentionally"
     );
 }
 
