@@ -181,7 +181,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-The library exposes a four-stage pipeline (source → data → query → output) that the CLI is built on top of. See the [API documentation](https://docs.rs/rustloclib) for the full surface area, including diffs, filtering predicates, and table rendering.
+The reusable library discovers and counts source, computes diffs, and returns
+canonical typed query sets. It deliberately stops before presentation: table
+layout, wording, colours, and output writing belong to the CLI's Standout
+layer. See the [API documentation](https://docs.rs/rustloclib) for the data,
+diff, filtering, ordering, and aggregation APIs.
 
 ## Language Backends
 
