@@ -182,7 +182,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 The reusable library discovers and counts source, computes diffs, and returns
-canonical typed query sets. It deliberately stops before presentation: table
+canonical typed querysets. It deliberately stops before presentation: table
 layout, wording, colours, and output writing belong to the CLI's Standout
 layer. See the [API documentation](https://docs.rs/rustloclib) for the data,
 diff, filtering, ordering, and aggregation APIs.

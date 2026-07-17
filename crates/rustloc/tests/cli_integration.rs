@@ -136,7 +136,11 @@ fn usage_errors_exit_two_on_stderr_without_stdout() {
 /// separately prove which invalid path produces the failure and its wording.
 #[test]
 fn application_errors_exit_two_on_stderr_without_stdout() {
-    let output = rustloc(&["/path/that/rustloc/cannot/find"], workspace_root(), &[]);
+    let dir = TempDir::new().expect("missing-path fixture");
+    let missing = dir.path().join("does-not-exist");
+    let missing_arg = missing.to_string_lossy().into_owned();
+
+    let output = rustloc(&[&missing_arg], workspace_root(), &[]);
 
     assert_eq!(output.status.code(), Some(2));
     assert!(
