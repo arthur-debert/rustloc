@@ -1,0 +1,47 @@
+/* The rustloc theme: the visual half of the semantic tags the templates emit.
+ *
+ * Every selector here is a semantic tag authored in `templates/` — the
+ * templates name meaning (`header`, `additions`), this file decides what that
+ * meaning looks like. Adding a tag to a template without adding it here makes
+ * the tag *unknown*, which term-debug output marks with `(!?)`; the tests in
+ * `src/pipeline_tests.rs` fail on that marker rather than letting an unstyled
+ * tag render as bare text.
+ *
+ * `app::app` merges this on top of `Theme::default()`, so the framework's
+ * table semantics stay available. That is why `table_row_odd` is deliberately
+ * absent below: the default theme defines it *adaptively* (a light-mode and a
+ * dark-mode background), and a flat `.table_row_odd` rule here would win the
+ * merge and silently collapse both modes into one background. The only tags
+ * this file may define are the ones rustloc itself invents.
+ *
+ * Use only properties the CSS parser actually implements — `color`,
+ * `background-color`, `font-weight: bold`, `font-style: italic`,
+ * `text-decoration`, `visibility: hidden`, and the direct ANSI flags (`bold`,
+ * `dim`, `italic`, `blink`, `reverse`, `hidden`, `strikethrough`). An
+ * unrecognized property is dropped *silently* — the rule parses, the style
+ * simply ends up empty. `opacity: 0.5` is the trap worth naming: Standout's own
+ * docs advertise it as the way to dim, but the parser has no `opacity` arm, so
+ * it yields a `muted` that resolves fine and styles nothing. `dim: true` is the
+ * supported spelling, and `theme_carries_the_expected_attributes` pins it.
+ */
+
+/* Table headers: the column words above the rule. */
+.header {
+    color: cyan;
+    font-weight: bold;
+}
+
+/* Diff additions — the `+added` half of the notation. */
+.additions {
+    color: green;
+}
+
+/* Diff deletions — the `-removed` half. */
+.deletions {
+    color: red;
+}
+
+/* Legends and secondary info that should recede from the data. */
+.muted {
+    dim: true;
+}

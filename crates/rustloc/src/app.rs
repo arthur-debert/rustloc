@@ -18,23 +18,45 @@ use standout::{embed_styles, embed_templates, StylesheetRegistry, Theme};
 /// Build the Standout app: templates, merged theme, and dispatch config.
 ///
 /// The theme starts from Standout's defaults (which carry
-/// `table_row_even`/`table_row_odd`) and merges our stylesheet on top, so our
-/// rules win where they overlap and the defaults still fill the rest.
+/// `table_row_even`/`table_row_odd`) and merges `styles/default.css` on top, so
+/// our rules win where they overlap and the defaults still fill the rest. The
+/// merge is what keeps the framework's *adaptive* `table_row_odd` — the one
+/// table semantic the templates use but rustloc does not define — so dropping
+/// it would leave that tag unknown.
+///
+/// The registry keys the stylesheet by filename, so `default.css` is what
+/// `get("default")` resolves. `.css` also outranks `.yaml` for the same base
+/// name, which is why the legacy YAML is deleted rather than left beside it:
+/// a stale copy would sit there looking authoritative while never loading.
 ///
 /// # Errors
 ///
 /// Fails if the embedded stylesheet has no `default` entry or the dispatch
 /// config is rejected — both compile-time asset problems, not user input.
 pub fn app() -> Result<App, anyhow::Error> {
-    let mut registry: StylesheetRegistry = embed_styles!("styles").into();
-    let custom_theme = registry.get("default")?;
-    let theme = Theme::default().merge(custom_theme);
-
     Ok(App::builder()
         .templates(embed_templates!("templates"))
-        .theme(theme)
+        .theme(theme()?)
         .commands(crate::Commands::dispatch_config())?
         .build()?)
+}
+
+/// The theme the app renders with: `Theme::default()` with `styles/default.css`
+/// merged over it.
+///
+/// Split out from [`app`] so a test can resolve the styles and assert what a tag
+/// actually paints. That matters more than it looks: the CSS parser drops a
+/// property it does not implement *silently*, leaving a style that resolves and
+/// renders but carries no attributes — a failure only the emitted ANSI reveals.
+/// Returning the theme is what lets `theme_carries_the_expected_attributes` look.
+///
+/// # Errors
+///
+/// Fails if the embedded stylesheet has no `default` entry — a compile-time
+/// asset problem, not user input.
+pub fn theme() -> Result<Theme, anyhow::Error> {
+    let mut registry: StylesheetRegistry = embed_styles!("styles").into();
+    Ok(Theme::default().merge(registry.get("default")?))
 }
 
 /// Build the Clap command: the derived grammar plus the injected

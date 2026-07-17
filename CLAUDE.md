@@ -214,7 +214,7 @@ regression justifies it (the table line-structure tests are the one such case).
 | --- | --- | --- |
 | Unit | Parsing and orchestration as plain functions — no `ArgMatches` needed | `src/command.rs`, `src/application.rs` |
 | Pipeline | argv → clap → handler → post-dispatch → render, in-process | `src/pipeline_tests.rs` |
-| Process | Exit codes, stderr routing, executable integration, real Git | `tests/cli_integration.rs` |
+| Process | Exit codes, stderr routing, executable integration, real Git, ambient seams reachable only via the child's env (colour capability) | `tests/cli_integration.rs` |
 
 The pipeline layer builds the app via `app::app()` / `app::cli_command()` — the
 same construction `main` uses — and drives it through Standout's
@@ -227,4 +227,31 @@ against standout 7.6.x (`RunResult` gained a `#[non_exhaustive]` `Error`
 variant), and upstream's 7.6.x is `publish = false`. Taking it from git pulls a
 second standout into the graph, so the harness cannot accept our `App`. See the
 module docs in `src/pipeline_tests.rs`. Ambient seams the harness would provide
-— TTY, terminal width, colour capability, cwd, stdin — are therefore uncovered.
+— TTY, terminal width, cwd, stdin — are therefore uncovered. **Colour
+capability** is the exception: `--output term` only emits ANSI when the process
+looks colour-capable, so it is forced with `CLICOLOR_FORCE=1` on a spawned child
+in `tests/cli_integration.rs`. Prefer that shape for the rest if they ever need
+covering — an env var on a child costs nothing, whereas forcing these in-process
+means process-global mutation, which would cost the pipeline layer its
+parallelism and its freedom from a serial guard.
+
+### The theme, and why it is tested where it is
+
+`styles/default.css` is merged over `Theme::default()` by `app::theme()`. Three
+things about Standout make the theme's tests look the way they do, and all three
+are traps worth knowing before touching them:
+
+- **The CSS parser drops properties it does not implement, silently.** The rule
+  parses; the style just ends up empty. `opacity` is the one to watch — Standout's
+  own docs advertise it for dimming, but there is no `opacity` arm, so `.muted {
+  opacity: 0.5 }` resolves, renders, strips and debugs exactly like a working
+  style while painting nothing. Use `dim: true`. Only asserting on emitted SGR
+  codes catches this, which is what `theme_carries_the_expected_attributes` does.
+- **An unknown tag never fails a render, and term-debug does not even mark it.**
+  `text` strips it, `term-debug` prints it verbatim (identical to a working tag),
+  and only `term` marks it `[tag?]`. So tag/theme agreement is asserted against
+  the *theme* (`no_semantic_tag_is_unknown_to_the_theme`), not against output —
+  no fixture can see this class of bug.
+- **`table_row_odd` comes from `Theme::default()` and is adaptive.** The
+  templates use it, our CSS deliberately does not define it, and a flat rule for
+  it would win the merge and collapse light/dark into one background.
