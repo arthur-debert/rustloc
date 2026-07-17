@@ -1,0 +1,36 @@
+{#-
+  The count table.
+
+  Context (from `crate::table::CountView` — typed numbers only):
+    aggregation  "total" | "crate" | "module" | "file"
+    columns      enabled column keys, in display order
+    rows         [{label, values: [number, ...]}]   values follow `columns`
+    total        [number, ...]                      the totals row's values
+    footer       {displayed, total_items, file_count, top_applied}
+
+  Count cells are plain numbers, so they need no notation of their own — the
+  shared `table` macro right-aligns them as-is. All this template owns is the
+  per-column width.
+-#}
+{%- import "table_macros" as t -%}
+
+{#- Per column: the header word, and a width wide enough for that word and for
+    every value beneath it (rows *and* the totals row). Taking the totals row
+    into account is what keeps the total from ever having fewer digits than a
+    row above it. -#}
+{%- set ns = namespace(headers=[], widths=[]) -%}
+{%- for key in columns -%}
+  {%- set i = loop.index0 -%}
+  {%- set header = t.COLUMN_HEADERS[key] -%}
+  {%- set w = namespace(max = header | length) -%}
+  {%- for row in rows -%}
+    {%- set w.max = [w.max, (row.values[i] | string) | length] | max -%}
+  {%- endfor -%}
+  {%- set w.max = [w.max, (total[i] | string) | length] | max -%}
+  {%- set ns.headers = (ns.headers + [header]) | list -%}
+  {%- set ns.widths = (ns.widths + [w.max]) | list -%}
+{%- endfor -%}
+{{ t.table(aggregation, ns.headers, rows, total, footer, ns.widths) }}
+{# The table must end in a newline, and MiniJinja strips a single trailing
+   newline at end of template — so this comment, not the table, is what sits at
+   EOF and absorbs the strip. Deleting it silently un-terminates the last line. #}

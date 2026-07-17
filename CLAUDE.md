@@ -37,7 +37,8 @@ formatted output". Each module owns one step, in order:
 | `application` | Typed **orchestration**. Takes a request, picks the `rustloclib` entry point, returns the canonical response. | clap types, output mode |
 | `handlers` | The **dispatch bridge**. Request → orchestration → `Output::Render`. Three lines each. | Everything else |
 | `presentation` | The **render boundary**. The one place allowed to read the output mode and pick table / CSV / direct serialization. | Command logic |
-| `table` | Formatting a response into a `LOCTable`. | Command logic |
+| `table` | Narrowing a response to a typed **view** (`CountView` / `DiffView`) — the columns `line_types` asks for, plus the facts the footer's wording depends on. | Command logic, display strings, widths, wording, style tags |
+| `templates/` | The **human rendering policy**, in MiniJinja. Header words, footer wording, diff notation, titles, legends, widths, alignment, alternating rows, semantic style tags. | Anything a structured mode outputs |
 
 `main` is what remains once construction moves to `app`: read `std::env::args`,
 write the result, map `RunResult` to an exit code. Those three are genuinely
@@ -70,6 +71,40 @@ Two more rules follow from this, and reviewers should enforce both:
 Command-specific orchestration belongs in `application`, not `rustloclib`:
 "`--by-crate` requires a workspace" is a rule about *this CLI's flags*. Only
 genuinely reusable domain behavior moves into the library.
+
+### Templates own what a human reads
+
+The render seam has a second half, and it is just as strict: **Rust ships
+numbers, MiniJinja decides what a human reads.**
+
+`table` builds a `CountView` / `DiffView` carrying typed numeric cells, data
+*keys* (`code`, `crate` — the same names JSON and CSV use), and the facts the
+footer's wording depends on. Templates map keys to words and lay the table out.
+So in Rust there is no `format!` producing a cell, no width arithmetic, no
+`"Total (2 crates)"`, and no `[additions]` tag; and in the templates there is no
+number that Rust did not compute.
+
+Concretely, don't add any of these to Rust — they belong in
+`crates/rustloc/templates/`:
+
+- A header word, footer sentence, title, legend, or unit noun
+- A display width, padding, alignment, or truncation choice
+- `+added/-removed/net` notation, or any `[tag]` — and never a raw ANSI escape
+  or a concrete colour, in Rust *or* a template: style tags are semantic and
+  resolve through `styles/`
+
+Two carve-outs are deliberate and documented where they live: `table` picks
+which columns appear (that is what `line_types` is *for*), and clamps a stale
+payload's `total_items` (data repair, not wording).
+
+Structured modes bypass all of this. `json`/`yaml`/`xml` serialize the query set
+directly and never reach `table`; CSV gets its own flat row adapter. A template
+must never be able to change a machine-readable schema.
+
+Changing what a user reads is therefore a template diff, and the approved
+fixtures in `crates/rustloc/tests/fixtures/render/` are what make that diff
+reviewable — regenerate with `UPDATE_RENDER_FIXTURES=1 cargo test -p rustloc`
+and read the result.
 
 ## Key Design Principle: Library Does All Computation
 

@@ -240,11 +240,11 @@ fn csv_schema_is_stable_regardless_of_type_flag() {
 // Text rendering and the template
 // ---------------------------------------------------------------------------
 
-/// Text mode goes through the `stats_table` template. Asserting the headers
-/// and the total row proves the template rendered the LOCTable rather than
+/// Text mode goes through the `count_table` template. Asserting the headers
+/// and the total row proves the template rendered the view rather than
 /// erroring into an empty string.
 #[test]
-fn text_mode_renders_the_stats_table_template() {
+fn text_mode_renders_the_count_table_template() {
     let dir = workspace();
     let out = stdout(&[&path_of(&dir), "--output", "text"]);
 
@@ -578,6 +578,342 @@ fn diff_csv_carries_net_columns() {
             "missing required CSV column `{expected}`; headers: {headers:?}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Approved render fixtures
+// ---------------------------------------------------------------------------
+//
+// The tests above assert *properties* of the rendered table (a header exists, a
+// separator carries nothing but rules). Those survive a change that quietly
+// shifts every column by one space, which is exactly the class of regression a
+// move of formatting policy into MiniJinja can introduce.
+//
+// So the whole rendered string is pinned against an approved fixture. Both
+// halves of the human contract are covered: `text` mode for content and line
+// structure, `term-debug` for semantic tag placement (which the text mode
+// strips, and which no ANSI-scraping test should ever try to read).
+//
+// Regenerate after an *intended* wording or layout change:
+//
+//     UPDATE_RENDER_FIXTURES=1 cargo test -p rustloc
+//
+// then read the fixture diff — that diff IS the review artifact for a change to
+// what users see.
+
+/// Compare a rendered string against `tests/fixtures/render/<name>`.
+///
+/// The fixture directory is resolved from `CARGO_MANIFEST_DIR` rather than a
+/// path relative to the process cwd, so these stay parallel-safe with the rest
+/// of the module.
+#[track_caller]
+fn assert_render_fixture(name: &str, actual: &str) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/render")
+        .join(name);
+
+    if std::env::var_os("UPDATE_RENDER_FIXTURES").is_some() {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, actual).unwrap();
+        return;
+    }
+
+    let expected = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("missing fixture {path:?} ({e}); regenerate with UPDATE_RENDER_FIXTURES=1")
+    });
+    assert_eq!(
+        actual, expected,
+        "rendered output drifted from the approved fixture {name:?}"
+    );
+}
+
+/// A two-crate workspace with deliberately lopsided magnitudes.
+///
+/// `alpha` is three digits of code and carries every line type (docs, comments,
+/// blanks, an inline `#[cfg(test)]` module); `beta` is a single line. The gap is
+/// the point: it forces the value columns wider than their own header words and
+/// makes every per-column width the max of *different* rows, so a padding or
+/// alignment regression has somewhere to show up.
+fn wide_workspace() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    std::fs::write(
+        p.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/alpha\", \"crates/beta\"]\nresolver = \"2\"\n",
+    )
+    .unwrap();
+
+    let manifest = |name: &str| {
+        format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
+    };
+
+    std::fs::create_dir_all(p.join("crates/alpha/src")).unwrap();
+    std::fs::write(p.join("crates/alpha/Cargo.toml"), manifest("alpha")).unwrap();
+    let mut alpha = String::from("//! Crate docs.\n\n");
+    for i in 0..60 {
+        alpha.push_str(&format!(
+            "/// Docs for f{i}.\n// A comment.\npub fn f{i}() -> u32 {{ {i} }}\n\n"
+        ));
+    }
+    alpha.push_str("#[cfg(test)]\nmod tests {\n    use super::*;\n");
+    for i in 0..20 {
+        alpha.push_str(&format!(
+            "    #[test]\n    fn t{i}() {{ assert_eq!(f{i}(), {i}); }}\n"
+        ));
+    }
+    alpha.push_str("}\n");
+    std::fs::write(p.join("crates/alpha/src/lib.rs"), alpha).unwrap();
+
+    std::fs::create_dir_all(p.join("crates/beta/src")).unwrap();
+    std::fs::write(p.join("crates/beta/Cargo.toml"), manifest("beta")).unwrap();
+    std::fs::write(p.join("crates/beta/src/lib.rs"), "pub fn b() {}\n").unwrap();
+
+    dir
+}
+
+/// The default count table: every column, total aggregation.
+#[test]
+fn count_total_text_matches_the_approved_fixture() {
+    let dir = wide_workspace();
+    assert_render_fixture(
+        "count_total.text",
+        &stdout(&[&path_of(&dir), "--output", "text"]),
+    );
+}
+
+/// Grouped rows, where alternating-row semantics and label alignment apply.
+#[test]
+fn count_by_crate_text_matches_the_approved_fixture() {
+    let dir = wide_workspace();
+    assert_render_fixture(
+        "count_by_crate.text",
+        &stdout(&[&path_of(&dir), "--by-crate", "--output", "text"]),
+    );
+}
+
+/// `--top` reduces the rows, which changes only the footer *wording*.
+#[test]
+fn count_top_footer_matches_the_approved_fixture() {
+    let dir = wide_workspace();
+    assert_render_fixture(
+        "count_by_crate_top.text",
+        &stdout(&[
+            &path_of(&dir),
+            "--by-crate",
+            "--top",
+            "1",
+            "--output",
+            "text",
+        ]),
+    );
+}
+
+/// A filter (not `--top`) reduces the rows, which must use the plain "X of Y"
+/// wording rather than "top X of Y".
+#[test]
+fn count_filtered_footer_matches_the_approved_fixture() {
+    let dir = wide_workspace();
+    assert_render_fixture(
+        "count_by_crate_filtered.text",
+        &stdout(&[
+            &path_of(&dir),
+            "--by-crate",
+            "--code-gte",
+            "10",
+            "--output",
+            "text",
+        ]),
+    );
+}
+
+/// A narrowed column set — the widths must re-derive from the columns that
+/// remain, not from the full set.
+#[test]
+fn count_narrowed_columns_text_matches_the_approved_fixture() {
+    let dir = wide_workspace();
+    assert_render_fixture(
+        "count_type_code.text",
+        &stdout(&[
+            &path_of(&dir),
+            "--by-crate",
+            "--type",
+            "code",
+            "--output",
+            "text",
+        ]),
+    );
+}
+
+/// Every column at once.
+///
+/// The default table shows only Code/Tests/Docs/Total, so without this fixture
+/// the `Examples`, `Comments` and `Blanks` header words would be rendered by no
+/// test at all — and those words are exactly what this workstream moves out of
+/// Rust and into the template, where a typo has nothing to catch it.
+#[test]
+fn count_all_columns_text_matches_the_approved_fixture() {
+    let dir = wide_workspace();
+    assert_render_fixture(
+        "count_all_types.text",
+        &stdout(&[
+            &path_of(&dir),
+            "--by-crate",
+            "--type",
+            "code",
+            "--type",
+            "tests",
+            "--type",
+            "examples",
+            "--type",
+            "docs",
+            "--type",
+            "comments",
+            "--type",
+            "blanks",
+            "--type",
+            "total",
+            "--output",
+            "text",
+        ]),
+    );
+}
+
+/// Each `--by-*` aggregation names its label column differently ("Crate" vs
+/// "Module" vs "File") and counts a different unit in the footer ("crates" vs
+/// "modules" vs "files"). Total aggregation is covered by
+/// [`count_total_text_matches_the_approved_fixture`]; this covers the rest.
+///
+/// Only the label column and footer are asserted rather than a whole fixture:
+/// the by-file/by-module labels are real paths, which vary per fixture layout,
+/// and the full-table structure is already pinned by the by-crate fixtures.
+#[test]
+fn each_aggregation_names_its_label_column_and_unit() {
+    let dir = wide_workspace();
+    let path = path_of(&dir);
+
+    for (flag, label_header, unit) in [
+        ("--by-crate", "Crate", "crates"),
+        ("--by-module", "Module", "modules"),
+        ("--by-file", "File", "files"),
+    ] {
+        let out = stdout(&[&path, flag, "--output", "text"]);
+        let header = out.lines().next().unwrap_or_default();
+        assert!(
+            header.contains(label_header),
+            "{flag} should head its label column {label_header:?}, got: {header:?}"
+        );
+        assert!(
+            out.contains(&format!(" {unit})")),
+            "{flag} footer should count {unit:?} in:\n{out}"
+        );
+    }
+}
+
+/// The semantic tags themselves: `[header]` on the header line and the
+/// alternating `[table_row_odd]` wrap. This is the assertion that a theme or
+/// tag-placement regression trips.
+#[test]
+fn count_by_crate_term_debug_matches_the_approved_fixture() {
+    let dir = wide_workspace();
+    assert_render_fixture(
+        "count_by_crate.term-debug",
+        &stdout(&[&path_of(&dir), "--by-crate", "--output", "term-debug"]),
+    );
+}
+
+/// A git repo over [`wide_workspace`] with one commit, then an uncommitted edit
+/// that both adds and removes lines in `alpha` and adds a non-Rust file — so the
+/// diff exercises `+added/-removed/net` notation with a negative net *and* the
+/// skipped-changes summary in one fixture.
+fn wide_repo() -> TempDir {
+    let dir = wide_workspace();
+    let p = dir.path();
+    git(p, &["init", "-q"]);
+    // README.md is committed *now* and edited below. A workdir diff compares
+    // HEAD against the working tree, so an untracked file contributes nothing —
+    // the skipped-changes summary would silently never render and this fixture
+    // would approve its absence.
+    std::fs::write(p.join("README.md"), "# demo\n").unwrap();
+    git(p, &["add", "-A"]);
+    git(p, &["commit", "-qm", "one"]);
+
+    // Rewrite alpha smaller: removals dominate, so `net` goes negative.
+    let mut alpha = String::from("//! Crate docs.\n\n");
+    for i in 0..10 {
+        alpha.push_str(&format!(
+            "/// Docs for f{i}.\npub fn f{i}() -> u32 {{ {i} }}\n\n"
+        ));
+    }
+    std::fs::write(p.join("crates/alpha/src/lib.rs"), alpha).unwrap();
+
+    // beta grows a little, so at least one row nets positive.
+    std::fs::write(
+        p.join("crates/beta/src/lib.rs"),
+        "pub fn b() {}\npub fn c() {}\npub fn d() {}\n",
+    )
+    .unwrap();
+
+    // A skipped (non-Rust) change, which feeds the skipped-changes summary.
+    std::fs::write(p.join("README.md"), "# demo\n\nSome prose.\n").unwrap();
+
+    dir
+}
+
+/// The skipped-changes summary is the one line the diff fixtures cover only
+/// incidentally, and it is easy to lose without noticing: the fixture would
+/// simply approve a table that no longer mentions the skipped file. Assert it
+/// renders at all, so [`wide_repo`] failing to produce a non-Rust change fails
+/// loudly here rather than quietly weakening the fixtures.
+#[test]
+fn diff_reports_skipped_non_rust_changes() {
+    let dir = wide_repo();
+    let out = stdout(&[
+        "diff",
+        "-p",
+        dir.path().to_str().unwrap(),
+        "--by-crate",
+        "--output",
+        "text",
+    ]);
+    assert!(
+        out.contains("Skipped changes:"),
+        "expected a skipped-changes summary for the README.md edit in:\n{out}"
+    );
+}
+
+/// The diff table: title, diff notation, legend, skipped-changes summary.
+#[test]
+fn diff_by_crate_text_matches_the_approved_fixture() {
+    let dir = wide_repo();
+    assert_render_fixture(
+        "diff_by_crate.text",
+        &stdout(&[
+            "diff",
+            "-p",
+            dir.path().to_str().unwrap(),
+            "--by-crate",
+            "--output",
+            "text",
+        ]),
+    );
+}
+
+/// The diff table's semantic tags: `[additions]`/`[deletions]` on the digits
+/// only, `[muted]` on the legend.
+#[test]
+fn diff_by_crate_term_debug_matches_the_approved_fixture() {
+    let dir = wide_repo();
+    assert_render_fixture(
+        "diff_by_crate.term-debug",
+        &stdout(&[
+            "diff",
+            "-p",
+            dir.path().to_str().unwrap(),
+            "--by-crate",
+            "--output",
+            "term-debug",
+        ]),
+    );
 }
 
 /// `--staged` is only meaningful without revs. The rule lives in `command`;

@@ -1,0 +1,78 @@
+{#-
+  The diff table.
+
+  Context (from `crate::table::DiffView` — typed numbers only):
+    aggregation  "total" | "crate" | "module" | "file"
+    columns      enabled column keys, in display order
+    rows         [{label, values: [{added, removed, net}, ...]}]
+    total        [{added, removed, net}, ...]       the totals row's values
+    footer       {displayed, total_items, file_count, top_applied}
+    from_commit  / to_commit
+    non_rust     {added, removed, net} for files the language selection skipped
+
+  Everything a diff shows beyond the shared table skeleton lives here: the
+  title, the `+added/-removed/net` notation, the skipped-changes summary, and
+  the legend that explains the notation.
+-#}
+{%- import "table_macros" as t -%}
+
+{#- One diff cell: `+added/-removed/net`, each sub-field right-aligned to its
+    column's sub-width so the `/` separators line up down the whole column.
+
+    The padding sits *outside* the style tags on purpose: colour belongs on the
+    digits, not on the whitespace that positions them. -#}
+{%- macro diff_cell(v, sub) -%}
+{{ " " * (sub.added - (("+" ~ v.added) | length)) }}[additions]+{{ v.added }}[/additions]/{{ " " * (sub.removed - (("-" ~ v.removed) | length)) }}[deletions]-{{ v.removed }}[/deletions]/{{ " " * (sub.net - ((v.net | string) | length)) }}{{ v.net }}
+{%- endmacro -%}
+
+{#- Per column: the header word, the three sub-widths, and the column width.
+
+    Sub-widths are the max of each sub-field across every row *and* the totals
+    row — the totals row usually wins, since it sums the rows. Computing them
+    across the whole column (rather than per row) is what makes the separators
+    align vertically.
+
+    The column is as wide as its header word or as the notation needs
+    (`+added` + `/` + `-removed` + `/` + `net`), whichever is greater. -#}
+{%- set ns = namespace(headers=[], widths=[], subs=[]) -%}
+{%- for key in columns -%}
+  {%- set i = loop.index0 -%}
+  {%- set header = t.COLUMN_HEADERS[key] -%}
+  {%- set s = namespace(added=0, removed=0, net=0) -%}
+  {%- for row in (rows + [{"values": total}]) -%}
+    {%- set v = row.values[i] -%}
+    {%- set s.added = [s.added, ("+" ~ v.added) | length] | max -%}
+    {%- set s.removed = [s.removed, ("-" ~ v.removed) | length] | max -%}
+    {%- set s.net = [s.net, (v.net | string) | length] | max -%}
+  {%- endfor -%}
+  {%- set ns.subs = (ns.subs + [{"added": s.added, "removed": s.removed, "net": s.net}]) | list -%}
+  {%- set ns.headers = (ns.headers + [header]) | list -%}
+  {%- set ns.widths = (ns.widths + [[header | length, s.added + s.removed + s.net + 2] | max]) | list -%}
+{%- endfor -%}
+
+{#- Render every cell against its column's sub-widths. -#}
+{%- set body = namespace(rows=[], total=[]) -%}
+{%- for row in rows -%}
+  {%- set cells = namespace(list=[]) -%}
+  {%- for v in row.values -%}
+    {%- set cells.list = (cells.list + [diff_cell(v, ns.subs[loop.index0])]) | list -%}
+  {%- endfor -%}
+  {%- set body.rows = (body.rows + [{"label": row.label, "values": cells.list}]) | list -%}
+{%- endfor -%}
+{%- for v in total -%}
+  {%- set body.total = (body.total + [diff_cell(v, ns.subs[loop.index0])]) | list -%}
+{%- endfor -%}
+{# Output starts below. Every tag above trims its own whitespace away, so the
+   newline after this comment is the first thing emitted — it is the blank line
+   that sets the title off from the prompt, not an accident. #}
+Diff: {{ from_commit }} → {{ to_commit }}
+
+{{ t.table(aggregation, ns.headers, body.rows, body.total, footer, ns.widths) }}
+{% if non_rust.added > 0 or non_rust.removed > 0 %}
+
+Skipped changes: [additions]+{{ non_rust.added }}[/additions] / [deletions]-{{ non_rust.removed }}[/deletions] / {{ non_rust.net }} net
+{% endif %}
+[muted](+added / -removed / net)[/muted]
+{# The legend must end in a newline, and MiniJinja strips a single trailing
+   newline at end of template — so this comment, not the legend, is what sits at
+   EOF and absorbs the strip. Deleting it silently un-terminates the last line. #}

@@ -35,8 +35,8 @@ pub use counter::{
     count_file_with_filter, count_workspace, CountOptions, CountResult,
 };
 pub use diff::{
-    diff_revspec, diff_workdir, CrateDiffStats, DiffOptions, DiffResult, FileChangeType,
-    FileDiffStats, LocsDiff, WorkdirDiffMode,
+    diff_revspec, diff_workdir, sat_sub_u64, CrateDiffStats, DiffOptions, DiffResult,
+    FileChangeType, FileDiffStats, LocsDiff, WorkdirDiffMode,
 };
 pub use stats::{CrateStats, FileStats, Locs, ModuleStats};
 pub use visitor::{gather_stats, gather_stats_for_path, VisitorContext};
