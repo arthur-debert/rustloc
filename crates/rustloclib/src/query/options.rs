@@ -38,8 +38,10 @@ use std::str::FromStr;
 ///   disabled line type is zeroed in the returned stats.
 /// - As a **view descriptor** (on [`CountQuerySet`] / [`DiffQuerySet`]) nothing
 ///   is zeroed: it records which line types the caller asked to *see*, and the
-///   render layer uses it to pick columns. Query-set data is always complete so
-///   that one response can serve every output mode.
+///   render layer uses it to pick columns. The query-set layer adds no
+///   filtering of its own — but it cannot restore what the data filter already
+///   zeroed, so one response serves every output mode only when the underlying
+///   result was produced with [`LineTypes::everything`].
 ///
 /// [`Locs::filter`]: crate::data::stats::Locs::filter
 /// [`CountOptions::line_types`]: crate::data::counter::CountOptions::line_types

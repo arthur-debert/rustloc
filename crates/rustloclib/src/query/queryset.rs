@@ -14,12 +14,23 @@
 //!
 //! ## Line types are a *view descriptor*, not a data filter
 //!
-//! Stats in a query set are always **complete** — every line type carries its
-//! real count. The `line_types` field records which line types the user asked
-//! to *see*; the render layer uses it to choose columns. Keeping the data whole
-//! is what lets one response serve every output mode, and it means ordering and
-//! predicate filtering always evaluate against real values rather than against
-//! values that happened to be zeroed for display.
+//! The `line_types` field records which line types the user asked to *see*; the
+//! render layer uses it to choose columns. At this layer it zeroes nothing: a
+//! query set never applies line-type filtering of its own, so ordering and
+//! predicates evaluate against whatever counts the upstream result carried
+//! rather than against values zeroed for display.
+//!
+//! Completeness itself is the *caller's* to guarantee, not this layer's.
+//! [`CountOptions::line_types`] / [`DiffOptions::line_types`] **are** data
+//! filters — they zero disabled types before returning — so a query set built
+//! from a narrowed [`CountResult`] carries those zeros through. A caller who
+//! wants one response to serve every output mode must count with
+//! [`LineTypes::everything`] and narrow only at the view; that is what the CLI
+//! does.
+//!
+//! [`CountOptions::line_types`]: crate::data::counter::CountOptions::line_types
+//! [`DiffOptions::line_types`]: crate::data::diff::DiffOptions::line_types
+//! [`LineTypes::everything`]: crate::query::options::LineTypes::everything
 //!
 //! After construction with `from_result`, two chainable methods further
 //! reduce the row set:
@@ -73,7 +84,9 @@ pub struct CountQuerySet {
     /// Aggregation level used
     pub aggregation: Aggregation,
     /// Line types the caller asked to see. A *view descriptor* for the render
-    /// layer — `items`/`total` always carry complete, unfiltered counts.
+    /// layer — it never narrows `items`/`total` here. Whether those counts are
+    /// complete depends on the [`CountResult`] they were built from; see the
+    /// module docs.
     pub line_types: LineTypes,
     /// Data rows (filtered and sorted; possibly truncated by `top`)
     pub items: Vec<QueryItem<Locs>>,
@@ -101,7 +114,9 @@ pub struct DiffQuerySet {
     /// Aggregation level used
     pub aggregation: Aggregation,
     /// Line types the caller asked to see. A *view descriptor* for the render
-    /// layer — `items`/`total` always carry complete, unfiltered counts.
+    /// layer — it never narrows `items`/`total` here. Whether those counts are
+    /// complete depends on the [`DiffResult`] they were built from; see the
+    /// module docs.
     pub line_types: LineTypes,
     /// Data rows (filtered and sorted; possibly truncated by `top`)
     pub items: Vec<QueryItem<LocsDiff>>,
@@ -132,9 +147,17 @@ impl CountQuerySet {
     /// Create a QuerySet from a CountResult.
     ///
     /// Applies aggregation level and ordering. `line_types` is recorded as the
-    /// requested *view* and does not filter the data — `items` and `total`
-    /// always carry complete counts so one response can serve every output
-    /// mode. See the module docs for why.
+    /// requested *view* and does not filter the data here: `items` and `total`
+    /// carry whatever `result` carried.
+    ///
+    /// So they are complete only if `result` was counted with
+    /// [`LineTypes::everything`] — [`CountOptions::line_types`] zeroes disabled
+    /// types before returning, and those zeros pass straight through. Count
+    /// with everything and narrow at the view if one response must serve every
+    /// output mode. See the module docs for why.
+    ///
+    /// [`LineTypes::everything`]: crate::query::options::LineTypes::everything
+    /// [`CountOptions::line_types`]: crate::data::counter::CountOptions::line_types
     pub fn from_result(
         result: &CountResult,
         aggregation: Aggregation,
@@ -257,9 +280,16 @@ impl DiffQuerySet {
     /// Create a QuerySet from a DiffResult.
     ///
     /// Applies aggregation level and ordering. `line_types` is recorded as the
-    /// requested *view* and does not filter the data — `items` and `total`
-    /// always carry complete counts so one response can serve every output
-    /// mode. See the module docs for why.
+    /// requested *view* and does not filter the data here: `items` and `total`
+    /// carry whatever `result` carried.
+    ///
+    /// So they are complete only if `result` was diffed with
+    /// [`LineTypes::everything`] — [`DiffOptions::line_types`] zeroes disabled
+    /// types before returning, and those zeros pass straight through. See the
+    /// module docs for why.
+    ///
+    /// [`LineTypes::everything`]: crate::query::options::LineTypes::everything
+    /// [`DiffOptions::line_types`]: crate::data::diff::DiffOptions::line_types
     pub fn from_result(
         result: &DiffResult,
         aggregation: Aggregation,

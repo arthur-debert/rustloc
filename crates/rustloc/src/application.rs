@@ -43,8 +43,10 @@ pub fn count(request: &CountRequest) -> Result<CountQuerySet, anyhow::Error> {
         ));
     }
 
-    // `LineTypes::everything()` on purpose: the canonical response always
-    // carries complete counts. `query.line_types` only describes the requested
+    // `LineTypes::everything()` on purpose: it is what *makes* the canonical
+    // response carry complete counts, since `CountOptions::line_types` would
+    // otherwise zero the disabled types here and the query set would carry
+    // those zeros through. `query.line_types` only describes the requested
     // view and is applied at render time, so ordering and predicates here
     // still see real numbers.
     let options = || {

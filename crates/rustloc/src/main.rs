@@ -427,7 +427,7 @@ mod presentation {
         Data,
         /// Adapt to row-per-item CSV.
         Csv,
-        /// Format into a `LOCTable` for the template.
+        /// Narrow to a `CountView`/`DiffView` for the template.
         Table,
     }
 
