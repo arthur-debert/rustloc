@@ -1362,7 +1362,8 @@ fn sample_tree() -> &'static Path {
             let src = dir.path().join("src");
             std::fs::create_dir_all(&src).expect("create src");
 
-            // 2 docs, 1 comment, 3 blanks, 4 code, 4 tests.
+            // Counts (pinned by tests/fixtures/count_by_file.after.json):
+            // 6 code, 8 tests, 2 docs, 1 comment, 3 blanks — 20 total.
             std::fs::write(
                 src.join("lib.rs"),
                 "\
@@ -1415,9 +1416,12 @@ fn fixture(name: &str) -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read fixture {path:?}: {e}"))
 }
 
-/// The canonical response must be byte-identical across json/yaml/xml — those
-/// three modes serialize the handler's value directly, with no adapter in
-/// between. If a handler ever branched on output mode again, these would drift.
+/// json and yaml serialize the handler's value directly, with no adapter in
+/// between, so both must decode to the *same data* — byte equality is not the
+/// claim, since each mode has its own syntax. Parses both with their real
+/// parsers and compares the decoded values. If a handler ever branched on
+/// output mode again, these would drift. (xml is the same contract, but needs
+/// a different parser: see the test below.)
 #[test]
 fn test_canonical_response_identical_across_structured_modes() {
     let path = sample_path_str();
@@ -1563,9 +1567,11 @@ fn test_csv_schema_is_stable_regardless_of_type_flag() {
 // Checked-in compatibility fixtures
 // ---------------------------------------------------------------------------
 //
-// These pin the exact public JSON/CSV bytes for the deterministic sample tree.
-// See tests/fixtures/README.md for the before/after rationale — the only
-// intentional change in this workstream is the `line_types` metadata field.
+// These pin the public JSON/CSV output for the deterministic sample tree: JSON
+// as decoded data (key order is not part of the contract), CSV as exact bytes
+// (its column order is). See tests/fixtures/README.md for the before/after
+// rationale — the only intentional change in this workstream is the
+// `line_types` metadata field.
 
 #[test]
 fn test_count_json_matches_compat_fixture() {
