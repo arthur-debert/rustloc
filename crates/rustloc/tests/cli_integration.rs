@@ -48,11 +48,28 @@ fn run_rustloc(args: &[&str]) -> (String, String, bool) {
 /// down the precise failure mode (e.g. clap usage errors must exit 2,
 /// not just "any nonzero").
 fn run_rustloc_with_code(args: &[&str]) -> (String, String, Option<i32>) {
+    run_rustloc_with_env(args, &[])
+}
+
+/// Like `run_rustloc_with_code` but sets environment variables on the child.
+///
+/// This is the whole reason the colour test lives at the process layer. Colour
+/// capability is not something argv can say: `console` reads it from the
+/// process, so forcing it in-process would mean mutating global state and
+/// costing `pipeline_tests` its parallelism. A spawned child owns its own
+/// environment, so the ambient seam gets exercised without any test in this
+/// workspace touching a global.
+fn run_rustloc_with_env(args: &[&str], env: &[(&str, &str)]) -> (String, String, Option<i32>) {
     let mut cmd_args = vec!["run", "--quiet", "-p", "rustloc", "--"];
     cmd_args.extend(args);
 
-    let output = Command::new("cargo")
-        .args(&cmd_args)
+    let mut command = Command::new("cargo");
+    command.args(&cmd_args);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+
+    let output = command
         // Run from the workspace root so `.` resolves to the 2-crate
         // workspace these tests assert against. This crate lives at
         // `<root>/crates/rustloc`, so the root is two levels up.
@@ -266,6 +283,82 @@ fn test_cli_version() {
 
     assert!(success);
     assert!(stdout.contains("rustloc"));
+}
+
+// ============================================================================
+// Forced-colour term output
+// ============================================================================
+//
+// The one rendering mode `pipeline_tests` cannot cover, and the only test in
+// this workspace that reads ANSI. Both facts have the same cause: `--output
+// term` asks for colour, but whether colour is *emitted* is decided by
+// `console` reading the process — piped stdout means no ANSI, however loudly
+// argv asked. `CLICOLOR_FORCE=1` is the override, and it only exists as an
+// environment variable, which is why this needs a child process.
+//
+// This is also the only place the two halves of the theme meet end to end: that
+// tags reach the parser (term-debug's job), and that the CSS gives them
+// attributes (the theme test's job), are each pinned in isolation — a wiring
+// mistake between them would show up only here.
+
+/// Forced `term` output paints the semantic tags and leaves none of them behind.
+///
+/// Three distinct failures are covered, and it takes all three assertions:
+/// escape bytes prove the theme reached the output at all; the specific SGR
+/// codes prove the *right* styles landed (a theme resolving to empty styles
+/// still emits nothing, but so does a colour-blind pipe — only the codes tell
+/// them apart); and the absence of `[` markers proves the parser consumed the
+/// tags rather than printing them at a user.
+#[test]
+fn term_output_is_ansi_when_colour_is_forced() {
+    let (stdout, _, code) = run_rustloc_with_env(&["--output", "term"], &[("CLICOLOR_FORCE", "1")]);
+    assert_eq!(code, Some(0), "forced-colour term run failed:\n{stdout}");
+
+    assert!(
+        stdout.contains('\x1b'),
+        "term mode emitted no ANSI even with CLICOLOR_FORCE=1:\n{stdout:?}"
+    );
+    // The header is cyan (SGR 36) + bold (SGR 1) per styles/default.css. It is
+    // the one styled tag the count table always renders, whatever the workspace.
+    assert!(
+        stdout.contains("\x1b[36m") && stdout.contains("\x1b[1m"),
+        "the header lost its cyan/bold styling:\n{stdout:?}"
+    );
+
+    // No tag — known or unknown — may survive into what a user reads. An unknown
+    // one arrives as `[header?]`, so this catches a typo'd tag as well as an
+    // unconsumed one. The escapes have to come out first: an SGR sequence is
+    // itself `ESC [ ... m`, so a bare search for `[` would match the very
+    // styling the assertions above just demanded.
+    let visible = strip_ansi(&stdout);
+    assert!(
+        !visible.contains('['),
+        "a raw style tag leaked into term output:\n{visible}"
+    );
+}
+
+/// Remove SGR escape sequences (`ESC [ ... m`), leaving what a user reads.
+///
+/// Deliberately minimal: rustloc emits nothing but SGR, so a full ANSI grammar
+/// would be more code to be wrong about. Anything unexpected survives the strip
+/// and shows up in an assertion rather than being quietly swallowed.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        // Consume through the terminating 'm'. An unterminated sequence just
+        // ends the string, which is fine — there is nothing left to keep.
+        for c in chars.by_ref() {
+            if c == 'm' {
+                break;
+            }
+        }
+    }
+    out
 }
 
 #[test]

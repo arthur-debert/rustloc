@@ -28,17 +28,45 @@
 //! `run_to_string` is what the harness wraps, so the pipeline coverage below is
 //! equivalent for everything argv can express — which is all of this CLI's
 //! behavior. What the harness would add on top is control of *ambient* seams
-//! (TTY, terminal width, colour capability, cwd, stdin). Those stay uncovered;
-//! see the PR's Context note. When a 7.6.x `standout-test` is published, these
-//! tests port to it directly, and only then do they need `#[serial]`: the
-//! harness mutates process-global detectors, whereas the argv-driven runs below
-//! touch no global state and are safe to run in parallel.
+//! (TTY, terminal width, colour capability, cwd, stdin). Those stay uncovered
+//! here; see the PR's Context note.
+//!
+//! Colour capability is the one that turned out to matter, because `--output
+//! term` depends on it: the mode asks for ANSI, but `console` decides whether to
+//! emit any by looking at the process, so a piped run renders no styling however
+//! loudly argv asked. Forcing it in-process would mean mutating global state and
+//! costing this module its parallelism, so the forced-colour case is a spawned
+//! child with `CLICOLOR_FORCE=1` in `tests/cli_integration.rs`
+//! (`term_output_is_ansi_when_colour_is_forced`). What stays here is the half
+//! that needs no ambient anything: that the theme resolves each tag to the
+//! attributes we intend.
+//!
+//! When a 7.6.x `standout-test` is published, these tests port to it directly,
+//! and only then do they need `#[serial]`: the harness mutates process-global
+//! detectors, whereas the argv-driven runs below touch no global state and are
+//! safe to run in parallel.
 
 use rustloclib::{CountQuerySet, DiffQuerySet};
 use standout::cli::RunResult;
+use standout::{ColorMode, Theme, DEFAULT_MISSING_STYLE_INDICATOR};
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
+
+/// The marker `Styles::apply_debug` returns for a tag the theme cannot resolve.
+///
+/// This is the *theme API's* marker, and it is not what rendered output shows —
+/// template rendering goes through the tag parser, which marks an unknown tag
+/// `[tag?]` and only in `term` mode. See `no_semantic_tag_is_unknown_to_the_theme`.
+/// Taken from the framework constant so an upstream change fails an assertion
+/// here rather than leaving a check that tests a string nothing emits.
+const MISSING_STYLE_MARKER: &str = DEFAULT_MISSING_STYLE_INDICATOR;
+
+/// The theme the real app renders with.
+#[track_caller]
+fn theme() -> Theme {
+    crate::app::theme().expect("theme must build from the embedded stylesheet")
+}
 
 /// Run the real app over `args`, with `rustloc` pushed on as argv[0].
 ///
@@ -287,16 +315,169 @@ fn type_flag_narrows_the_table_columns() {
     assert!(!out.contains("Docs"), "Docs should be hidden in:\n{out}");
 }
 
-/// term-debug mode exposes the style tags, which is how a theme regression
-/// becomes visible without a TTY.
+// ---------------------------------------------------------------------------
+// The rendering modes, and the theme behind them
+// ---------------------------------------------------------------------------
+//
+// Three human modes render the same template through the same theme and differ
+// only in what they do with the semantic tags: `text` strips them, `term`
+// resolves them to ANSI, `term-debug` leaves them legible. Each mode gets its
+// own assertion below, because each is a distinct promise and a theme change
+// can break one while the other two still pass.
+//
+// `term` is the exception: whether ANSI is actually emitted depends on colour
+// capability, which `console` reads from the *process* — not from anything argv
+// can say. Forcing it means either mutating process-global state (which would
+// cost this module its parallelism) or spawning a process with `CLICOLOR_FORCE`
+// set. It is spawned, in `tests/cli_integration.rs`
+// (`term_output_is_ansi_when_colour_is_forced`), which is where this pyramid
+// already puts ambient seams. What is left here is the half that needs no
+// ambient anything: that the theme resolves the tags to the attributes we
+// intend.
+
+/// The semantic tags rustloc's templates emit. `table_row_odd` is included on
+/// purpose even though the theme does not define it: it must keep resolving via
+/// the `Theme::default()` merge, and the day that merge is dropped this list is
+/// what notices.
+const SEMANTIC_TAGS: &[&str] = &["header", "additions", "deletions", "muted", "table_row_odd"];
+
+/// Text mode is the contract every rendered-string assertion in this file rests
+/// on: no ANSI, and no leaked semantic tag either. A tag that survives the strip
+/// would mean a `[foo]` a reader sees literally.
 #[test]
-fn term_debug_mode_exposes_style_tags() {
+fn text_mode_has_neither_ansi_nor_semantic_tags() {
+    let dir = workspace();
+    let out = stdout(&[&path_of(&dir), "--output", "text"]);
+
+    assert!(
+        !out.contains('\x1b'),
+        "text mode leaked an escape byte in:\n{out:?}"
+    );
+    for tag in SEMANTIC_TAGS {
+        assert!(
+            !out.contains(&format!("[{tag}]")) && !out.contains(&format!("[/{tag}]")),
+            "text mode leaked the {tag:?} tag in:\n{out}"
+        );
+    }
+}
+
+/// term-debug preserves the tags — that is its whole job, and it is how a theme
+/// regression becomes visible without a TTY. The fixture tests pin *which* tags
+/// land *where*; this pins the mode's own promise, on both templates.
+#[test]
+fn term_debug_mode_preserves_semantic_tags() {
     let dir = workspace();
     let out = stdout(&[&path_of(&dir), "--output", "term-debug"]);
+
     assert!(
-        out.contains('[') && out.contains(']'),
-        "expected style tags in:\n{out}"
+        out.contains("[header]") && out.contains("[/header]"),
+        "term-debug dropped the header tag in:\n{out}"
     );
+    assert!(
+        !out.contains('\x1b'),
+        "term-debug should show tags, not ANSI:\n{out:?}"
+    );
+}
+
+/// Every tag the templates emit resolves in the theme.
+///
+/// This has to be asked of the *theme*, not of rendered output, and the reason is
+/// worth knowing before trusting any of the assertions above: **no human mode
+/// makes an unknown tag fail, and only one makes it visible at all.** Rendering
+/// `[bogus]hi[/bogus]` against a theme with no `bogus` gives:
+///
+/// - `text` → `hi` — stripped, indistinguishable from a working tag
+/// - `term-debug` → `[bogus]hi[/bogus]` — preserved verbatim, *identical* to a
+///   working tag; term-debug never marks unknowns
+/// - `term` → `[bogus?]hi[/bogus?]` — the sole marker, and only where ANSI is
+///   live (see the process-level test)
+///
+/// So a misspelled tag sails through every text and term-debug assertion in this
+/// file, approved fixtures included. Asking the theme directly is what closes
+/// that hole — and it catches the unstyled case too, which even `term` would not:
+/// a tag that resolves to an *empty* style is not "unknown", it simply paints
+/// nothing (that is `theme_carries_the_expected_attributes`'s job).
+#[test]
+fn no_semantic_tag_is_unknown_to_the_theme() {
+    let styles = theme().resolve_styles(Some(ColorMode::Dark));
+
+    for tag in SEMANTIC_TAGS {
+        assert_eq!(
+            styles.apply_debug(tag, "x"),
+            format!("[{tag}]x[/{tag}]"),
+            "the theme cannot resolve the {tag:?} tag"
+        );
+    }
+
+    // The teeth. Without this, a theme that resolved *nothing* would still need
+    // `apply_debug` to be lying for the loop above to pass — but if the marker
+    // ever changes upstream, the loop's failure mode gets quiet. Pin it.
+    assert!(
+        styles
+            .apply_debug("headr", "x")
+            .starts_with(MISSING_STYLE_MARKER),
+        "an unresolvable tag is no longer marked with {MISSING_STYLE_MARKER:?}; \
+         this test can no longer tell a known tag from a typo"
+    );
+}
+
+/// Theme parity, pinned at the attribute level.
+///
+/// This is the test that makes the CSS reviewable. The parser silently drops any
+/// property it does not implement — the rule still parses and the style just ends
+/// up empty — so `muted` written as `opacity: 0.5` (which Standout's *own* docs
+/// advertise, and which the parser has no arm for) would resolve, render, strip
+/// and debug exactly like a working style while painting nothing. Only the
+/// emitted ANSI can tell the difference.
+///
+/// `force_styling` is what lets this run anywhere: it renders the attributes
+/// regardless of whether the test process has a terminal, so no global colour
+/// state is touched and the module stays parallel.
+#[test]
+fn theme_carries_the_expected_attributes() {
+    let styles = theme().resolve_styles(Some(ColorMode::Dark));
+    let resolved = styles.to_resolved_map();
+
+    // (tag, the SGR parameters its style must emit)
+    for (tag, expected) in [
+        ("header", vec!["36", "1"]), // cyan + bold
+        ("additions", vec!["32"]),   // green
+        ("deletions", vec!["31"]),   // red
+        ("muted", vec!["2"]),        // dim
+    ] {
+        let style = resolved
+            .get(tag)
+            .unwrap_or_else(|| panic!("theme has no {tag:?} style"));
+        let painted = style.clone().force_styling(true).apply_to("x").to_string();
+        for param in expected {
+            assert!(
+                painted.contains(&format!("\x1b[{param}m")),
+                "{tag:?} lost its SGR {param} — rendered {painted:?}"
+            );
+        }
+    }
+}
+
+/// Structured output is data, not presentation: the theme must not be able to
+/// reach it. The serializers skip the template entirely, so this is really a
+/// guard that they keep doing so.
+#[test]
+fn structured_output_carries_no_theme_artifacts() {
+    let dir = workspace();
+
+    for mode in ["json", "yaml", "xml", "csv"] {
+        let out = stdout(&[&path_of(&dir), "--output", mode]);
+        assert!(
+            !out.contains('\x1b'),
+            "{mode} output carried an escape byte:\n{out}"
+        );
+        for tag in SEMANTIC_TAGS {
+            assert!(
+                !out.contains(&format!("[{tag}]")),
+                "{mode} output carried the {tag:?} tag:\n{out}"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

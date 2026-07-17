@@ -14,8 +14,15 @@
   rather than reconstructed from a parameterised abstraction.
 
   Style tags are *semantic* — `[header]`, `[table_row_odd]`, `[additions]`,
-  `[deletions]`, `[muted]` — and resolve through the stylesheet in `styles/`.
-  Never write a raw ANSI sequence or a concrete colour here.
+  `[deletions]`, `[muted]` — and resolve through `styles/default.css`. Never
+  write a raw ANSI sequence or a concrete colour here.
+
+  A tag the theme does not define does NOT fail the render: text mode strips it
+  and term-debug prints it verbatim, so it looks correct in both. Adding a tag
+  here therefore means adding the matching rule to `styles/default.css` AND its
+  name to `SEMANTIC_TAGS` in `src/pipeline_tests.rs` — that list is the only
+  thing that notices. `table_row_odd` is the exception that needs no CSS rule:
+  it comes from `Theme::default()`, adaptively.
 -#}
 
 {#- The label column's fixed display width. -#}
