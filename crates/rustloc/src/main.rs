@@ -57,11 +57,11 @@
 
 use std::process::ExitCode;
 
-use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use rustloclib::Ordering;
-use standout::cli::{App, Dispatch, RunResult};
-use standout::{embed_styles, embed_templates};
+use standout::cli::{Dispatch, RunResult};
 
+mod app;
 mod application;
 mod command;
 mod table;
@@ -741,23 +741,12 @@ mod filter_args {
     }
 }
 
+/// Read the process environment and run the app built by [`crate::app`].
+///
+/// The construction itself lives in `app` so tests can build the same app;
+/// what stays here is the one thing a test must not inherit — `std::env::args`.
 fn run() -> Result<RunResult, anyhow::Error> {
-    // Load theme: start with standout defaults (includes table_row_even/odd),
-    // then merge our custom stylesheet on top
-    use standout::{StylesheetRegistry, Theme};
-    let mut registry: StylesheetRegistry = embed_styles!("styles").into();
-    let custom_theme = registry.get("default")?;
-    let theme = Theme::default().merge(custom_theme);
-
-    // Build the standout app with derive-based dispatch
-    let app = App::builder()
-        .templates(embed_templates!("templates"))
-        .theme(theme)
-        .commands(Commands::dispatch_config())?
-        .build()?;
-
-    let cli_cmd = filter_args::inject(Cli::command());
-    Ok(app.run_to_string(cli_cmd, std::env::args()))
+    Ok(app::app()?.run_to_string(app::cli_command(), std::env::args()))
 }
 
 fn main() -> ExitCode {
@@ -807,3 +796,6 @@ fn main() -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod pipeline_tests;

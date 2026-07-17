@@ -32,11 +32,17 @@ formatted output". Each module owns one step, in order:
 
 | Module | Owns | Never touches |
 | --- | --- | --- |
+| `app` | The **construction factory**. Deterministic, pure functions building the Standout app (templates, theme, dispatch) and the Clap command (derive + injected filter grid). Used by `main` *and* by tests. | Environment, argv, I/O |
 | `command` | The **parsing boundary**. The only place that interprets `ArgMatches` as command logic; converts CLI syntax into typed requests (`CountRequest` / `DiffRequest`), failing fast on invalid values. | Library calls, output mode |
 | `application` | Typed **orchestration**. Takes a request, picks the `rustloclib` entry point, returns the canonical response. | clap types, output mode |
 | `handlers` | The **dispatch bridge**. Request → orchestration → `Output::Render`. Three lines each. | Everything else |
 | `presentation` | The **render boundary**. The one place allowed to read the output mode and pick table / CSV / direct serialization. | Command logic |
 | `table` | Formatting a response into a `LOCTable`. | Command logic |
+
+`main` is what remains once construction moves to `app`: read `std::env::args`,
+write the result, map `RunResult` to an exit code. Those three are genuinely
+process-level, which is exactly why they are the only things a test has to
+spawn a process to observe.
 
 Two modules outside `command` legitimately name `ArgMatches`, and neither
 breaks the boundary — don't "fix" them:
@@ -164,4 +170,26 @@ No special JSON transformation in CLI - the library types are the JSON schema.
 ## Testing
 
 - **Library tests**: Unit tests for computation logic in `crates/rustloclib/src/*/tests`
-- **CLI tests**: Integration tests in `crates/rustloc/tests/cli_integration.rs`
+
+The CLI is tested as a pyramid. Pick the **smallest layer that can observe the
+behavior**, and don't assert the same fact at more than one — unless a past
+regression justifies it (the table line-structure tests are the one such case).
+
+| Layer | Covers | Where |
+| --- | --- | --- |
+| Unit | Parsing and orchestration as plain functions — no `ArgMatches` needed | `src/command.rs`, `src/application.rs` |
+| Pipeline | argv → clap → handler → post-dispatch → render, in-process | `src/pipeline_tests.rs` |
+| Process | Exit codes, stderr routing, executable integration, real Git | `tests/cli_integration.rs` |
+
+The pipeline layer builds the app via `app::app()` / `app::cli_command()` — the
+same construction `main` uses — and drives it through Standout's
+`run_to_string`. Tests pass fixture paths as absolute, mutate no process-global
+state, and so run in parallel without a serial guard.
+
+`standout-test::TestHarness` is the intended tool for that middle layer and is
+currently **unusable**: it is published only up to 7.5.1, which does not compile
+against standout 7.6.x (`RunResult` gained a `#[non_exhaustive]` `Error`
+variant), and upstream's 7.6.x is `publish = false`. Taking it from git pulls a
+second standout into the graph, so the harness cannot accept our `App`. See the
+module docs in `src/pipeline_tests.rs`. Ambient seams the harness would provide
+— TTY, terminal width, colour capability, cwd, stdin — are therefore uncovered.

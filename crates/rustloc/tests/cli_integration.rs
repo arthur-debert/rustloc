@@ -1,4 +1,37 @@
-//! Integration tests for rustloc CLI
+//! Process-level tests for the rustloc CLI: the boundaries a real executable
+//! owns and no in-process test can model.
+//!
+//! This is the **top** of the pyramid, and it is deliberately the thinnest
+//! layer. Anything argv can express — routing, parsing, presentation, output
+//! modes, templates — is covered in-process by `src/pipeline_tests.rs`, which
+//! drives the same app through the same entry point `main` calls, in
+//! milliseconds instead of a `cargo run` per assertion. Below that,
+//! `src/command.rs` and `src/application.rs` test parsing and orchestration as
+//! plain functions.
+//!
+//! ## What still earns a process test
+//!
+//! Each remaining test protects one of these, and nothing else:
+//!
+//! - **Exit codes.** `RunResult` → `ExitCode` mapping only exists in `main`.
+//!   A clap usage error must exit **2** and a library failure **1**; both have
+//!   regressed before (standout ≥7.6 routes parse errors to
+//!   `RunResult::Error`, and without that arm they were swallowed silently at
+//!   exit 0). In-process tests see the `RunResult`, never the exit code.
+//! - **Stream routing.** Errors must land on **stderr** and leave stdout
+//!   empty, so `rustloc ... | jq` fails loudly rather than parsing a message.
+//!   `run_to_string` returns one string and cannot distinguish the streams.
+//! - **Executable integration.** That the binary builds, links, and runs at
+//!   all (`--version`), and that `.` resolves against the real process cwd.
+//! - **Real Git behavior.** Revspec resolution, tag peeling, and merge-base
+//!   ranges against an actual repository — gix territory that a fabricated
+//!   fixture cannot faithfully stand in for.
+//! - **Table line structure (issue #84).** Kept at this layer *despite* the
+//!   in-process template coverage, because the regression it guards shipped
+//!   (v0.17.1) — the documented exception to "don't test the same fact twice".
+//!
+//! Adding a test here that asserts none of the above means it belongs one
+//! layer down.
 
 use std::path::Path;
 use std::process::Command;
@@ -277,20 +310,6 @@ fn test_lang_python_by_module_counts_python_tree() {
     assert!(stdout.contains("pkg::sub"));
 }
 
-#[test]
-fn test_table_output() {
-    let (stdout, _, success) = run_rustloc(&["."]);
-
-    assert!(success);
-    // Check for context column headers in default view (code, tests, docs, total)
-    assert!(stdout.contains("Code"));
-    assert!(stdout.contains("Tests"));
-    assert!(stdout.contains("Docs"));
-    assert!(stdout.contains("Total"));
-    // Total row shows file count in row name
-    assert!(stdout.contains("Total (") && stdout.contains("files)"));
-}
-
 // ============================================================================
 // Table line-structure regression tests (issue #84)
 // ============================================================================
@@ -445,163 +464,6 @@ fn test_diff_zero_files_table_line_structure() {
 }
 
 #[test]
-fn test_json_output() {
-    let (stdout, _, success) = run_rustloc(&[".", "--output", "json"]);
-
-    assert!(success);
-
-    // Verify it's valid JSON with data structure (numeric values, not presentation table)
-    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Invalid JSON output");
-    assert!(parsed.get("total").is_some());
-    assert!(parsed.get("file_count").is_some());
-    assert!(parsed.get("aggregation").is_some());
-
-    // Values should be numeric, not strings
-    let total = &parsed["total"];
-    assert!(total["code"].is_u64(), "code should be a number");
-    assert!(total["tests"].is_u64(), "tests should be a number");
-    assert!(total["docs"].is_u64(), "docs should be a number");
-    assert!(total["total"].is_u64(), "total should be a number");
-    assert!(total["blanks"].is_u64(), "blanks should be a number");
-    assert!(total["comments"].is_u64(), "comments should be a number");
-    assert!(total["examples"].is_u64(), "examples should be a number");
-}
-
-/// Parse `output` with the csv crate so column counts respect quoting
-/// (file paths with commas, embedded quotes, etc.) — `split(',')` would
-/// miscount any well-formed-but-quoted row. Returns (headers, records).
-fn parse_csv(output: &str) -> (Vec<String>, Vec<Vec<String>>) {
-    let mut rdr = csv::Reader::from_reader(output.as_bytes());
-    let headers: Vec<String> = rdr
-        .headers()
-        .expect("CSV must have a header row")
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    let records: Vec<Vec<String>> = rdr
-        .records()
-        .map(|r| {
-            r.expect("malformed CSV record")
-                .iter()
-                .map(|s| s.to_string())
-                .collect()
-        })
-        .collect();
-    (headers, records)
-}
-
-/// Headers that every count CSV must expose, regardless of column order.
-/// Pinning the full set so a regression that drops, say, `examples` would
-/// fail the test instead of slipping through under the row-width check.
-const COUNT_CSV_HEADERS: &[&str] = &[
-    "label", "code", "tests", "examples", "docs", "comments", "blanks", "total",
-];
-
-/// Headers that every diff CSV must expose. Includes added_*, removed_*,
-/// and net_* for each line type plus a label column.
-const DIFF_CSV_HEADERS: &[&str] = &[
-    "label",
-    "added_code",
-    "added_tests",
-    "added_examples",
-    "added_docs",
-    "added_comments",
-    "added_blanks",
-    "added_total",
-    "removed_code",
-    "removed_tests",
-    "removed_examples",
-    "removed_docs",
-    "removed_comments",
-    "removed_blanks",
-    "removed_total",
-    "net_code",
-    "net_tests",
-    "net_examples",
-    "net_docs",
-    "net_comments",
-    "net_blanks",
-    "net_total",
-];
-
-fn assert_headers_present(headers: &[String], required: &[&str]) {
-    for col in required {
-        assert!(
-            headers.iter().any(|h| h == col),
-            "missing required CSV column `{col}`; headers: {headers:?}"
-        );
-    }
-}
-
-/// A valid CSV from `--output csv` must be one row per item (file, crate,
-/// or module) plus a final TOTAL row — not a single mega-row formed by
-/// flattening the whole queryset object into hundreds of `items.0.*`,
-/// `items.1.*` columns.
-#[test]
-fn test_csv_output_by_file() {
-    let (stdout, _, success) = run_rustloc(&[".", "--output", "csv", "--by-file"]);
-    assert!(success);
-
-    let (headers, records) = parse_csv(&stdout);
-
-    assert!(
-        !headers.iter().any(|h| h.starts_with("items.")),
-        "header must not flatten the queryset object into items.0.* columns; got: {headers:?}"
-    );
-    assert_headers_present(&headers, COUNT_CSV_HEADERS);
-
-    assert!(
-        records.len() >= 2,
-        "expected at least one data row + a TOTAL row"
-    );
-    let label_idx = headers.iter().position(|h| h == "label").unwrap();
-    assert!(
-        records.iter().any(|r| r[label_idx] == "TOTAL"),
-        "expected a TOTAL summary row"
-    );
-}
-
-#[test]
-fn test_csv_output_total() {
-    let (stdout, _, success) = run_rustloc(&[".", "--output", "csv"]);
-    assert!(success);
-
-    let (headers, records) = parse_csv(&stdout);
-    assert_headers_present(&headers, COUNT_CSV_HEADERS);
-
-    // Total aggregation → exactly one TOTAL row.
-    assert_eq!(records.len(), 1, "expected only a TOTAL row");
-    let label_idx = headers.iter().position(|h| h == "label").unwrap();
-    assert_eq!(records[0][label_idx], "TOTAL");
-}
-
-#[test]
-fn test_csv_output_diff() {
-    let fixture = fixture_path_str();
-    let (stdout, _, success) = run_rustloc(&[
-        "diff",
-        "HEAD~5..HEAD",
-        "--path",
-        &fixture,
-        "--output",
-        "csv",
-        "--by-file",
-    ]);
-    assert!(success);
-
-    let (headers, records) = parse_csv(&stdout);
-
-    assert!(
-        !headers.iter().any(|h| h.starts_with("items.")),
-        "diff header must not flatten items.*; got: {headers:?}"
-    );
-    assert_headers_present(&headers, DIFF_CSV_HEADERS);
-
-    let label_idx = headers.iter().position(|h| h == "label").unwrap();
-    assert!(records.iter().any(|r| r[label_idx] == "TOTAL"));
-}
-
-#[test]
 fn test_by_crate_output() {
     let (stdout, _, success) = run_rustloc(&[".", "--by-crate"]);
 
@@ -639,13 +501,14 @@ fn test_crate_filter() {
 
     assert!(success);
     // Only the `rustloc` crate's own files are counted: src/main.rs,
-    // src/command.rs, src/application.rs, src/table.rs, and
-    // tests/cli_integration.rs. Bump this when the crate gains a file.
-    // Asserting the footer (rather than a bare `contains("2")`, which any
-    // stray digit satisfies) is what actually proves the filter ran.
+    // src/app.rs, src/command.rs, src/application.rs, src/table.rs,
+    // src/pipeline_tests.rs, and tests/cli_integration.rs. Bump this when the
+    // crate gains a file. Asserting the footer (rather than a bare
+    // `contains("2")`, which any stray digit satisfies) is what actually
+    // proves the filter ran.
     assert!(
-        stdout.contains("Total (5 files)"),
-        "expected the crate filter to narrow to rustloc's 5 files, got:\n{stdout}"
+        stdout.contains("Total (7 files)"),
+        "expected the crate filter to narrow to rustloc's 7 files, got:\n{stdout}"
     );
 }
 
@@ -1079,54 +942,6 @@ fn test_top_diff_json_truncates_items_and_carries_total_items() {
 // ============================================================================
 
 #[test]
-fn test_filter_help_hides_individual_flags_and_shows_synthetic_doc() {
-    let (stdout, _, success) = run_rustloc(&["--help"]);
-
-    assert!(success);
-
-    // The 42 flags must be hidden. Pick a few representatives and assert
-    // they don't appear in the rendered help.
-    assert!(
-        !stdout.contains("--code-gte <"),
-        "--code-gte should not appear in help"
-    );
-    assert!(
-        !stdout.contains("--tests-lt <"),
-        "--tests-lt should not appear in help"
-    );
-    assert!(
-        !stdout.contains("--total-eq <"),
-        "--total-eq should not appear in help"
-    );
-
-    // The synthetic doc block IS expected to be present.
-    assert!(stdout.contains("Filter options"));
-    assert!(stdout.contains("--<category>-<op>"));
-    assert!(stdout.contains("Categories: code, tests, examples, docs, comments, blanks, total"));
-    assert!(stdout.contains("Operators:  gt, gte, eq, ne, lt, lte"));
-}
-
-#[test]
-fn test_filter_help_preserves_existing_examples_block() {
-    // The Cli derive defines an `after_long_help` examples block. The
-    // filter injection appends to it rather than replacing — both must
-    // be visible in --help.
-    let (stdout, _, success) = run_rustloc(&["--help"]);
-
-    assert!(success);
-    // Original examples (from Cli derive)
-    assert!(
-        stdout.contains("rustloc --by-crate"),
-        "original Cli examples block should still appear"
-    );
-    // Filter examples (from our appended doc)
-    assert!(
-        stdout.contains("rustloc --by-file --code-gte 1000"),
-        "filter doc block should appear"
-    );
-}
-
-#[test]
 fn test_diff_help_preserves_existing_examples_block() {
     // Same invariant for the diff subcommand.
     let (stdout, _, success) = run_rustloc(&["diff", "--help"]);
@@ -1554,28 +1369,6 @@ fn test_filter_on_undisplayed_line_type_matches_in_table_mode() {
     );
 }
 
-/// The CSV schema is stable: all columns, always, regardless of `--type`.
-/// A machine-readable format whose columns shift per invocation is unusable.
-#[test]
-fn test_csv_schema_is_stable_regardless_of_type_flag() {
-    let path = sample_path_str();
-
-    let (plain, _, ok) = run_rustloc(&[&path, "--by-file", "--output", "csv"]);
-    assert!(ok);
-    let (narrow, _, ok) = run_rustloc(&[&path, "--by-file", "--output", "csv", "-t", "code"]);
-    assert!(ok);
-
-    let (plain_headers, plain_rows) = parse_csv(&plain);
-    let (narrow_headers, narrow_rows) = parse_csv(&narrow);
-
-    assert_headers_present(&plain_headers, COUNT_CSV_HEADERS);
-    assert_eq!(
-        plain_headers, narrow_headers,
-        "--type must not change the CSV schema"
-    );
-    assert_eq!(plain_rows, narrow_rows, "--type must not change CSV values");
-}
-
 // ---------------------------------------------------------------------------
 // Checked-in compatibility fixtures
 // ---------------------------------------------------------------------------
@@ -1645,21 +1438,6 @@ fn test_invalid_ordering_is_a_usage_error() {
     }
 }
 
-/// The error must reach every call shape, not just the bare form: the default
-/// command, the explicit `count` subcommand, and `diff` each parse ordering
-/// through their own arg definition.
-#[test]
-fn test_invalid_ordering_is_rejected_on_every_subcommand() {
-    for args in [
-        vec![".", "-o", "coed"],
-        vec!["count", ".", "-o", "coed"],
-        vec!["diff", "-o", "coed"],
-    ] {
-        let (_, _, code) = run_rustloc_with_code(&args);
-        assert_eq!(code, Some(2), "{args:?} should exit 2, got {code:?}");
-    }
-}
-
 /// The invalid-value message names the offending value and the field, so the
 /// user can see what to fix rather than just that something was wrong.
 #[test]
@@ -1669,18 +1447,4 @@ fn test_invalid_ordering_message_names_the_bad_value() {
         stderr.contains("invalid value 'coed'") && stderr.contains("Unknown order field: coed"),
         "expected a message naming the bad value, got {stderr:?}"
     );
-}
-
-/// The strictness must not cost us the valid forms: bare field, both explicit
-/// direction prefixes, and the aliases the library's `OrderBy` accepts.
-#[test]
-fn test_valid_ordering_forms_still_parse() {
-    for good in ["code", "-code", "+code", "label", "total", "name", "test"] {
-        let (_, stderr, code) = run_rustloc_with_code(&[".", "--by-file", "-o", good]);
-        assert_eq!(
-            code,
-            Some(0),
-            "`-o {good}` should succeed, got stderr={stderr:?}"
-        );
-    }
 }
