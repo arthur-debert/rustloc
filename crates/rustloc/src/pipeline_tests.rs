@@ -126,19 +126,27 @@ fn explicit_count_subcommand_matches_the_default_route() {
 /// Every structured mode serializes the one canonical response, so the numbers
 /// must agree across all three. A presentation branch leaking into a handler
 /// would show up here as a mode-dependent count.
+///
+/// Both modes deserialize back into [`CountQuerySet`] rather than into a loose
+/// `Value`: the round trip is what pins the schema, so a renamed or dropped
+/// field fails here instead of silently comparing two equally-wrong trees. It
+/// also sidesteps the number-representation quirks that make a raw YAML `Value`
+/// unequal to a JSON one.
 #[test]
 fn structured_modes_carry_the_same_canonical_numbers() {
     let dir = workspace();
     let path = path_of(&dir);
 
-    let json: serde_json::Value =
+    let json: CountQuerySet =
         serde_json::from_str(&stdout(&[&path, "--output", "json"])).expect("json must parse");
-    let yaml: serde_json::Value =
+    let yaml: CountQuerySet =
         serde_yaml::from_str(&stdout(&[&path, "--output", "yaml"])).expect("yaml must parse");
 
-    assert_eq!(json["total"]["code"], 4);
-    assert_eq!(yaml["total"]["code"], 4);
-    assert_eq!(json["total"], yaml["total"]);
+    assert_eq!(json.total.code, 4);
+    assert_eq!(
+        json, yaml,
+        "json and yaml must serialize the same canonical response"
+    );
 }
 
 /// JSON keeps numbers as numbers — the reason the data modes bypass the table
@@ -462,8 +470,13 @@ fn by_crate_on_a_non_workspace_reports_the_orchestration_error() {
 // Diff, through the real pipeline
 // ---------------------------------------------------------------------------
 
+/// Run a git command in `dir`, failing loudly with its output.
+///
+/// The output is carried into the panic message because a fixture that fails to
+/// build is otherwise a bare "git failed" in CI, where the actual cause (commit
+/// identity, permissions, a missing git) only lives in git's stderr.
 fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let output = Command::new("git")
         .args(args)
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "t")
@@ -472,7 +485,12 @@ fn git(dir: &Path, args: &[&str]) {
         .env("GIT_COMMITTER_EMAIL", "t@e")
         .output()
         .expect("git must be available");
-    assert!(status.status.success(), "git {args:?} failed");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed in {dir:?}: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
 }
 
 /// Every column a diff CSV must expose: added_*, removed_*, and net_* for each
@@ -502,7 +520,9 @@ const DIFF_CSV_HEADERS: &[&str] = &[
     "net_total",
 ];
 
-/// A repo with one commit, plus an uncommitted second file.
+/// A repo with one commit (`Cargo.toml` + `src/lib.rs`), plus an uncommitted
+/// edit to `src/lib.rs` that adds exactly one line of code — the single added
+/// line the workdir-diff tests below assert on.
 fn repo() -> TempDir {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path();
