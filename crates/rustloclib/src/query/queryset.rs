@@ -6,7 +6,8 @@
 //! Adapting a query set to a particular presentation is the render layer's job,
 //! never the handler's.
 //!
-//! A QuerySet sits between raw counting/diff results and the final table output.
+//! A QuerySet is where this library's pipeline ends: it sits between raw
+//! counting/diff results and whatever presentation the caller builds.
 //! It represents data that has been:
 //! - Aggregated to the requested level (crate, module, file)
 //! - Sorted according to the ordering preference
@@ -39,8 +40,8 @@
 //!
 //! The data pipeline is:
 //! 1. Raw Data (CountResult, DiffResult)
-//! 2. QuerySet (filtered, aggregated, sorted, optionally truncated)
-//! 3. LOCTable (formatted strings for display)
+//! 2. QuerySet (filtered, aggregated, sorted, optionally truncated) — the
+//!    library's final output; presentation lives in the calling application
 //!
 //! [`Predicate`]: crate::query::options::Predicate
 

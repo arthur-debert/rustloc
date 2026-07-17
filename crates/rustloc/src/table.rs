@@ -1,13 +1,20 @@
 //! Table-ready data structures for LOC output.
 //!
-//! This module provides `LOCTable`, a presentation-ready data structure
-//! that can be directly consumed by templates or serialized to JSON.
+//! This module provides `LOCTable`, a presentation-ready data structure that
+//! the `stats_table` template consumes.
 //!
 //! The data flow is:
-//! 1. Raw Data (CountResult, DiffResult)
+//! 1. Raw Data (`CountResult`, `DiffResult`) — `rustloclib`
 //! 2. QuerySet (aggregated, sorted, optionally filtered/truncated) — the
-//!    canonical, output-mode-independent command response
-//! 3. LOCTable (formatted strings for display)
+//!    canonical, output-mode-independent command response, and the end of
+//!    `rustloclib`'s reusable pipeline
+//! 3. LOCTable (formatted strings for display) — *this* crate
+//!
+//! LOCTable lives in the CLI, not the library, because everything it owns is
+//! presentation: headers, footer wording, legends, display widths, and the
+//! `[additions]`/`[deletions]` style tags the renderer interprets. The library
+//! ends at typed numeric data; deciding how that data *looks* is the
+//! application's job.
 //!
 //! LOCTable is a pure presentation layer - it only formats data, no filtering
 //! or sorting logic. All computation happens in the QuerySet layer.
@@ -17,12 +24,8 @@
 //! layer selects which of them become columns. That split is what lets the
 //! same response render as a table and serialize to JSON/YAML/XML/CSV.
 
+use rustloclib::{Aggregation, CountQuerySet, DiffQuerySet, LineTypes, Locs, LocsDiff};
 use serde::{Deserialize, Serialize};
-
-use crate::data::diff::LocsDiff;
-use crate::data::stats::Locs;
-use crate::query::options::Aggregation;
-use crate::query::queryset::{CountQuerySet, DiffQuerySet};
 
 /// A single row in the table (data row or footer).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,13 +72,14 @@ impl LOCTable {
     /// The QuerySet already contains filtered, aggregated, and sorted data.
     /// This method just formats it into displayable strings.
     pub fn from_count_queryset(qs: &CountQuerySet) -> Self {
-        let headers = build_headers(&qs.aggregation, &qs.line_types);
+        let columns = enabled_columns(&qs.line_types);
+        let headers = build_headers(&qs.aggregation, &columns);
         let rows: Vec<TableRow> = qs
             .items
             .iter()
             .map(|item| TableRow {
                 label: item.label.clone(),
-                values: format_locs(&item.stats, &qs.line_types),
+                values: format_locs(&item.stats, &columns),
             })
             .collect();
         let footer = TableRow {
@@ -86,7 +90,7 @@ impl LOCTable {
                 qs.file_count,
                 qs.top_applied,
             ),
-            values: format_locs(&qs.total, &qs.line_types),
+            values: format_locs(&qs.total, &columns),
         };
         let value_widths = compute_value_widths(&headers, &rows, &footer);
 
@@ -106,7 +110,8 @@ impl LOCTable {
     /// The QuerySet already contains filtered, aggregated, and sorted data.
     /// This method just formats it into displayable strings with diff notation.
     pub fn from_diff_queryset(qs: &DiffQuerySet) -> Self {
-        let headers = build_headers(&qs.aggregation, &qs.line_types);
+        let columns = enabled_columns(&qs.line_types);
+        let headers = build_headers(&qs.aggregation, &columns);
 
         // Two-pass formatting so the `+added`, `-removed`, and `net` sub-fields
         // line up across every row in a column: gather raw pairs first,
@@ -115,9 +120,9 @@ impl LOCTable {
         let raw_rows: Vec<Vec<(u64, u64)>> = qs
             .items
             .iter()
-            .map(|item| diff_pairs(&item.stats, &qs.line_types))
+            .map(|item| diff_pairs(&item.stats, &columns))
             .collect();
-        let raw_footer = diff_pairs(&qs.total, &qs.line_types);
+        let raw_footer = diff_pairs(&qs.total, &columns);
         let sub_widths = compute_diff_sub_widths(&raw_rows, &raw_footer);
 
         let rows: Vec<TableRow> = qs
@@ -164,6 +169,72 @@ impl LOCTable {
     }
 }
 
+/// One value column of the table.
+///
+/// The query set's `line_types` selects which of these appear; this enum is
+/// the single source of truth for their order and per-column accessors, so
+/// headers, count cells, and diff cells can never drift out of alignment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Column {
+    Code,
+    Tests,
+    Examples,
+    Docs,
+    Comments,
+    Blanks,
+    Total,
+}
+
+impl Column {
+    /// Display header for this column.
+    fn header(self) -> &'static str {
+        match self {
+            Column::Code => "Code",
+            Column::Tests => "Tests",
+            Column::Examples => "Examples",
+            Column::Docs => "Docs",
+            Column::Comments => "Comments",
+            Column::Blanks => "Blanks",
+            Column::Total => "Total",
+        }
+    }
+
+    /// This column's count out of a `Locs`.
+    fn count(self, locs: &Locs) -> u64 {
+        match self {
+            Column::Code => locs.code,
+            Column::Tests => locs.tests,
+            Column::Examples => locs.examples,
+            Column::Docs => locs.docs,
+            Column::Comments => locs.comments,
+            Column::Blanks => locs.blanks,
+            // Precomputed by the library, not summed here.
+            Column::Total => locs.total,
+        }
+    }
+
+    /// This column's `(added, removed)` pair out of a `LocsDiff`.
+    fn diff_pair(self, diff: &LocsDiff) -> (u64, u64) {
+        (self.count(&diff.added), self.count(&diff.removed))
+    }
+}
+
+/// The enabled columns, in display order.
+fn enabled_columns(line_types: &LineTypes) -> Vec<Column> {
+    [
+        (line_types.code, Column::Code),
+        (line_types.tests, Column::Tests),
+        (line_types.examples, Column::Examples),
+        (line_types.docs, Column::Docs),
+        (line_types.comments, Column::Comments),
+        (line_types.blanks, Column::Blanks),
+        (line_types.total, Column::Total),
+    ]
+    .into_iter()
+    .filter_map(|(enabled, column)| enabled.then_some(column))
+    .collect()
+}
+
 /// Visible width of a string, skipping BBCode-style `[tag]`/`[/tag]` markup
 /// that the renderer strips before display. Mirrors what `standout`'s
 /// `strip_tags` does for the simple tag forms our diff values produce —
@@ -203,32 +274,6 @@ fn compute_value_widths(headers: &[String], rows: &[TableRow], footer: &TableRow
             header_w.max(row_w).max(footer_w)
         })
         .collect()
-}
-
-/// Line types configuration for header building.
-/// This is a local copy of the fields we need to avoid circular imports.
-struct LineTypesView {
-    code: bool,
-    tests: bool,
-    examples: bool,
-    docs: bool,
-    comments: bool,
-    blanks: bool,
-    total: bool,
-}
-
-impl From<&crate::query::options::LineTypes> for LineTypesView {
-    fn from(lt: &crate::query::options::LineTypes) -> Self {
-        LineTypesView {
-            code: lt.code,
-            tests: lt.tests,
-            examples: lt.examples,
-            docs: lt.docs,
-            comments: lt.comments,
-            blanks: lt.blanks,
-            total: lt.total,
-        }
-    }
 }
 
 /// Build footer label based on aggregation level.
@@ -272,75 +317,24 @@ fn build_footer_label(
     }
 }
 
-/// Build column headers based on aggregation level and enabled line types.
-fn build_headers(
-    aggregation: &Aggregation,
-    line_types: &crate::query::options::LineTypes,
-) -> Vec<String> {
+/// Build column headers based on aggregation level and enabled columns.
+fn build_headers(aggregation: &Aggregation, columns: &[Column]) -> Vec<String> {
     let label_header = match aggregation {
-        Aggregation::Total => "Name".to_string(),
-        Aggregation::ByCrate => "Crate".to_string(),
-        Aggregation::ByModule => "Module".to_string(),
-        Aggregation::ByFile => "File".to_string(),
+        Aggregation::Total => "Name",
+        Aggregation::ByCrate => "Crate",
+        Aggregation::ByModule => "Module",
+        Aggregation::ByFile => "File",
     };
 
-    let lt = LineTypesView::from(line_types);
-    let mut headers = vec![label_header];
-
-    if lt.code {
-        headers.push("Code".to_string());
-    }
-    if lt.tests {
-        headers.push("Tests".to_string());
-    }
-    if lt.examples {
-        headers.push("Examples".to_string());
-    }
-    if lt.docs {
-        headers.push("Docs".to_string());
-    }
-    if lt.comments {
-        headers.push("Comments".to_string());
-    }
-    if lt.blanks {
-        headers.push("Blanks".to_string());
-    }
-    if lt.total {
-        headers.push("Total".to_string());
-    }
-
-    headers
+    std::iter::once(label_header)
+        .chain(columns.iter().map(|c| c.header()))
+        .map(String::from)
+        .collect()
 }
 
 /// Format Locs values as strings for display.
-fn format_locs(locs: &Locs, line_types: &crate::query::options::LineTypes) -> Vec<String> {
-    let lt = LineTypesView::from(line_types);
-    let mut values = Vec::new();
-
-    if lt.code {
-        values.push(locs.code.to_string());
-    }
-    if lt.tests {
-        values.push(locs.tests.to_string());
-    }
-    if lt.examples {
-        values.push(locs.examples.to_string());
-    }
-    if lt.docs {
-        values.push(locs.docs.to_string());
-    }
-    if lt.comments {
-        values.push(locs.comments.to_string());
-    }
-    if lt.blanks {
-        values.push(locs.blanks.to_string());
-    }
-    if lt.total {
-        // Use the precomputed all field
-        values.push(locs.total.to_string());
-    }
-
-    values
+fn format_locs(locs: &Locs, columns: &[Column]) -> Vec<String> {
+    columns.iter().map(|c| c.count(locs).to_string()).collect()
 }
 
 /// Per-column max widths of the three sub-fields inside a diff value
@@ -371,34 +365,11 @@ fn format_diff_value_padded(added: u64, removed: u64, w: &DiffSubWidths) -> Stri
     )
 }
 
-/// Return raw `(added, removed)` pairs in the order of enabled line types.
-/// The shape matches what `build_headers` / `format_locs_diff` produce, so
-/// callers can pair widths with cells positionally.
-fn diff_pairs(diff: &LocsDiff, line_types: &crate::query::options::LineTypes) -> Vec<(u64, u64)> {
-    let lt = LineTypesView::from(line_types);
-    let mut pairs = Vec::new();
-    if lt.code {
-        pairs.push((diff.added.code, diff.removed.code));
-    }
-    if lt.tests {
-        pairs.push((diff.added.tests, diff.removed.tests));
-    }
-    if lt.examples {
-        pairs.push((diff.added.examples, diff.removed.examples));
-    }
-    if lt.docs {
-        pairs.push((diff.added.docs, diff.removed.docs));
-    }
-    if lt.comments {
-        pairs.push((diff.added.comments, diff.removed.comments));
-    }
-    if lt.blanks {
-        pairs.push((diff.added.blanks, diff.removed.blanks));
-    }
-    if lt.total {
-        pairs.push((diff.added.total, diff.removed.total));
-    }
-    pairs
+/// Return raw `(added, removed)` pairs in the order of the enabled columns.
+/// The shape matches what `build_headers` produces, so callers can pair
+/// widths with cells positionally.
+fn diff_pairs(diff: &LocsDiff, columns: &[Column]) -> Vec<(u64, u64)> {
+    columns.iter().map(|c| c.diff_pair(diff)).collect()
 }
 
 /// For each value column, compute the max widths of the `+added`, `-removed`,
@@ -441,9 +412,7 @@ fn format_diff_row(pairs: &[(u64, u64)], widths: &[DiffSubWidths]) -> Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::counter::CountResult;
-    use crate::data::stats::CrateStats;
-    use crate::query::options::{LineTypes, Ordering};
+    use rustloclib::{CountResult, CrateStats, Ordering};
     use std::path::PathBuf;
 
     fn sample_locs(code: u64, tests: u64) -> Locs {
@@ -484,7 +453,8 @@ mod tests {
 
     #[test]
     fn test_headers_by_crate() {
-        let headers = build_headers(&Aggregation::ByCrate, &LineTypes::everything());
+        let columns = enabled_columns(&LineTypes::everything());
+        let headers = build_headers(&Aggregation::ByCrate, &columns);
         assert_eq!(headers[0], "Crate");
         assert_eq!(headers[1], "Code");
         assert_eq!(headers[2], "Tests");
@@ -497,9 +467,9 @@ mod tests {
 
     #[test]
     fn test_headers_filtered_line_types() {
-        let line_types = LineTypes::new().with_code();
-        let headers = build_headers(&Aggregation::ByFile, &line_types);
-        assert_eq!(headers.len(), 3); // File, Code, All
+        let columns = enabled_columns(&LineTypes::new().with_code());
+        let headers = build_headers(&Aggregation::ByFile, &columns);
+        assert_eq!(headers.len(), 3); // File, Code, Total
         assert_eq!(headers[0], "File");
         assert_eq!(headers[1], "Code");
         assert_eq!(headers[2], "Total");
@@ -508,14 +478,15 @@ mod tests {
     #[test]
     fn test_format_locs() {
         let locs = sample_locs(100, 50);
-        let values = format_locs(&locs, &LineTypes::everything());
+        let columns = enabled_columns(&LineTypes::everything());
+        let values = format_locs(&locs, &columns);
         assert_eq!(values[0], "100"); // Code
         assert_eq!(values[1], "50"); // Tests
         assert_eq!(values[2], "0"); // Examples
         assert_eq!(values[3], "0"); // Docs
         assert_eq!(values[4], "0"); // Comments
         assert_eq!(values[5], "0"); // Blanks
-        assert_eq!(values[6], "150"); // All
+        assert_eq!(values[6], "150"); // Total
     }
 
     #[test]
@@ -560,7 +531,7 @@ mod tests {
         // says "X of Y" without the "top" qualifier, because the visible
         // rows aren't sorted-and-sliced — they're just the ones that
         // passed the predicate.
-        use crate::query::options::{Field, Op, Predicate};
+        use rustloclib::{Field, Op, Predicate};
 
         let result = sample_count_result();
         let qs = CountQuerySet::from_result(
@@ -578,7 +549,7 @@ mod tests {
 
     #[test]
     fn test_footer_label_filter_then_top_uses_top_wording() {
-        use crate::query::options::{Field, Op, Predicate};
+        use rustloclib::{Field, Op, Predicate};
 
         let result = sample_count_result();
         let qs = CountQuerySet::from_result(

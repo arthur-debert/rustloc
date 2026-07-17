@@ -43,11 +43,11 @@ pub struct Visitor<T: Read> {
     reader: BufReader<T>,
     context: VisitorContext,
     stats: Locs,
+    /// Per-line classification, in file order — index `n` is line `n + 1`.
+    /// This is the visitor's trace output: it is returned as data by
+    /// [`Visitor::visit_file_analysis`] rather than printed.
     line_classes: Vec<LineClass>,
     lookahead: Option<char>,
-    curr_string: String,
-    curr_line_no: usize,
-    debug: bool,
 }
 
 /// Tracks what kind of content has been seen on the current line.
@@ -92,7 +92,7 @@ impl Visitor<File> {
     /// Create a new visitor for a file at the given path.
     ///
     /// The context (code/tests/examples) is automatically determined from the path.
-    pub fn new(file_path: impl AsRef<Path>, debug: bool) -> Result<Self> {
+    pub fn new(file_path: impl AsRef<Path>) -> Result<Self> {
         let path = file_path.as_ref();
         let file = File::open(path).map_err(|e| RustlocError::FileRead {
             path: path.to_path_buf(),
@@ -109,9 +109,6 @@ impl Visitor<File> {
             stats: Locs::default(),
             line_classes: Vec::new(),
             lookahead,
-            curr_string: String::new(),
-            curr_line_no: 1,
-            debug,
         })
     }
 }
@@ -120,7 +117,7 @@ impl<T: Read> Visitor<T> {
     /// Create a visitor from any reader with a specified context.
     ///
     /// This is useful for testing without actual files.
-    pub fn from_reader(reader: T, context: VisitorContext, debug: bool) -> Self {
+    pub fn from_reader(reader: T, context: VisitorContext) -> Self {
         let mut reader = BufReader::new(reader);
         let lookahead = reader.chars().next().and_then(|c| c.ok());
 
@@ -130,9 +127,6 @@ impl<T: Read> Visitor<T> {
             stats: Locs::default(),
             line_classes: Vec::new(),
             lookahead,
-            curr_string: String::new(),
-            curr_line_no: 1,
-            debug,
         }
     }
 
@@ -337,11 +331,10 @@ impl<T: Read> Visitor<T> {
     ///
     /// The key insight: only logic lines need context (code/tests/examples).
     /// Comments, docs, and blanks are counted regardless of where they appear.
+    ///
+    /// The classification is recorded twice over: summed into `stats`, and
+    /// appended to `line_classes` so callers can inspect the per-line verdict.
     fn finish_line(&mut self, context: VisitorContext, line_context: LineContext) {
-        let curr = std::mem::take(&mut self.curr_string);
-        let line = self.curr_line_no;
-        self.curr_line_no += 1;
-
         let class = if line_context.has_code {
             LineClass::Logic(context)
         } else if line_context.has_doc_comment_start {
@@ -353,29 +346,6 @@ impl<T: Read> Visitor<T> {
         };
         class.record(&mut self.stats);
         self.line_classes.push(class);
-
-        if line_context.has_code {
-            if self.debug {
-                let ctx = match context {
-                    VisitorContext::Code => "CODE",
-                    VisitorContext::Tests => "TEST",
-                    VisitorContext::Example => "EXAMPLE",
-                };
-                eprint!("{line}: {ctx}: {curr}");
-            }
-        } else if line_context.has_doc_comment_start {
-            if self.debug {
-                eprint!("{line}: DOCS: {curr}");
-            }
-        } else if line_context.has_comment_start {
-            if self.debug {
-                eprint!("{line}: COMM: {curr}");
-            }
-        } else {
-            if self.debug {
-                eprint!("{line}: BLANK: {curr}");
-            }
-        }
     }
 
     fn next_token(&mut self) -> Option<Token> {
@@ -476,15 +446,10 @@ impl<T: Read> Visitor<T> {
     }
 
     fn next_char(&mut self) -> Option<char> {
-        let c = mem::replace(
+        mem::replace(
             &mut self.lookahead,
             self.reader.chars().next().and_then(|c| c.ok()),
-        );
-
-        if let Some(c) = c {
-            self.curr_string.push(c);
-        }
-        c
+        )
     }
 }
 
@@ -541,7 +506,7 @@ pub fn gather_stats(source: &str, context: VisitorContext) -> Locs {
 pub(crate) fn gather_analysis_for_path(
     path: impl AsRef<Path>,
 ) -> Result<super::backend::FileAnalysis> {
-    let visitor = Visitor::new(path, false)?;
+    let visitor = Visitor::new(path)?;
     let (stats, line_classes) = visitor.visit_file_analysis();
     Ok(super::backend::FileAnalysis {
         language: super::backend::LanguageId::Rust,
@@ -554,7 +519,7 @@ pub(crate) fn gather_analysis(
     source: &str,
     context: VisitorContext,
 ) -> super::backend::FileAnalysis {
-    let visitor = Visitor::from_reader(source.as_bytes(), context, false);
+    let visitor = Visitor::from_reader(source.as_bytes(), context);
     let (stats, line_classes) = visitor.visit_file_analysis();
     super::backend::FileAnalysis {
         language: super::backend::LanguageId::Rust,
