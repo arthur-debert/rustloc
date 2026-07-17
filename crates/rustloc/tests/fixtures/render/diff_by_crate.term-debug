@@ -1,0 +1,14 @@
+
+Diff: HEAD → working tree
+
+[header]                 Crate                         Code      Tests       Docs        Total[/header]
+──────────────────────────────────────────────────────────────────────────────────────
+alpha                                    [additions]+0[/additions]/[deletions]-50[/deletions]/-50 [additions]+0[/additions]/[deletions]-44[/deletions]/-44 [additions]+0[/additions]/[deletions]-50[/deletions]/-50 [additions]+0[/additions]/[deletions]-254[/deletions]/-254
+[table_row_odd]beta                                     [additions]+2[/additions]/ [deletions]-0[/deletions]/  2 [additions]+0[/additions]/ [deletions]-0[/deletions]/  0 [additions]+0[/additions]/ [deletions]-0[/deletions]/  0 [additions]+2[/additions]/  [deletions]-0[/deletions]/   2[/table_row_odd]
+──────────────────────────────────────────────────────────────────────────────────────
+Total (2 crates)                         [additions]+2[/additions]/[deletions]-50[/deletions]/-48 [additions]+0[/additions]/[deletions]-44[/deletions]/-44 [additions]+0[/additions]/[deletions]-50[/deletions]/-50 [additions]+2[/additions]/[deletions]-254[/deletions]/-252
+
+
+Skipped changes: [additions]+2[/additions] / [deletions]-0[/deletions] / 2 net
+
+[muted](+added / -removed / net)[/muted]
