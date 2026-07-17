@@ -620,9 +620,12 @@ fn test_by_module_output() {
     assert!(stdout.contains("Module"));
     // Modules aggregate at directory level
     assert!(stdout.contains("rustloclib::data"));
-    assert!(stdout.contains("rustloclib::output"));
     assert!(stdout.contains("rustloclib::query"));
     assert!(stdout.contains("rustloclib::source"));
+    // The library's pipeline ends at the query stage: presentation lives in
+    // this crate's `table` module, not in a `rustloclib::output` one.
+    assert!(!stdout.contains("rustloclib::output"));
+    assert!(stdout.contains("rustloc::table"));
     // Should NOT contain per-file module paths
     assert!(!stdout.contains("rustloclib::data::counter"));
     assert!(!stdout.contains("rustloclib::data::diff"));
@@ -635,8 +638,14 @@ fn test_crate_filter() {
     let (stdout, _, success) = run_rustloc(&[".", "--crate", "rustloc"]);
 
     assert!(success);
-    // The filtered output should show only 2 files
-    assert!(stdout.contains("2")); // Files column shows 2
+    // Only the `rustloc` crate's own files are counted: src/main.rs,
+    // src/table.rs, and tests/cli_integration.rs. Bump this when the crate
+    // gains a file. Asserting the footer (rather than a bare `contains("2")`,
+    // which any stray digit satisfies) is what actually proves the filter ran.
+    assert!(
+        stdout.contains("Total (3 files)"),
+        "expected the crate filter to narrow to rustloc's 3 files, got:\n{stdout}"
+    );
 }
 
 #[test]

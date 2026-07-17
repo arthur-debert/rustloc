@@ -21,15 +21,19 @@
 //!
 //! ## Data Pipeline
 //!
-//! The library is organized into four stages that form a clear data pipeline:
+//! The library is organized into three stages that form a clear data pipeline:
 //!
 //! ```text
-//! ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-//! │  source  │ -> │   data   │ -> │  query   │ -> │  output  │
-//! └──────────┘    └──────────┘    └──────────┘    └──────────┘
-//!   Discover       Parse &         Filter,         Format
-//!   files          collect         sort            strings
+//! ┌──────────┐    ┌──────────┐    ┌──────────┐
+//! │  source  │ -> │   data   │ -> │  query   │
+//! └──────────┘    └──────────┘    └──────────┘
+//!   Discover       Parse &         Filter,
+//!   files          collect         sort
 //! ```
+//!
+//! The pipeline ends at typed query data. Presentation — tables, headers,
+//! display widths, style tags, footer and legend wording — is the caller's
+//! job: this library returns numbers, never display-ready strings.
 //!
 //! ### Stage 1: Source Discovery ([`source`])
 //!
@@ -55,10 +59,9 @@
 //!   chained via `CountQuerySet::filter(&[Predicate])`
 //! - `CountQuerySet::top(N)`: Truncate to the first N rows after sorting
 //!
-//! ### Stage 4: Output Formatting ([`output`])
-//!
-//! Format data for presentation:
-//! - [`LOCTable`]: Table with headers, rows, footer (all strings)
+//! [`CountQuerySet`] / [`DiffQuerySet`] are the canonical, output-mode
+//! independent responses and the end of the library: serialize them directly,
+//! or format them however your application presents data.
 //!
 //! ## Example
 //!
@@ -96,7 +99,7 @@
 //!
 //! ```rust,ignore
 //! use rustloclib::{
-//!     count_workspace, CountOptions, CountQuerySet, LOCTable,
+//!     count_workspace, CountOptions, CountQuerySet,
 //!     Aggregation, Field, LineTypes, Op, Ordering, Predicate,
 //! };
 //!
@@ -117,10 +120,13 @@
 //! .filter(&[Predicate::new(Field::Code, Op::Gte, 1000)])
 //! .top(10);
 //!
-//! // Stage 4: Format for output. The query set is the canonical, output-mode
-//! // independent response — serialize it directly for JSON/YAML/XML, or format
-//! // it into a LOCTable for human display.
-//! let table = LOCTable::from_count_queryset(&queryset);
+//! // The query set is where the library stops: typed counts per item plus
+//! // totals and truncation metadata. Serialize it directly for JSON/YAML/XML,
+//! // read `queryset.items` for your own presentation, or hand it to whatever
+//! // renderer your application uses.
+//! for item in &queryset.items {
+//!     println!("{}: {} code lines", item.label, item.stats.code);
+//! }
 //! ```
 //!
 //! [`DiffQuerySet`] mirrors [`CountQuerySet`] for the diff side; both
@@ -135,7 +141,6 @@
 
 // Pipeline modules (in order)
 pub mod data;
-pub mod output;
 pub mod query;
 pub mod source;
 
@@ -151,7 +156,6 @@ pub use data::{
     LanguageSelection, Locs, LocsDiff, ModuleStats, VisitorContext, WorkdirDiffMode,
 };
 pub use error::RustlocError;
-pub use output::{LOCTable, TableRow};
 pub use query::{
     Aggregation, CountQuerySet, DiffQuerySet, Field, LineTypes, Op, OrderBy, OrderDirection,
     Ordering, Predicate, QueryItem,

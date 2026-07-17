@@ -61,6 +61,8 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use standout::cli::{App, Dispatch, RunResult};
 use standout::{embed_styles, embed_templates};
 
+mod table;
+
 /// Language-aware lines of code counter with test/code separation
 #[derive(Parser)]
 #[command(name = "rustloc")]
@@ -655,8 +657,9 @@ mod handlers {
 ///   response is formatted into a `LOCTable` for the `stats_table` template.
 ///   `line_types` picks the columns here, at render time.
 mod presentation {
+    use crate::table::LOCTable;
     use clap::ArgMatches;
-    use rustloclib::{CountQuerySet, DiffQuerySet, LOCTable, Locs, LocsDiff};
+    use rustloclib::{CountQuerySet, DiffQuerySet, Locs, LocsDiff};
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use standout::cli::{CommandContext, HookError};
