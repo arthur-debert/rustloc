@@ -1,10 +1,24 @@
-//! Query set: processed data ready for table rendering.
+//! Query set: the canonical command response.
+//!
+//! [`CountQuerySet`] and [`DiffQuerySet`] are the single, typed, serializable
+//! value each command produces. They are **independent of output mode**: the
+//! same query set backs the human table, JSON/YAML/XML serialization, and CSV.
+//! Adapting a query set to a particular presentation is the render layer's job,
+//! never the handler's.
 //!
 //! A QuerySet sits between raw counting/diff results and the final table output.
 //! It represents data that has been:
 //! - Aggregated to the requested level (crate, module, file)
-//! - Filtered to include only requested line types
 //! - Sorted according to the ordering preference
+//!
+//! ## Line types are a *view descriptor*, not a data filter
+//!
+//! Stats in a query set are always **complete** — every line type carries its
+//! real count. The `line_types` field records which line types the user asked
+//! to *see*; the render layer uses it to choose columns. Keeping the data whole
+//! is what lets one response serve every output mode, and it means ordering and
+//! predicate filtering always evaluate against real values rather than against
+//! values that happened to be zeroed for display.
 //!
 //! After construction with `from_result`, two chainable methods further
 //! reduce the row set:
@@ -41,7 +55,7 @@ use crate::data::stats::Locs;
 use super::options::{Aggregation, Field, LineTypes, OrderBy, OrderDirection, Ordering, Predicate};
 
 /// A single item in a query set (one row of data before string formatting).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QueryItem<T> {
     /// Row label (file path, crate name, module name, etc.)
     pub label: String,
@@ -49,12 +63,16 @@ pub struct QueryItem<T> {
     pub stats: T,
 }
 
-/// Query set for count results.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Query set for count results — the canonical `count` response.
+///
+/// The same value is rendered as a table, serialized to JSON/YAML/XML, and
+/// adapted to CSV rows. Construction never depends on the output mode.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CountQuerySet {
     /// Aggregation level used
     pub aggregation: Aggregation,
-    /// Line types included
+    /// Line types the caller asked to see. A *view descriptor* for the render
+    /// layer — `items`/`total` always carry complete, unfiltered counts.
     pub line_types: LineTypes,
     /// Data rows (filtered and sorted; possibly truncated by `top`)
     pub items: Vec<QueryItem<Locs>>,
@@ -73,12 +91,16 @@ pub struct CountQuerySet {
     pub top_applied: bool,
 }
 
-/// Query set for diff results.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Query set for diff results — the canonical `diff` response.
+///
+/// The same value is rendered as a table, serialized to JSON/YAML/XML, and
+/// adapted to CSV rows. Construction never depends on the output mode.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DiffQuerySet {
     /// Aggregation level used
     pub aggregation: Aggregation,
-    /// Line types included
+    /// Line types the caller asked to see. A *view descriptor* for the render
+    /// layer — `items`/`total` always carry complete, unfiltered counts.
     pub line_types: LineTypes,
     /// Data rows (filtered and sorted; possibly truncated by `top`)
     pub items: Vec<QueryItem<LocsDiff>>,
@@ -108,15 +130,18 @@ pub struct DiffQuerySet {
 impl CountQuerySet {
     /// Create a QuerySet from a CountResult.
     ///
-    /// Applies aggregation level, line type filters, and ordering.
+    /// Applies aggregation level and ordering. `line_types` is recorded as the
+    /// requested *view* and does not filter the data — `items` and `total`
+    /// always carry complete counts so one response can serve every output
+    /// mode. See the module docs for why.
     pub fn from_result(
         result: &CountResult,
         aggregation: Aggregation,
         line_types: LineTypes,
         ordering: Ordering,
     ) -> Self {
-        let items = build_count_items(result, &aggregation, &line_types, &ordering);
-        let total = result.total.filter(line_types);
+        let items = build_count_items(result, &aggregation, &ordering);
+        let total = result.total;
         let total_items = items.len();
 
         CountQuerySet {
@@ -146,11 +171,10 @@ impl CountQuerySet {
 
     /// Keep only items satisfying every predicate (AND-combined).
     ///
-    /// `Field::Total` reads `Locs::total` directly so filtering on `total`
-    /// matches the displayed `Total` column regardless of the active
-    /// `LineTypes`. To filter on a subset, use the per-field flags
-    /// (`--code-gte`, `--tests-gte`, …) which always operate on the
-    /// underlying line type, not a "currently-visible" view of it.
+    /// Every predicate evaluates against the item's real counts, never against
+    /// a display-filtered view: `line_types` selects columns, not data. So
+    /// `--blanks-gte 10` matches on real blank counts even when blanks aren't
+    /// among the displayed line types.
     ///
     /// `total_items` is intentionally NOT updated — it tracks the row count
     /// before any *user-driven* truncation (`top` and `filter`), so the
@@ -231,15 +255,18 @@ fn relative_path_label(path: &std::path::Path, root: &std::path::Path) -> String
 impl DiffQuerySet {
     /// Create a QuerySet from a DiffResult.
     ///
-    /// Applies aggregation level, line type filters, and ordering.
+    /// Applies aggregation level and ordering. `line_types` is recorded as the
+    /// requested *view* and does not filter the data — `items` and `total`
+    /// always carry complete counts so one response can serve every output
+    /// mode. See the module docs for why.
     pub fn from_result(
         result: &DiffResult,
         aggregation: Aggregation,
         line_types: LineTypes,
         ordering: Ordering,
     ) -> Self {
-        let items = build_diff_items(result, &aggregation, &line_types, &ordering);
-        let total = result.total.filter(line_types);
+        let items = build_diff_items(result, &aggregation, &ordering);
+        let total = result.total;
         let total_items = items.len();
 
         DiffQuerySet {
@@ -273,9 +300,9 @@ impl DiffQuerySet {
     /// Comparisons are made against the **net** change for each field
     /// (added − removed), so `--code-lt 0` matches files with net code
     /// removed, and `--code-gte 100` matches files where added − removed ≥ 100.
-    /// `Field::Total` uses `LocsDiff::net_total()` so it matches the
-    /// displayed Total column. See [`CountQuerySet::filter`] for the
-    /// rationale on why `total_items` isn't updated.
+    /// As on the count side, predicates always see real counts rather than a
+    /// display-filtered view. See [`CountQuerySet::filter`] for the rationale
+    /// on why `total_items` isn't updated.
     #[must_use]
     pub fn filter(mut self, preds: &[Predicate]) -> Self {
         if preds.is_empty() {
@@ -306,10 +333,12 @@ fn count_sort_key(locs: &Locs, order_by: &OrderBy) -> u64 {
 }
 
 /// Build query items from CountResult based on aggregation level.
+///
+/// Stats are carried through complete — line-type selection is a view concern
+/// resolved at render time, so sorting here always sees real values.
 fn build_count_items(
     result: &CountResult,
     aggregation: &Aggregation,
-    line_types: &LineTypes,
     ordering: &Ordering,
 ) -> Vec<QueryItem<Locs>> {
     let mut items: Vec<(String, Locs)> = match aggregation {
@@ -317,7 +346,7 @@ fn build_count_items(
         Aggregation::ByCrate => result
             .crates
             .iter()
-            .map(|c| (c.name.clone(), c.stats.filter(*line_types)))
+            .map(|c| (c.name.clone(), c.stats))
             .collect(),
         Aggregation::ByModule => result
             .modules
@@ -328,18 +357,13 @@ fn build_count_items(
                 } else {
                     m.name.clone()
                 };
-                (label, m.stats.filter(*line_types))
+                (label, m.stats)
             })
             .collect(),
         Aggregation::ByFile => result
             .files
             .iter()
-            .map(|f| {
-                (
-                    relative_path_label(&f.path, &result.root),
-                    f.stats.filter(*line_types),
-                )
-            })
+            .map(|f| (relative_path_label(&f.path, &result.root), f.stats))
             .collect(),
     };
 
@@ -387,10 +411,12 @@ fn diff_sort_key(diff: &LocsDiff, order_by: &OrderBy) -> i64 {
 }
 
 /// Build query items from DiffResult based on aggregation level.
+///
+/// Stats are carried through complete — line-type selection is a view concern
+/// resolved at render time, so sorting here always sees real values.
 fn build_diff_items(
     result: &DiffResult,
     aggregation: &Aggregation,
-    line_types: &LineTypes,
     ordering: &Ordering,
 ) -> Vec<QueryItem<LocsDiff>> {
     let mut items: Vec<(String, LocsDiff)> = match aggregation {
@@ -398,7 +424,7 @@ fn build_diff_items(
         Aggregation::ByCrate => result
             .crates
             .iter()
-            .map(|c| (c.name.clone(), c.diff.filter(*line_types)))
+            .map(|c| (c.name.clone(), c.diff))
             .collect(),
         Aggregation::ByModule => {
             let mut module_map: HashMap<String, LocsDiff> = HashMap::new();
@@ -416,7 +442,7 @@ fn build_diff_items(
                         module_name
                     };
                     let entry = module_map.entry(full_name).or_default();
-                    *entry += file.diff.filter(*line_types);
+                    *entry += file.diff;
                 }
             } else {
                 for crate_diff in &result.crates {
@@ -439,7 +465,7 @@ fn build_diff_items(
                             format!("{}::{}", crate_diff.name, local_module)
                         };
                         let entry = module_map.entry(full_name).or_default();
-                        *entry += file.diff.filter(*line_types);
+                        *entry += file.diff;
                     }
                 }
             }
@@ -448,12 +474,7 @@ fn build_diff_items(
         Aggregation::ByFile => result
             .files
             .iter()
-            .map(|f| {
-                (
-                    f.path.to_string_lossy().to_string(),
-                    f.diff.filter(*line_types),
-                )
-            })
+            .map(|f| (f.path.to_string_lossy().to_string(), f.diff))
             .collect(),
     };
 
@@ -577,7 +598,10 @@ mod tests {
     }
 
     #[test]
-    fn test_count_queryset_filtered_line_types() {
+    fn test_line_types_is_a_view_descriptor_not_a_data_filter() {
+        // `line_types` records what the caller wants to *see*; it must not
+        // zero the underlying data. Keeping stats complete is what lets the
+        // same response serve the table, JSON/YAML/XML, and CSV.
         let result = sample_count_result();
         let line_types = LineTypes::new().with_code();
         let qs = CountQuerySet::from_result(
@@ -587,9 +611,72 @@ mod tests {
             Ordering::default(),
         );
 
-        // Stats should be filtered
         assert_eq!(qs.items[0].stats.code, 50);
-        assert_eq!(qs.items[0].stats.tests, 0); // Filtered out
+        // Not among the requested line types, but still carries its real count.
+        assert_eq!(qs.items[0].stats.tests, 25);
+        // The request itself is preserved for the render layer.
+        assert_eq!(qs.line_types, line_types);
+    }
+
+    #[test]
+    fn test_response_is_identical_regardless_of_requested_line_types() {
+        // The canonical response's *data* must not vary with the view. Only
+        // the `line_types` descriptor differs between these two.
+        let result = sample_count_result();
+        let full = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        );
+        let narrow = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::new().with_code(),
+            Ordering::default(),
+        );
+
+        assert_eq!(full.items, narrow.items);
+        assert_eq!(full.total, narrow.total);
+        assert_ne!(full.line_types, narrow.line_types);
+    }
+
+    #[test]
+    fn test_filter_sees_real_counts_for_undisplayed_line_types() {
+        // Regression: predicates used to run against display-filtered stats,
+        // so `--tests-gte N` silently matched nothing whenever `tests` wasn't
+        // among the requested line types — while the same query worked in
+        // JSON mode. Data and view are now independent.
+        let result = sample_count_result_three_crates();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::new().with_code(), // tests NOT displayed
+            Ordering::default(),
+        )
+        .filter(&[Predicate::new(Field::Tests, Op::Gte, 75)]);
+
+        // beta (75 tests) and gamma (200 tests) still match.
+        let labels: Vec<_> = qs.items.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(labels, vec!["beta", "gamma"]);
+    }
+
+    #[test]
+    fn test_ordering_sees_real_counts_for_undisplayed_line_types() {
+        // Same class of bug as above, on the ordering side.
+        let result = sample_count_result_three_crates();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::new().with_code(), // tests NOT displayed
+            Ordering {
+                by: OrderBy::Tests,
+                direction: OrderDirection::Descending,
+            },
+        );
+
+        let labels: Vec<_> = qs.items.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(labels, vec!["gamma", "beta", "alpha"]);
     }
 
     fn sample_count_result_three_crates() -> CountResult {

@@ -5,11 +5,17 @@
 //!
 //! The data flow is:
 //! 1. Raw Data (CountResult, DiffResult)
-//! 2. QuerySet (filtered, aggregated, sorted)
+//! 2. QuerySet (aggregated, sorted, optionally filtered/truncated) — the
+//!    canonical, output-mode-independent command response
 //! 3. LOCTable (formatted strings for display)
 //!
 //! LOCTable is a pure presentation layer - it only formats data, no filtering
 //! or sorting logic. All computation happens in the QuerySet layer.
+//!
+//! Building a LOCTable is where the query set's `line_types` **view
+//! descriptor** is applied: the query set carries complete counts, and this
+//! layer selects which of them become columns. That split is what lets the
+//! same response render as a table and serialize to JSON/YAML/XML/CSV.
 
 use serde::{Deserialize, Serialize};
 
