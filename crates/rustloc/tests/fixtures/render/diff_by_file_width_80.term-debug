@@ -1,0 +1,11 @@
+
+Diff: HEAD → working tree
+
+[header]                  File                       Code   Tests    Docs    Total[/header]
+──────────────────────────────────────────────────────────────────────────
+…g_ascii_filename_for_the_parity_gate.rs [additions]+1[/additions]/[deletions]-0[/deletions]/ 1 [additions]+0[/additions]/[deletions]-0[/deletions]/0 [additions]+0[/additions]/[deletions]-0[/deletions]/0 [additions]+1[/additions]/[deletions]-0[/deletions]/ 1
+[table_row_odd]src/数据处理模块.rs                      [additions]+0[/additions]/[deletions]-2[/deletions]/-2 [additions]+0[/additions]/[deletions]-0[/deletions]/0 [additions]+0[/additions]/[deletions]-0[/deletions]/0 [additions]+0[/additions]/[deletions]-2[/deletions]/-2[/table_row_odd]
+──────────────────────────────────────────────────────────────────────────
+Total (2 files)                          [additions]+1[/additions]/[deletions]-2[/deletions]/-1 [additions]+0[/additions]/[deletions]-0[/deletions]/0 [additions]+0[/additions]/[deletions]-0[/deletions]/0 [additions]+1[/additions]/[deletions]-2[/deletions]/-1
+
+[muted](+added / -removed / net)[/muted]

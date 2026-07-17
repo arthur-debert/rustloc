@@ -1,0 +1,4 @@
+added_blanks,added_code,added_comments,added_docs,added_examples,added_tests,added_total,label,net_blanks,net_code,net_comments,net_docs,net_examples,net_tests,net_total,removed_blanks,removed_code,removed_comments,removed_docs,removed_examples,removed_tests,removed_total
+0,1,0,0,0,0,1,src/this_is_a_deliberately_long_ascii_filename_for_the_parity_gate.rs,0,1,0,0,0,0,1,0,0,0,0,0,0,0
+0,0,0,0,0,0,0,src/数据处理模块.rs,0,-2,0,0,0,0,-2,0,2,0,0,0,0,2
+0,1,0,0,0,0,1,TOTAL,0,-1,0,0,0,0,-1,0,2,0,0,0,0,2

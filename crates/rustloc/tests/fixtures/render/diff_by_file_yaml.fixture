@@ -1,0 +1,70 @@
+aggregation: ByFile
+file_count: 2
+from_commit: HEAD
+items:
+- label: src/this_is_a_deliberately_long_ascii_filename_for_the_parity_gate.rs
+  stats:
+    added:
+      blanks: 0
+      code: 1
+      comments: 0
+      docs: 0
+      examples: 0
+      tests: 0
+      total: 1
+    removed:
+      blanks: 0
+      code: 0
+      comments: 0
+      docs: 0
+      examples: 0
+      tests: 0
+      total: 0
+- label: src/数据处理模块.rs
+  stats:
+    added:
+      blanks: 0
+      code: 0
+      comments: 0
+      docs: 0
+      examples: 0
+      tests: 0
+      total: 0
+    removed:
+      blanks: 0
+      code: 2
+      comments: 0
+      docs: 0
+      examples: 0
+      tests: 0
+      total: 2
+line_types:
+  blanks: false
+  code: true
+  comments: false
+  docs: true
+  examples: false
+  tests: true
+  total: true
+non_rust_added: 0
+non_rust_removed: 0
+to_commit: working tree
+top_applied: false
+total:
+  added:
+    blanks: 0
+    code: 1
+    comments: 0
+    docs: 0
+    examples: 0
+    tests: 0
+    total: 1
+  removed:
+    blanks: 0
+    code: 2
+    comments: 0
+    docs: 0
+    examples: 0
+    tests: 0
+    total: 2
+total_items: 2
