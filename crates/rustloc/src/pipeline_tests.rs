@@ -465,7 +465,7 @@ fn theme_carries_the_expected_attributes() {
 fn structured_output_carries_no_theme_artifacts() {
     let dir = workspace();
 
-    for mode in ["json", "yaml", "csv"] {
+    for mode in ["json", "yaml", "xml", "csv"] {
         let out = stdout(&[&path_of(&dir), "--output", mode]);
         assert!(
             !out.contains('\x1b'),

@@ -3,9 +3,11 @@
  * Every selector here is a semantic tag authored in `templates/` — the
  * templates name meaning (`header`, `additions`), this file decides what that
  * meaning looks like. Adding a tag to a template without adding it here makes
- * the tag *unknown*, which term-debug output marks with `(!?)`; the tests in
- * `src/pipeline_tests.rs` fail on that marker rather than letting an unstyled
- * tag render as bare text.
+ * the tag *unknown* — and no human mode fails on that: `text` strips it,
+ * `term-debug` prints it verbatim (identical to a working tag), and only `term`
+ * marks it `[tag?]`. So the guard is `no_semantic_tag_is_unknown_to_the_theme`
+ * in `src/pipeline_tests.rs`, which asks the *theme* rather than any rendered
+ * output — no fixture can see this class of bug.
  *
  * `app::app` merges this on top of `Theme::default()`, so the framework's
  * table semantics stay available. That is why `table_row_odd` is deliberately
