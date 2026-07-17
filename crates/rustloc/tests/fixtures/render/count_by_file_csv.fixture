@@ -1,0 +1,5 @@
+blanks,code,comments,docs,examples,label,tests,total
+0,1,0,0,0,src/lib.rs,0,1
+0,1,0,0,0,src/this_is_a_deliberately_long_ascii_filename_for_the_parity_gate.rs,0,1
+0,1,0,0,0,src/数据处理模块.rs,0,1
+0,3,0,0,0,TOTAL,0,3

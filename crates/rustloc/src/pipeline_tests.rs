@@ -47,8 +47,10 @@
 //! safe to run in parallel.
 
 use rustloclib::{CountQuerySet, DiffQuerySet};
+use serial_test::serial;
 use standout::cli::RunResult;
 use standout::{ColorMode, Theme, DEFAULT_MISSING_STYLE_INDICATOR};
+use standout_render::{set_terminal_width_detector, DetectorGuard};
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
@@ -806,6 +808,149 @@ fn assert_render_fixture(name: &str, actual: &str) {
         actual, expected,
         "rendered output drifted from the approved fixture {name:?}"
     );
+}
+
+/// A fixture comparison for serialized output.
+///
+/// The temp directory is normalized because it is transport metadata, not part
+/// of the schema. Every other byte remains pinned, including serializer
+/// whitespace, document markers, field order, and trailing newlines.
+#[track_caller]
+fn assert_structured_fixture(name: &str, actual: &str, temp_path: &str) {
+    assert_render_fixture(name, &actual.replace(temp_path, "<WORKSPACE>"));
+}
+
+/// Terminal-width detectors are function pointers in Standout 7.6.2, so each
+/// approved width gets a named non-capturing detector.
+fn narrow_terminal_width() -> Option<usize> {
+    Some(48)
+}
+
+fn default_terminal_width() -> Option<usize> {
+    Some(80)
+}
+
+fn wide_terminal_width() -> Option<usize> {
+    Some(160)
+}
+
+type WidthDetector = fn() -> Option<usize>;
+
+const APPROVED_WIDTHS: &[(usize, WidthDetector)] = &[
+    (48, narrow_terminal_width),
+    (80, default_terminal_width),
+    (160, wide_terminal_width),
+];
+
+/// A three-source-file workspace whose two diagnostic labels exercise long
+/// ASCII truncation and display-width handling for CJK characters.
+fn label_workspace() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    std::fs::write(
+        p.join("Cargo.toml"),
+        "[package]\nname = \"labels\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir(p.join("src")).unwrap();
+    // Keep this a valid Cargo target; the two labels below are intentionally
+    // not Rust module identifiers, but rustloc still discovers them as files.
+    std::fs::write(p.join("src/lib.rs"), "pub fn library_target() {}\n").unwrap();
+    std::fs::write(
+        p.join("src/this_is_a_deliberately_long_ascii_filename_for_the_parity_gate.rs"),
+        "pub fn ascii_label() {}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        p.join("src/\u{6570}\u{636e}\u{5904}\u{7406}\u{6a21}\u{5757}.rs"),
+        "pub fn cjk_label() {}\n",
+    )
+    .unwrap();
+    dir
+}
+
+/// Turn [`label_workspace`] into a workdir diff with positive and negative net
+/// values. Both labels remain present in every diff corpus entry.
+fn label_repo() -> TempDir {
+    let dir = label_workspace();
+    let p = dir.path();
+    git(p, &["init", "-q"]);
+    std::fs::write(
+        p.join("src/this_is_a_deliberately_long_ascii_filename_for_the_parity_gate.rs"),
+        "pub fn ascii_one() {}\npub fn ascii_two() {}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        p.join("src/\u{6570}\u{636e}\u{5904}\u{7406}\u{6a21}\u{5757}.rs"),
+        "pub fn cjk_one() {}\npub fn cjk_two() {}\npub fn cjk_three() {}\n",
+    )
+    .unwrap();
+    git(p, &["add", "-A"]);
+    git(p, &["commit", "-qm", "baseline"]);
+
+    // ASCII grows (+1); CJK shrinks (-2), pinning both net signs.
+    std::fs::write(
+        p.join("src/this_is_a_deliberately_long_ascii_filename_for_the_parity_gate.rs"),
+        "pub fn ascii_one() {}\npub fn ascii_two() {}\npub fn ascii_three() {}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        p.join("src/\u{6570}\u{636e}\u{5904}\u{7406}\u{6a21}\u{5757}.rs"),
+        "pub fn cjk_one() {}\n",
+    )
+    .unwrap();
+    dir
+}
+
+/// Count and diff at narrow, representative, and wide terminal widths, in both
+/// stable human modes. The detector override is process-global, so this test is
+/// serial and the guard restores the real detector even if an assertion panics.
+#[test]
+#[serial]
+fn width_and_unicode_corpus_matches_the_approved_fixtures() {
+    let _guard = DetectorGuard::new();
+    let count = label_workspace();
+    let diff = label_repo();
+    let count_path = path_of(&count);
+    let diff_path = path_of(&diff);
+
+    for &(width, detector) in APPROVED_WIDTHS {
+        set_terminal_width_detector(detector);
+        for mode in ["text", "term-debug"] {
+            assert_render_fixture(
+                &format!("count_by_file_width_{width}.{mode}"),
+                &stdout(&[&count_path, "--by-file", "--output", mode]),
+            );
+            assert_render_fixture(
+                &format!("diff_by_file_width_{width}.{mode}"),
+                &stdout(&["diff", "-p", &diff_path, "--by-file", "--output", mode]),
+            );
+        }
+    }
+}
+
+/// Pin every structured serializer independently of the human table corpus.
+/// A tabular migration is accepted only if this separate compatibility gate is
+/// unchanged byte-for-byte.
+#[test]
+fn structured_output_matches_the_approved_fixtures() {
+    let count = label_workspace();
+    let diff = label_repo();
+    let count_path = path_of(&count);
+    let diff_path = path_of(&diff);
+
+    for mode in ["json", "yaml", "xml", "csv"] {
+        assert_structured_fixture(
+            &format!("count_by_file_{mode}.fixture"),
+            &stdout(&[&count_path, "--by-file", "--output", mode]),
+            &count_path,
+        );
+        assert_structured_fixture(
+            &format!("diff_by_file_{mode}.fixture"),
+            &stdout(&["diff", "-p", &diff_path, "--by-file", "--output", mode]),
+            &diff_path,
+        );
+    }
 }
 
 /// A two-crate workspace with deliberately lopsided magnitudes.

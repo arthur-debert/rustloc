@@ -309,6 +309,7 @@ fn aggregation_key(aggregation: &Aggregation) -> &'static str {
 mod tests {
     use super::*;
     use rustloclib::{CountResult, CrateStats, Ordering};
+    use standout::tabular::{CellValue, Col, SubCol, SubColumns, TabularFormatter, TabularSpec};
     use std::path::PathBuf;
 
     fn sample_locs(code: u64, tests: u64) -> Locs {
@@ -500,5 +501,70 @@ mod tests {
         assert_eq!(view.non_rust.added, 0);
         assert_eq!(view.non_rust.removed, 0);
         assert_eq!(view.non_rust.net, 0);
+    }
+
+    #[test]
+    fn native_tabular_count_prototype_matches_the_approved_row() {
+        // Count needs no display strings in its typed presentation data. The
+        // native formatter can consume the label and number directly and
+        // reproduce start truncation plus numeric alignment byte-for-byte.
+        let row = Row {
+            label: "src/this_is_a_deliberately_long_ascii_filename_for_the_parity_gate.rs"
+                .to_string(),
+            values: vec![61_u64],
+        };
+        let spec = TabularSpec::builder()
+            .column(Col::fixed(40).truncate_start())
+            .column(Col::fixed(4).right())
+            .separator(" ")
+            .build();
+        let formatter = TabularFormatter::new(&spec, 45);
+        let value = row.values[0].to_string();
+
+        assert_eq!(
+            formatter.format_row(&[row.label.as_str(), value.as_str()]),
+            "…g_ascii_filename_for_the_parity_gate.rs   61"
+        );
+    }
+
+    #[test]
+    fn native_tabular_diff_prototype_exposes_style_padding_gap() {
+        // This is the smallest 7.6.2 reproducer for the parity blocker. The
+        // typed value is split into native subcolumns; the spec, not the data,
+        // owns alignment and semantic styles. A wider peer in the same logical
+        // column makes this row need one leading space in +added and -removed.
+        let value = DiffValue::new(1, 0);
+        let subcolumns = SubColumns::new(
+            vec![
+                SubCol::fixed(3).right().style("additions"),
+                SubCol::fixed(3).right().style("deletions"),
+                SubCol::fill().right(),
+            ],
+            "/",
+        )
+        .unwrap();
+        let spec = TabularSpec::builder()
+            .column(Col::fixed(10).sub_columns(subcolumns))
+            .build();
+        let formatter = TabularFormatter::new(&spec, 10);
+        let added = format!("+{}", value.added);
+        let removed = format!("-{}", value.removed);
+        let net = value.net.to_string();
+
+        let native = formatter.format_row_cells(&[CellValue::Sub(vec![
+            added.as_str(),
+            removed.as_str(),
+            net.as_str(),
+        ])]);
+        let approved = " [additions]+1[/additions]/ [deletions]-0[/deletions]/ 1";
+
+        assert_eq!(
+            native,
+            "[additions] +1[/additions]/[deletions] -0[/deletions]/ 1"
+        );
+        assert_ne!(
+            native, approved,
+            "Standout 7.6.2 unexpectedly gained padding-outside-style parity; reassess migration"
+        );
     }
 }
