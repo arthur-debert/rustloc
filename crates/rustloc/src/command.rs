@@ -1,9 +1,24 @@
 //! Typed command requests — the parsing boundary.
 //!
-//! This module is the **only** place in the application that reads raw
-//! [`ArgMatches`]. It converts CLI syntax into typed request values
+//! This module is the **only** place that interprets raw [`ArgMatches`] as
+//! command logic. It converts CLI syntax into typed request values
 //! ([`CountRequest`] / [`DiffRequest`]) that [`crate::application`] can
 //! orchestrate without knowing clap exists.
+//!
+//! Two other modules touch `ArgMatches`, and neither is a competing reader:
+//!
+//! - [`crate::filter_args`] owns both ends of the synthetic `--<field>-<op>`
+//!   grid — it registers the 42 hidden args and reads them back. Its
+//!   `extract` is called *from here* ([`QueryRequest::from_matches`]), so the
+//!   grid stays a detail of the module that invents it rather than 42 cases
+//!   spelled out at this boundary.
+//! - `crate::presentation` reads the single injected `_output_mode` arg at the
+//!   render boundary. That is a render decision, not command logic.
+//!
+//! Handlers take `&ArgMatches` only to hand it straight to the constructors
+//! below. So the rule to enforce is not "no other module names the type" but:
+//! **CLI syntax becomes typed values here, and nothing downstream of
+//! [`crate::application`] re-derives command logic from matches.**
 //!
 //! The split matters for two reasons:
 //!
