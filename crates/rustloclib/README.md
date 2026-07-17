@@ -74,26 +74,31 @@ let diff = diff_workdir(".", WorkdirDiffMode::Staged, DiffOptions::new())?;
 
 ## Data pipeline
 
-The library is organized into four stages:
+The library is organized into three stages:
 
 ```text
-source  →  data  →  query  →  output
-Find       Parse    Filter    Format
-files      & count  & sort    strings
+source  →  data  →  query
+Find       Parse    Filter
+files      & count  & sort
 ```
+
+The pipeline ends at typed query data. Presentation — tables, headers, display
+widths, colors, footer wording — is the caller's job: this library returns
+numbers, never display-ready strings.
 
 ### Full pipeline example
 
 ```rust,ignore
 use rustloclib::{
-    count_workspace, CountOptions, CountQuerySet, LOCTable,
+    count_workspace, CountOptions, CountQuerySet,
     Aggregation, LineTypes, Ordering,
 };
 
 // Stages 1–2: discover and count
 let result = count_workspace(".", CountOptions::new())?;
 
-// Stage 3: query (filter line types, aggregate, sort)
+// Stage 3: query (aggregate, sort; `LineTypes` records which types the
+// caller wants to *see* — it never zeroes the underlying counts)
 let queryset = CountQuerySet::from_result(
     &result,
     Aggregation::ByCrate,
@@ -101,8 +106,11 @@ let queryset = CountQuerySet::from_result(
     Ordering::by_code(),
 );
 
-// Stage 4: format for display
-let table = LOCTable::from_count_queryset(&queryset);
+// The query set is the canonical, output-mode-independent response and the
+// end of the library: serialize it, or render it however you like.
+for item in &queryset.items {
+    println!("{}: {} code lines", item.label, item.stats.code);
+}
 ```
 
 ## Key types

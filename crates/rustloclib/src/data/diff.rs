@@ -59,7 +59,13 @@ pub struct LocsDiff {
 /// predicate/sort code consumes the result as a signed int — saturating
 /// here means any pathological input degrades gracefully into a clamped
 /// (still correctly-signed) value rather than a sign-flipped wrap.
-fn sat_sub_u64(a: u64, b: u64) -> i64 {
+///
+/// This is the one net-of-two-counts rule in the codebase, and it is public so
+/// that every net a reader can see is computed by it. The [`LocsDiff`] `net_*`
+/// accessors are its in-library callers; the CLI's diff view uses it directly
+/// for the cells and the non-Rust summary, whose added/removed pairs arrive on
+/// the query set as bare `u64`s rather than a `LocsDiff`.
+pub fn sat_sub_u64(a: u64, b: u64) -> i64 {
     let a = i64::try_from(a).unwrap_or(i64::MAX);
     let b = i64::try_from(b).unwrap_or(i64::MAX);
     a.saturating_sub(b)

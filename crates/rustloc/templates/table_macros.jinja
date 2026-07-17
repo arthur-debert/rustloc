@@ -1,0 +1,135 @@
+{#-
+  Shared human-rendering policy for the count and diff tables.
+
+  Everything a reader of the table actually reads is authored here or in the two
+  templates that import this file (`count_table`, `diff_table`): the header
+  words, the footer wording, the label column's width and truncation, the
+  alternating-row semantics, and the semantic style tags. Rust ships typed
+  numbers plus the facts below; it assembles no display strings and names no
+  style.
+
+  What is shared lives here; what is genuinely count- or diff-specific (numeric
+  cells vs `+added/-removed/net` notation, and the per-column widths each
+  implies) stays in the calling template, where it can be read in one place
+  rather than reconstructed from a parameterised abstraction.
+
+  Style tags are *semantic* — `[header]`, `[table_row_odd]`, `[additions]`,
+  `[deletions]`, `[muted]` — and resolve through `styles/default.css`. Never
+  write a raw ANSI sequence or a concrete colour here.
+
+  A tag the theme does not define does NOT fail the render: text mode strips it
+  and term-debug prints it verbatim, so it looks correct in both. Adding a tag
+  here therefore means adding the matching rule to `styles/default.css` AND its
+  name to `SEMANTIC_TAGS` in `src/pipeline_tests.rs` — that list is the only
+  thing that notices. `table_row_odd` is the exception that needs no CSS rule:
+  it comes from `Theme::default()`, adaptively.
+-#}
+
+{#- The label column's fixed display width. -#}
+{%- set LABEL_WIDTH = 40 -%}
+
+{#- Column key (a *data* name, as Rust ships it, matching the `Locs` field and
+    the JSON/CSV schemas) -> the header word a human reads. This mapping is the
+    reason Rust never needs to know a display word. -#}
+{%- set COLUMN_HEADERS = {
+      "code": "Code",
+      "tests": "Tests",
+      "examples": "Examples",
+      "docs": "Docs",
+      "comments": "Comments",
+      "blanks": "Blanks",
+      "total": "Total",
+    } -%}
+
+{#- Aggregation key -> the label column's header word. -#}
+{%- set LABEL_HEADERS = {
+      "total": "Name",
+      "crate": "Crate",
+      "module": "Module",
+      "file": "File",
+    } -%}
+
+{#- Aggregation key -> the plural unit the footer counts. Total aggregation is
+    absent on purpose: it counts files, not rows (see `footer_label`). -#}
+{%- set UNITS = {
+      "crate": "crates",
+      "module": "modules",
+      "file": "files",
+    } -%}
+
+{#- The horizontal rule, spanning the label column plus every value column and
+    the single space that separates each. -#}
+{%- macro rule(value_widths) -%}
+{{ "─" * (LABEL_WIDTH + (value_widths | sum) + (value_widths | length)) }}
+{%- endmacro -%}
+
+{#- The footer's label.
+
+    Four shapes, and the distinctions are deliberate:
+
+    - Total aggregation counts *files*, because it has no rows to count.
+    - When nothing was reduced, the count is plain.
+    - "top X of Y" for `--top` (a sorted slice) vs plain "X of Y" for rows a
+      filter eliminated: the wording has to stay honest about which happened,
+      since only the former means "the biggest ones".
+    - When a filter AND `--top` both reduced the rows, "top" wins, because the
+      visible rows ARE the top of what passed the filter.
+
+    In every case the totals row still describes the full data set, not the
+    visible slice — which is exactly why the gap is spelled out rather than
+    left for the reader to infer. -#}
+{%- macro footer_label(aggregation, footer) -%}
+{%- if aggregation == "total" -%}
+Total ({{ footer.file_count }} files)
+{%- elif footer.displayed == footer.total_items -%}
+Total ({{ footer.total_items }} {{ UNITS[aggregation] }})
+{%- elif footer.top_applied -%}
+Total (top {{ footer.displayed }} of {{ footer.total_items }} {{ UNITS[aggregation] }})
+{%- else -%}
+Total ({{ footer.displayed }} of {{ footer.total_items }} {{ UNITS[aggregation] }})
+{%- endif -%}
+{%- endmacro -%}
+
+{#- One data row.
+
+    Alternating rows: even-indexed (1-based) rows get a [table_row_odd] wrap
+    that paints the row background. Odd-indexed rows are emitted bare —
+    wrapping them in [table_row_even] (an empty style in the default theme)
+    causes standout-bbparser to strip the inner [additions]/[deletions]
+    resets without emitting its own, which makes the last cell's fg colour
+    bleed into the next row's label.
+
+    Labels truncate at the *start* so the distinctive tail of a long path
+    survives; values right-align so digits line up. -#}
+{%- macro data_row(label, values, value_widths, index) -%}
+{%- set line -%}
+{{ label | col(LABEL_WIDTH, truncate='start') }}{% for v in values %} {{ v | col(value_widths[loop.index0], align='right') }}{% endfor %}
+{%- endset -%}
+{%- if index is even -%}
+[table_row_odd]{{ line }}[/table_row_odd]
+{%- else -%}
+{{ line }}
+{%- endif -%}
+{%- endmacro -%}
+
+{#- The table proper: header, rule, rows, rule, footer.
+
+    `rows` and `total` carry cells that are already in their final display form
+    — plain numbers for count, `+added/-removed/net` notation for diff — so this
+    macro owns layout and owns no cell policy.
+
+    The closing rule is suppressed when there are no rows, so a total-only table
+    reads as one rule between header and total rather than two around nothing.
+
+    Returns without a trailing newline; the caller places it. -#}
+{%- macro table(aggregation, headers, rows, total, footer, value_widths) -%}
+[header]{{ LABEL_HEADERS[aggregation] | col(LABEL_WIDTH, align='center') }}{% for h in headers %} {{ h | col(value_widths[loop.index0], align='right') }}{% endfor %}[/header]
+{{ rule(value_widths) }}
+{% for row in rows -%}
+{{ data_row(row.label, row.values, value_widths, loop.index) }}
+{% endfor -%}
+{%- if rows | length > 0 -%}
+{{ rule(value_widths) }}
+{% endif -%}
+{{ footer_label(aggregation, footer) | col(LABEL_WIDTH) }}{% for v in total %} {{ v | col(value_widths[loop.index0], align='right') }}{% endfor %}
+{%- endmacro -%}

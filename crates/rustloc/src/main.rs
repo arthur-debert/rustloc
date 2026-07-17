@@ -57,9 +57,14 @@
 
 use std::process::ExitCode;
 
-use clap::{Args, CommandFactory, Parser, Subcommand};
-use standout::cli::{App, Dispatch, RunResult};
-use standout::{embed_styles, embed_templates};
+use clap::{Args, Parser, Subcommand};
+use rustloclib::Ordering;
+use standout::cli::{Dispatch, RunResult};
+
+mod app;
+mod application;
+mod command;
+mod table;
 
 /// Language-aware lines of code counter with test/code separation
 #[derive(Parser)]
@@ -102,11 +107,11 @@ struct Cli {
 #[dispatch(handlers = handlers)]
 enum Commands {
     /// Count lines of code (default command)
-    #[dispatch(default, template = "stats_table")]
+    #[dispatch(default, template = "count_table", post_dispatch = presentation::count)]
     Count(CountArgs),
 
     /// Show LOC differences between git commits
-    #[dispatch(template = "stats_table")]
+    #[dispatch(template = "diff_table", post_dispatch = presentation::diff)]
     #[command(long_about = "\
 Show LOC differences between git commits.
 
@@ -192,11 +197,15 @@ Values: code, tests, examples, docs, comments, blanks, total
     by_module: bool,
 
     /// Sort by field [-o FIELD, prefix - for desc: -o -code]
+    // `allow_hyphen_values` keeps `-o -code` from being read as a flag;
+    // `value_parser` makes an unknown field a clap usage error at parse time
+    // rather than a silent fall back to the default ordering.
     #[arg(
         short = 'o',
         long = "ordering",
         value_name = "FIELD",
-        allow_hyphen_values = true
+        allow_hyphen_values = true,
+        value_parser = command::parse_ordering
     )]
     #[arg(long_help = "\
 Sort by field. Prefix with - for descending, + for ascending.
@@ -208,7 +217,7 @@ Default direction: descending for numeric fields, ascending for label.
   -o -code        Sort by code lines (descending, explicit)
   -o +code        Sort by code lines (ascending)
   -o label        Sort by name (ascending)")]
-    ordering: Option<String>,
+    ordering: Option<Ordering>,
 
     /// Show only the top N rows after sorting [requires --by-* aggregation]
     #[arg(long = "top", value_name = "N")]
@@ -303,11 +312,15 @@ Values: code, tests, examples, docs, comments, blanks, total
     by_module: bool,
 
     /// Sort by field [-o FIELD, prefix - for desc: -o -code]
+    // `allow_hyphen_values` keeps `-o -code` from being read as a flag;
+    // `value_parser` makes an unknown field a clap usage error at parse time
+    // rather than a silent fall back to the default ordering.
     #[arg(
         short = 'o',
         long = "ordering",
         value_name = "FIELD",
-        allow_hyphen_values = true
+        allow_hyphen_values = true,
+        value_parser = command::parse_ordering
     )]
     #[arg(long_help = "\
 Sort by field. Prefix with - for descending, + for ascending.
@@ -319,7 +332,7 @@ Default direction: descending for numeric fields, ascending for label.
   -o -code        Sort by code lines (descending, explicit)
   -o +code        Sort by code lines (ascending)
   -o label        Sort by name (ascending)")]
-    ordering: Option<String>,
+    ordering: Option<Ordering>,
 
     /// Show only the top N rows after sorting [requires --by-* aggregation]
     #[arg(long = "top", value_name = "N")]
@@ -333,102 +346,228 @@ truncated slice. No-op when no `--by-*` aggregation is in effect.")]
     top: Option<usize>,
 }
 
-/// Command handlers module
+/// Command handlers — the dispatch boundary.
+///
+/// Handlers are deliberately **thin**: each converts `ArgMatches` into a typed
+/// request ([`crate::command`]), hands it to typed orchestration
+/// ([`crate::application`]), and wraps the canonical response in
+/// [`Output::Render`]. Nothing else. Every decision worth testing — parsing,
+/// validation, library selection, query narrowing — sits on one side of this
+/// seam or the other, reachable without building an `ArgMatches`.
+///
+/// Handlers are also **pure with respect to presentation**: they return the one
+/// canonical response for their command ([`CountQuerySet`] / [`DiffQuerySet`])
+/// and never inspect the output mode. How that response is presented — human
+/// table, CSV rows, or direct serialization — belongs to
+/// [`super::presentation`], which runs at the render boundary.
+///
+/// Standout's `#[handler]` macro would normally generate this bridge from typed
+/// parameters, but it maps one parameter per named clap arg, and the count/diff
+/// grammar includes the 42 dynamically registered `--<field>-<op>` filter flags
+/// (see [`super::filter_args`]) that no fixed parameter list can express. Its
+/// `#[matches]` escape hatch would hand the raw matches back to the handler
+/// anyway, so we keep the plain dispatch signature and put the typed seam in
+/// `command` + `application` instead — the same separation, minus a macro that
+/// cannot cover the grammar.
 mod handlers {
+    use crate::application;
+    use crate::command::{CountRequest, DiffRequest};
     use clap::ArgMatches;
-    use rustloclib::{
-        available_languages, count_directory_with_options, count_file_with_filter, count_workspace,
-        default_languages, diff_revspec, diff_workdir, Aggregation, CountOptions, CountQuerySet,
-        CountResult, DiffOptions, DiffQuerySet, FilterConfig, LOCTable, LanguageName,
-        LanguageSelection, LineTypes, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
-    };
+    use rustloclib::{CountQuerySet, DiffQuerySet};
     use standout::cli::{CommandContext, HandlerResult, Output};
 
-    /// Check if the output mode is a structured data format (json, yaml, xml, csv).
-    fn is_structured_output(matches: &ArgMatches) -> bool {
-        matches!(
-            matches
-                .get_one::<String>("_output_mode")
-                .map(|s| s.as_str()),
-            Some("json" | "yaml" | "xml" | "csv")
-        )
+    /// Handler for the count command (also the default command).
+    pub fn count(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<CountQuerySet> {
+        let request = CountRequest::from_matches(matches)?;
+        Ok(Output::Render(application::count(&request)?))
     }
 
-    fn is_csv_output(matches: &ArgMatches) -> bool {
-        matches
+    /// Handler for the diff command.
+    pub fn diff(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<DiffQuerySet> {
+        let request = DiffRequest::from_matches(matches)?;
+        Ok(Output::Render(application::diff(&request)?))
+    }
+}
+
+/// Presentation adapters — the render boundary.
+///
+/// Handlers return one canonical response per command, independent of output
+/// mode. Something still has to decide how that response reaches the user, and
+/// that decision lives here, in post-dispatch hooks that run *after* the
+/// handler and *before* rendering. This is the one place in the application
+/// that is allowed to know the output mode.
+///
+/// Three targets:
+///
+/// - **Data** (`json`/`yaml`/`xml`) — the canonical response is passed through
+///   untouched and standout serializes it directly. Numbers stay numbers.
+/// - **Csv** — standout's CSV writer flattens whatever object it is handed
+///   into a *single* row, which would turn a query set into hundreds of
+///   `items.0.code`-style columns. So we adapt the response into a top-level
+///   array of flat, typed row structs (see [`CountCsvRow`] / [`DiffCsvRow`]),
+///   which flattens to the row-per-item CSV users expect. This is the isolated
+///   workaround for that render-layer limitation — it is deliberately *not* a
+///   branch in the handler.
+/// - **Table** (everything else: `auto`/`term`/`text`/`term-debug`) — the
+///   response becomes a [`CountView`] / [`DiffView`] for the `count_table` /
+///   `diff_table` templates. `line_types` picks the columns here, at render
+///   time. The view carries typed numbers, not display strings: the template
+///   owns every word, width, and style tag a reader sees (see [`crate::table`]).
+mod presentation {
+    use crate::table::{CountView, DiffView};
+    use clap::ArgMatches;
+    use rustloclib::{CountQuerySet, DiffQuerySet, Locs, LocsDiff};
+    use serde::{Deserialize, Serialize};
+    use serde_json::Value;
+    use standout::cli::{CommandContext, HookError};
+
+    /// How the canonical response should reach the user.
+    enum Target {
+        /// Serialize the response as-is (json/yaml/xml).
+        Data,
+        /// Adapt to row-per-item CSV.
+        Csv,
+        /// Narrow to a `CountView`/`DiffView` for the template.
+        Table,
+    }
+
+    /// Read the render target from standout's injected `_output_mode` arg.
+    ///
+    /// Reading the output mode is legitimate *here* — this is the render
+    /// boundary, not command logic.
+    fn target(matches: &ArgMatches) -> Target {
+        match matches
             .get_one::<String>("_output_mode")
             .map(|s| s.as_str())
-            == Some("csv")
+        {
+            Some("csv") => Target::Csv,
+            Some("json" | "yaml" | "xml") => Target::Data,
+            _ => Target::Table,
+        }
     }
 
-    /// Reshape a CountQuerySet into a top-level array of flat row objects
-    /// so standout's CSV flattener produces one row per item rather than
-    /// hammering the whole queryset into a single mega-row.
-    fn count_queryset_to_csv(qs: &CountQuerySet) -> serde_json::Value {
-        use rustloclib::Locs;
-        use serde_json::{json, Value};
+    fn decode<T: for<'de> Deserialize<'de>>(data: Value) -> Result<T, HookError> {
+        serde_json::from_value(data).map_err(|e| {
+            HookError::post_dispatch(format!("canonical response was not well-formed: {e}"))
+        })
+    }
 
-        let locs_row = |label: &str, stats: &Locs| -> Value {
-            json!({
-                "label": label,
-                "code": stats.code,
-                "tests": stats.tests,
-                "examples": stats.examples,
-                "docs": stats.docs,
-                "comments": stats.comments,
-                "blanks": stats.blanks,
-                "total": stats.total,
-            })
-        };
+    fn encode<T: Serialize>(value: T) -> Result<Value, HookError> {
+        serde_json::to_value(value)
+            .map_err(|e| HookError::post_dispatch(format!("failed to encode presentation: {e}")))
+    }
 
-        let mut rows: Vec<Value> = qs
+    /// One CSV row of the count schema.
+    ///
+    /// The schema is **stable and mode-independent**: every line-type column is
+    /// always present with its real count, regardless of `--type`. `--type` is
+    /// a display filter for the human table; narrowing CSV columns to match it
+    /// would make the schema vary per invocation, which is exactly what a
+    /// machine-readable format must not do.
+    #[derive(Serialize)]
+    struct CountCsvRow {
+        label: String,
+        code: u64,
+        tests: u64,
+        examples: u64,
+        docs: u64,
+        comments: u64,
+        blanks: u64,
+        total: u64,
+    }
+
+    impl CountCsvRow {
+        fn new(label: impl Into<String>, stats: &Locs) -> Self {
+            Self {
+                label: label.into(),
+                code: stats.code,
+                tests: stats.tests,
+                examples: stats.examples,
+                docs: stats.docs,
+                comments: stats.comments,
+                blanks: stats.blanks,
+                total: stats.total,
+            }
+        }
+    }
+
+    /// One CSV row of the diff schema: label plus added/removed/net columns for
+    /// every line type. Same stability contract as [`CountCsvRow`].
+    ///
+    /// `net_*` is `i64` so a net removal reads `-42` rather than underflowing
+    /// into a very large positive number.
+    #[derive(Serialize)]
+    struct DiffCsvRow {
+        label: String,
+        added_code: u64,
+        added_tests: u64,
+        added_examples: u64,
+        added_docs: u64,
+        added_comments: u64,
+        added_blanks: u64,
+        added_total: u64,
+        removed_code: u64,
+        removed_tests: u64,
+        removed_examples: u64,
+        removed_docs: u64,
+        removed_comments: u64,
+        removed_blanks: u64,
+        removed_total: u64,
+        net_code: i64,
+        net_tests: i64,
+        net_examples: i64,
+        net_docs: i64,
+        net_comments: i64,
+        net_blanks: i64,
+        net_total: i64,
+    }
+
+    impl DiffCsvRow {
+        fn new(label: impl Into<String>, d: &LocsDiff) -> Self {
+            Self {
+                label: label.into(),
+                added_code: d.added.code,
+                added_tests: d.added.tests,
+                added_examples: d.added.examples,
+                added_docs: d.added.docs,
+                added_comments: d.added.comments,
+                added_blanks: d.added.blanks,
+                added_total: d.added.total,
+                removed_code: d.removed.code,
+                removed_tests: d.removed.tests,
+                removed_examples: d.removed.examples,
+                removed_docs: d.removed.docs,
+                removed_comments: d.removed.comments,
+                removed_blanks: d.removed.blanks,
+                removed_total: d.removed.total,
+                net_code: d.net_code(),
+                net_tests: d.net_tests(),
+                net_examples: d.net_examples(),
+                net_docs: d.net_docs(),
+                net_comments: d.net_comments(),
+                net_blanks: d.net_blanks(),
+                net_total: d.net_total(),
+            }
+        }
+    }
+
+    /// One row per item, then a `TOTAL` summary row.
+    fn count_csv_rows(qs: &CountQuerySet) -> Vec<CountCsvRow> {
+        let mut rows: Vec<CountCsvRow> = qs
             .items
             .iter()
-            .map(|item| locs_row(&item.label, &item.stats))
+            .map(|item| CountCsvRow::new(item.label.clone(), &item.stats))
             .collect();
-        rows.push(locs_row("TOTAL", &qs.total));
-        Value::Array(rows)
+        rows.push(CountCsvRow::new("TOTAL", &qs.total));
+        rows
     }
 
-    /// Reshape a DiffQuerySet into a top-level array of flat row objects.
-    /// Each row has the label plus added/removed/net columns for every
-    /// line type, so the CSV is one row per file (or crate/module).
-    fn diff_queryset_to_csv(qs: &DiffQuerySet) -> serde_json::Value {
-        use rustloclib::{Locs, LocsDiff};
-        use serde_json::{json, Value};
-
-        // i64 net so removals don't underflow to "very large positive".
-        let diff_row = |label: &str, d: &LocsDiff| -> Value {
-            json!({
-                "label": label,
-                "added_code": d.added.code,
-                "added_tests": d.added.tests,
-                "added_examples": d.added.examples,
-                "added_docs": d.added.docs,
-                "added_comments": d.added.comments,
-                "added_blanks": d.added.blanks,
-                "added_total": d.added.total,
-                "removed_code": d.removed.code,
-                "removed_tests": d.removed.tests,
-                "removed_examples": d.removed.examples,
-                "removed_docs": d.removed.docs,
-                "removed_comments": d.removed.comments,
-                "removed_blanks": d.removed.blanks,
-                "removed_total": d.removed.total,
-                "net_code": d.net_code(),
-                "net_tests": d.net_tests(),
-                "net_examples": d.net_examples(),
-                "net_docs": d.net_docs(),
-                "net_comments": d.net_comments(),
-                "net_blanks": d.net_blanks(),
-                "net_total": d.net_total(),
-            })
-        };
-
-        let mut rows: Vec<Value> = qs
+    /// One row per item, an optional `SKIPPED` row, then a `TOTAL` row.
+    fn diff_csv_rows(qs: &DiffQuerySet) -> Vec<DiffCsvRow> {
+        let mut rows: Vec<DiffCsvRow> = qs
             .items
             .iter()
-            .map(|item| diff_row(&item.label, &item.stats))
+            .map(|item| DiffCsvRow::new(item.label.clone(), &item.stats))
             .collect();
 
         // Preserve the skipped-file summary that the text footer and JSON
@@ -447,330 +586,37 @@ mod handlers {
                     ..Locs::default()
                 },
             };
-            rows.push(diff_row("SKIPPED", &non_rust));
+            rows.push(DiffCsvRow::new("SKIPPED", &non_rust));
         }
 
-        rows.push(diff_row("TOTAL", &qs.total));
-        Value::Array(rows)
+        rows.push(DiffCsvRow::new("TOTAL", &qs.total));
+        rows
     }
 
-    /// Handler for count command
-    pub fn count(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
-        let path = matches
-            .get_one::<String>("path")
-            .map(|s| s.as_str())
-            .unwrap_or(".");
-        let filter = build_filter(matches)?;
-        let line_types = extract_line_types(matches);
-        let crates = extract_crates(matches);
-        let ordering = extract_ordering(matches);
-
-        let by_file = matches.get_flag("by_file");
-        let by_module = matches.get_flag("by_module");
-        let by_crate = matches.get_flag("by_crate");
-
-        let aggregation = if by_file {
-            Aggregation::ByFile
-        } else if by_module {
-            Aggregation::ByModule
-        } else if by_crate {
-            Aggregation::ByCrate
-        } else {
-            Aggregation::Total
-        };
-
-        let structured = is_structured_output(matches);
-        let effective_line_types = if structured {
-            LineTypes::everything()
-        } else {
-            line_types
-        };
-
-        let path_ref = std::path::Path::new(path);
-        let is_workspace = path_ref.is_dir() && path_ref.join("Cargo.toml").exists()
-            || path_ref.is_file() && path_ref.file_name() == Some("Cargo.toml".as_ref());
-
-        if !is_workspace && matches!(aggregation, Aggregation::ByCrate) {
-            return Err(anyhow::anyhow!(
-                "{} requires a Cargo workspace (directory with Cargo.toml), but '{}' is not a workspace",
-                "--by-crate",
-                path,
-            ));
-        }
-
-        let result: CountResult = if is_workspace {
-            let options = CountOptions::new()
-                .crates(crates)
-                .filter(filter)
-                .aggregation(aggregation)
-                .line_types(effective_line_types);
-            count_workspace(path, options)?
-        } else if path_ref.is_file() {
-            let stats = count_file_with_filter(path, &filter)?;
-            let mut r = CountResult::new();
-            r.root = path_ref.to_path_buf();
-            r.file_count = 1;
-            r.total = stats;
-            r
-        } else {
-            count_directory_with_options(
-                path,
-                CountOptions::new()
-                    .filter(filter)
-                    .aggregation(aggregation)
-                    .line_types(effective_line_types),
-            )?
-        };
-
-        let top = extract_top(matches);
-        let preds = super::filter_args::extract(matches);
-        // Apply filter first, then top, so `--top` slices the already-
-        // filtered set rather than slicing first and dropping rows that
-        // happened to be in the top-N but failed the predicate.
-        let apply_post = |qs: CountQuerySet| {
-            let qs = qs.filter(&preds);
-            match top {
-                Some(n) => qs.top(n),
-                None => qs,
-            }
-        };
-
-        if structured {
-            let queryset = apply_post(CountQuerySet::from_result(
-                &result,
-                aggregation,
-                LineTypes::everything(),
-                ordering,
-            ));
-            if is_csv_output(matches) {
-                Ok(Output::Render(count_queryset_to_csv(&queryset)))
-            } else {
-                Ok(Output::Render(serde_json::to_value(queryset)?))
-            }
-        } else {
-            let queryset = apply_post(CountQuerySet::from_result(
-                &result,
-                aggregation,
-                line_types,
-                ordering,
-            ));
-            let table = LOCTable::from_count_queryset(&queryset);
-            Ok(Output::Render(serde_json::to_value(table)?))
+    /// Post-dispatch adapter for `count`.
+    pub fn count(
+        matches: &ArgMatches,
+        _ctx: &CommandContext,
+        data: Value,
+    ) -> Result<Value, HookError> {
+        match target(matches) {
+            Target::Data => Ok(data),
+            Target::Csv => encode(count_csv_rows(&decode::<CountQuerySet>(data)?)),
+            Target::Table => encode(CountView::from_queryset(&decode::<CountQuerySet>(data)?)),
         }
     }
 
-    /// Handler for diff command
-    pub fn diff(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
-        let path = matches
-            .get_one::<String>("path")
-            .map(|s| s.as_str())
-            .unwrap_or(".");
-        let filter = build_filter(matches)?;
-        let line_types = extract_line_types(matches);
-        let crates = extract_crates(matches);
-        let ordering = extract_ordering(matches);
-        let staged = matches.get_flag("staged");
-
-        let by_file = matches.get_flag("by_file");
-        let by_module = matches.get_flag("by_module");
-        let by_crate = matches.get_flag("by_crate");
-
-        let aggregation = if by_file {
-            Aggregation::ByFile
-        } else if by_module {
-            Aggregation::ByModule
-        } else if by_crate {
-            Aggregation::ByCrate
-        } else {
-            Aggregation::Total
-        };
-
-        let structured = is_structured_output(matches);
-        let effective_line_types = if structured {
-            LineTypes::everything()
-        } else {
-            line_types
-        };
-
-        let options = DiffOptions::new()
-            .crates(crates)
-            .filter(filter)
-            .aggregation(aggregation)
-            .line_types(effective_line_types);
-
-        let from = matches.get_one::<String>("from");
-        let to = matches.get_one::<String>("to");
-
-        let result = if let Some(from_str) = from {
-            // Commit diff: pass the revspec straight through to the library,
-            // which delegates parsing to gix's rev_parse. Two positional args
-            // (e.g. `rustloc diff main feature`) are joined as `<a>..<b>` so
-            // gix sees a single range expression.
-            if staged {
-                return Err(anyhow::anyhow!(
-                    "--staged/--cached can only be used without commit arguments"
-                ));
-            }
-            let revspec = match to {
-                Some(to_str) => {
-                    if from_str.contains("..") {
-                        return Err(anyhow::anyhow!(
-                            "Pass either a single range/revspec (e.g. `a..b`) \
-                             or two revs as separate args (e.g. `a b`), not both."
-                        ));
-                    }
-                    format!("{}..{}", from_str, to_str)
-                }
-                None => from_str.clone(),
-            };
-            diff_revspec(path, &revspec, options)?
-        } else {
-            // Working directory diff
-            let mode = if staged {
-                WorkdirDiffMode::Staged
-            } else {
-                WorkdirDiffMode::All
-            };
-            diff_workdir(path, mode, options)?
-        };
-
-        let top = extract_top(matches);
-        let preds = super::filter_args::extract(matches);
-        let apply_post = |qs: DiffQuerySet| {
-            let qs = qs.filter(&preds);
-            match top {
-                Some(n) => qs.top(n),
-                None => qs,
-            }
-        };
-
-        if structured {
-            let queryset = apply_post(DiffQuerySet::from_result(
-                &result,
-                aggregation,
-                LineTypes::everything(),
-                ordering,
-            ));
-            if is_csv_output(matches) {
-                Ok(Output::Render(diff_queryset_to_csv(&queryset)))
-            } else {
-                Ok(Output::Render(serde_json::to_value(queryset)?))
-            }
-        } else {
-            let queryset = apply_post(DiffQuerySet::from_result(
-                &result,
-                aggregation,
-                line_types,
-                ordering,
-            ));
-            let table = LOCTable::from_diff_queryset(&queryset);
-            Ok(Output::Render(serde_json::to_value(table)?))
+    /// Post-dispatch adapter for `diff`.
+    pub fn diff(
+        matches: &ArgMatches,
+        _ctx: &CommandContext,
+        data: Value,
+    ) -> Result<Value, HookError> {
+        match target(matches) {
+            Target::Data => Ok(data),
+            Target::Csv => encode(diff_csv_rows(&decode::<DiffQuerySet>(data)?)),
+            Target::Table => encode(DiffView::from_queryset(&decode::<DiffQuerySet>(data)?)),
         }
-    }
-
-    // Helper functions
-
-    fn parse_ordering(s: &str) -> Result<Ordering, String> {
-        let (direction, field) = if let Some(stripped) = s.strip_prefix('-') {
-            (OrderDirection::Descending, stripped)
-        } else if let Some(stripped) = s.strip_prefix('+') {
-            (OrderDirection::Ascending, stripped)
-        } else {
-            let order_by: OrderBy = s.parse()?;
-            let direction = if order_by == OrderBy::Label {
-                OrderDirection::Ascending
-            } else {
-                OrderDirection::Descending
-            };
-            return Ok(Ordering {
-                by: order_by,
-                direction,
-            });
-        };
-
-        let order_by: OrderBy = field.parse()?;
-        Ok(Ordering {
-            by: order_by,
-            direction,
-        })
-    }
-
-    fn extract_ordering(matches: &ArgMatches) -> Ordering {
-        matches
-            .get_one::<String>("ordering")
-            .map(|s| parse_ordering(s).unwrap_or_default())
-            .unwrap_or_default()
-    }
-
-    fn extract_top(matches: &ArgMatches) -> Option<usize> {
-        matches.get_one::<usize>("top").copied()
-    }
-
-    fn extract_line_types(matches: &ArgMatches) -> LineTypes {
-        let types: Vec<&str> = matches
-            .get_many::<String>("line_types")
-            .map(|v| v.map(|s| s.as_str()).collect())
-            .unwrap_or_default();
-
-        if types.is_empty() {
-            LineTypes::default()
-        } else {
-            LineTypes {
-                code: types.contains(&"code"),
-                tests: types.contains(&"tests"),
-                examples: types.contains(&"examples"),
-                docs: types.contains(&"docs"),
-                comments: types.contains(&"comments"),
-                blanks: types.contains(&"blanks"),
-                total: types.contains(&"total") || types.is_empty(),
-            }
-        }
-    }
-
-    fn build_filter(matches: &ArgMatches) -> Result<FilterConfig, anyhow::Error> {
-        let mut filter = FilterConfig::new().languages(extract_languages(matches)?);
-
-        if let Some(includes) = matches.get_many::<String>("include") {
-            for pattern in includes {
-                filter = filter.include(pattern)?;
-            }
-        }
-
-        if let Some(excludes) = matches.get_many::<String>("exclude") {
-            for pattern in excludes {
-                filter = filter.exclude(pattern)?;
-            }
-        }
-
-        Ok(filter)
-    }
-
-    fn extract_languages(matches: &ArgMatches) -> Result<LanguageSelection, anyhow::Error> {
-        let values: Vec<&str> = matches
-            .get_many::<String>("languages")
-            .map(|v| v.map(|s| s.as_str()).collect())
-            .unwrap_or_default();
-
-        if values.is_empty() {
-            return Ok(LanguageSelection::new(default_languages()));
-        }
-
-        if values.iter().any(|value| value.eq_ignore_ascii_case("all")) {
-            return Ok(LanguageSelection::new(available_languages()));
-        }
-
-        let mut languages = Vec::new();
-        for value in values {
-            languages.push(value.parse::<LanguageName>().map_err(anyhow::Error::msg)?);
-        }
-        Ok(LanguageSelection::new(&languages))
-    }
-
-    fn extract_crates(matches: &ArgMatches) -> Vec<String> {
-        matches
-            .get_many::<String>("crates")
-            .map(|v| v.cloned().collect())
-            .unwrap_or_default()
     }
 }
 
@@ -895,23 +741,12 @@ mod filter_args {
     }
 }
 
+/// Read the process environment and run the app built by [`crate::app`].
+///
+/// The construction itself lives in `app` so tests can build the same app;
+/// what stays here is the one thing a test must not inherit — `std::env::args`.
 fn run() -> Result<RunResult, anyhow::Error> {
-    // Load theme: start with standout defaults (includes table_row_even/odd),
-    // then merge our custom stylesheet on top
-    use standout::{StylesheetRegistry, Theme};
-    let mut registry: StylesheetRegistry = embed_styles!("styles").into();
-    let custom_theme = registry.get("default")?;
-    let theme = Theme::default().merge(custom_theme);
-
-    // Build the standout app with derive-based dispatch
-    let app = App::builder()
-        .templates(embed_templates!("templates"))
-        .theme(theme)
-        .commands(Commands::dispatch_config())?
-        .build()?;
-
-    let cli_cmd = filter_args::inject(Cli::command());
-    Ok(app.run_to_string(cli_cmd, std::env::args()))
+    Ok(app::app()?.run_to_string(app::cli_command(), std::env::args()))
 }
 
 fn main() -> ExitCode {
@@ -961,3 +796,6 @@ fn main() -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod pipeline_tests;

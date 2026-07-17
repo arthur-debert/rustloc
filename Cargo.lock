@@ -2913,9 +2913,11 @@ dependencies = [
  "clap",
  "console 0.15.11",
  "csv",
+ "quick-xml",
  "rustloclib",
  "serde",
  "serde_json",
+ "serde_yaml",
  "standout",
  "tempfile",
 ]
