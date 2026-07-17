@@ -151,8 +151,8 @@ pub mod error;
 pub use data::{
     available_languages, count_directory, count_directory_with_options, count_file,
     count_file_with_filter, count_workspace, default_languages, diff_revspec, diff_workdir,
-    gather_stats, gather_stats_for_path, CountOptions, CountResult, CrateDiffStats, CrateStats,
-    DiffOptions, DiffResult, FileChangeType, FileDiffStats, FileStats, LanguageName,
+    gather_stats, gather_stats_for_path, sat_sub_u64, CountOptions, CountResult, CrateDiffStats,
+    CrateStats, DiffOptions, DiffResult, FileChangeType, FileDiffStats, FileStats, LanguageName,
     LanguageSelection, Locs, LocsDiff, ModuleStats, VisitorContext, WorkdirDiffMode,
 };
 pub use error::RustlocError;

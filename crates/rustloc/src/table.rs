@@ -40,7 +40,9 @@
 //!
 //! Everything else a reader sees is in the templates.
 
-use rustloclib::{Aggregation, CountQuerySet, DiffQuerySet, LineTypes, Locs, LocsDiff};
+use rustloclib::{
+    sat_sub_u64, Aggregation, CountQuerySet, DiffQuerySet, LineTypes, Locs, LocsDiff,
+};
 use serde::Serialize;
 
 /// A data row: its label, plus one value per enabled column in column order.
@@ -145,16 +147,23 @@ pub struct DiffValue {
     pub added: u64,
     /// Lines removed.
     pub removed: u64,
-    /// `added - removed`.
+    /// `added - removed`, saturating — see [`sat_sub_u64`].
     pub net: i64,
 }
 
 impl DiffValue {
+    /// Build a cell, taking the net from the library's saturating rule.
+    ///
+    /// Not a plain `added as i64 - removed as i64`: those casts wrap above
+    /// `i64::MAX` and can hand a template a sign-flipped net, which would read
+    /// as an addition where a removal happened. [`sat_sub_u64`] is the same
+    /// rule `LocsDiff`'s `net_*` accessors use, so a net renders identically
+    /// whether it reaches the reader through this view or through the library.
     fn new(added: u64, removed: u64) -> Self {
         DiffValue {
             added,
             removed,
-            net: added as i64 - removed as i64,
+            net: sat_sub_u64(added, removed),
         }
     }
 }
@@ -453,6 +462,21 @@ mod tests {
         // A net removal stays negative rather than underflowing.
         assert_eq!(DiffValue::new(5, 10).net, -5);
         assert_eq!(DiffValue::new(0, 0).net, 0);
+    }
+
+    #[test]
+    fn diff_value_net_saturates_instead_of_wrapping() {
+        // Counts past `i64::MAX` are unreachable from real files, but a plain
+        // `as i64` cast would wrap them into a *sign-flipped* net — rendering a
+        // removal as an addition. Pinning the saturating rule keeps any
+        // pathological payload clamped and correctly signed.
+        let huge = u64::MAX;
+
+        assert_eq!(DiffValue::new(huge, 0).net, i64::MAX);
+        assert_eq!(DiffValue::new(0, huge).net, i64::MIN + 1);
+        // Both sides clamp to i64::MAX, so an all-huge cell nets to zero
+        // rather than to the -1 an unchecked cast would produce.
+        assert_eq!(DiffValue::new(huge, huge).net, 0);
     }
 
     #[test]
