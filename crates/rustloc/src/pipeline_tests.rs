@@ -842,8 +842,8 @@ const APPROVED_WIDTHS: &[(usize, WidthDetector)] = &[
     (160, wide_terminal_width),
 ];
 
-/// A two-file workspace whose labels exercise both long ASCII truncation and
-/// display-width handling for CJK characters.
+/// A three-source-file workspace whose two diagnostic labels exercise long
+/// ASCII truncation and display-width handling for CJK characters.
 fn label_workspace() -> TempDir {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path();
