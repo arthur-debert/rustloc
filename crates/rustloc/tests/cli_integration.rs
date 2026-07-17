@@ -315,7 +315,7 @@ fn test_lang_python_by_module_counts_python_tree() {
 // ============================================================================
 //
 // The table layout has silently regressed more than once: a stray Jinja
-// whitespace-trim marker (`{#-` in stats_table.jinja, commit 4a4efd7) ate
+// whitespace-trim marker (`{#-` in count_table.jinja, commit 4a4efd7) ate
 // the newline after the header separator, so the first data row — or the
 // Total footer when there are no rows — rendered on the same line as the
 // `────` rule. Nothing asserted the line structure, so it shipped (v0.17.1).

@@ -107,11 +107,11 @@ struct Cli {
 #[dispatch(handlers = handlers)]
 enum Commands {
     /// Count lines of code (default command)
-    #[dispatch(default, template = "stats_table", post_dispatch = presentation::count)]
+    #[dispatch(default, template = "count_table", post_dispatch = presentation::count)]
     Count(CountArgs),
 
     /// Show LOC differences between git commits
-    #[dispatch(template = "stats_table", post_dispatch = presentation::diff)]
+    #[dispatch(template = "diff_table", post_dispatch = presentation::diff)]
     #[command(long_about = "\
 Show LOC differences between git commits.
 
@@ -409,10 +409,12 @@ mod handlers {
 ///   workaround for that render-layer limitation — it is deliberately *not* a
 ///   branch in the handler.
 /// - **Table** (everything else: `auto`/`term`/`text`/`term-debug`) — the
-///   response is formatted into a `LOCTable` for the `stats_table` template.
-///   `line_types` picks the columns here, at render time.
+///   response becomes a [`CountView`] / [`DiffView`] for the `count_table` /
+///   `diff_table` templates. `line_types` picks the columns here, at render
+///   time. The view carries typed numbers, not display strings: the template
+///   owns every word, width, and style tag a reader sees (see [`crate::table`]).
 mod presentation {
-    use crate::table::LOCTable;
+    use crate::table::{CountView, DiffView};
     use clap::ArgMatches;
     use rustloclib::{CountQuerySet, DiffQuerySet, Locs, LocsDiff};
     use serde::{Deserialize, Serialize};
@@ -600,9 +602,7 @@ mod presentation {
         match target(matches) {
             Target::Data => Ok(data),
             Target::Csv => encode(count_csv_rows(&decode::<CountQuerySet>(data)?)),
-            Target::Table => encode(LOCTable::from_count_queryset(&decode::<CountQuerySet>(
-                data,
-            )?)),
+            Target::Table => encode(CountView::from_queryset(&decode::<CountQuerySet>(data)?)),
         }
     }
 
@@ -615,7 +615,7 @@ mod presentation {
         match target(matches) {
             Target::Data => Ok(data),
             Target::Csv => encode(diff_csv_rows(&decode::<DiffQuerySet>(data)?)),
-            Target::Table => encode(LOCTable::from_diff_queryset(&decode::<DiffQuerySet>(data)?)),
+            Target::Table => encode(DiffView::from_queryset(&decode::<DiffQuerySet>(data)?)),
         }
     }
 }

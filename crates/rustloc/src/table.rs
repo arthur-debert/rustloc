@@ -1,179 +1,222 @@
-//! Table-ready data structures for LOC output.
-//!
-//! This module provides `LOCTable`, a presentation-ready data structure that
-//! the `stats_table` template consumes.
+//! The typed payload the table templates render.
 //!
 //! The data flow is:
-//! 1. Raw Data (`CountResult`, `DiffResult`) — `rustloclib`
+//!
+//! 1. Raw data (`CountResult`, `DiffResult`) — `rustloclib`
 //! 2. QuerySet (aggregated, sorted, optionally filtered/truncated) — the
 //!    canonical, output-mode-independent command response, and the end of
 //!    `rustloclib`'s reusable pipeline
-//! 3. LOCTable (formatted strings for display) — *this* crate
+//! 3. [`CountView`] / [`DiffView`] — *this* module: the same numbers, narrowed
+//!    to the requested columns and paired with the facts a table needs
+//! 4. The rendered table — `templates/count_table.jinja`,
+//!    `templates/diff_table.jinja`, and their shared `table_macros.jinja`
 //!
-//! LOCTable lives in the CLI, not the library, because everything it owns is
-//! presentation: headers, footer wording, legends, display widths, and the
-//! `[additions]`/`[deletions]` style tags the renderer interprets. The library
-//! ends at typed numeric data; deciding how that data *looks* is the
-//! application's job.
+//! ## This module is not a formatter
 //!
-//! LOCTable is a pure presentation layer - it only formats data, no filtering
-//! or sorting logic. All computation happens in the QuerySet layer.
+//! It builds no display strings, computes no widths, picks no wording, and
+//! writes no style tags. Every one of those is human rendering *policy*, and
+//! policy lives in MiniJinja. What crosses this boundary is typed numbers plus
+//! the handful of facts the wording depends on (how many rows were displayed of
+//! how many, and whether `--top` or a filter did the reducing) — never a
+//! sentence built from them.
 //!
-//! Building a LOCTable is where the query set's `line_types` **view
-//! descriptor** is applied: the query set carries complete counts, and this
-//! layer selects which of them become columns. That split is what lets the
-//! same response render as a table and serialize to JSON/YAML/XML/CSV.
+//! That split is what makes the two readable in isolation: the templates are
+//! the whole answer to "what does a user see?", and this module is the whole
+//! answer to "which numbers do they see?". It also keeps `rustloclib` clean —
+//! the library ends at typed data — and keeps the structured modes honest,
+//! since `json`/`yaml`/`xml` serialize the query set directly and never reach
+//! this module at all.
+//!
+//! ## What stays here, and why
+//!
+//! Two decisions are Rust-side on purpose:
+//!
+//! - **Column selection.** The query set's `line_types` is a *view descriptor*:
+//!   the response carries complete counts and this layer picks which become
+//!   columns. That is what lets one response render as a narrow table and still
+//!   serialize a full, stable JSON/CSV schema.
+//! - **The `total_items` clamp** in [`Footer::new`] — data repair, not wording.
+//!   See the comment there.
+//!
+//! Everything else a reader sees is in the templates.
 
 use rustloclib::{Aggregation, CountQuerySet, DiffQuerySet, LineTypes, Locs, LocsDiff};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-/// A single row in the table (data row or footer).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TableRow {
-    /// Row label (file path, crate name, "Total (N files)", etc.)
-    pub label: String,
-    /// Values for each category column (as strings, ready for display)
-    pub values: Vec<String>,
-}
-
-/// Table-ready LOC data.
+/// A data row: its label, plus one value per enabled column in column order.
 ///
-/// This is the final data structure before presentation. Templates
-/// iterate over headers/rows/footer and apply formatting - no computation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LOCTable {
-    /// Optional title (e.g., "Diff: HEAD~5 → HEAD")
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// Column headers: [label_header, line_type1, line_type2, ..., Total]
-    pub headers: Vec<String>,
-    /// Data rows
-    pub rows: Vec<TableRow>,
-    /// Summary/footer row
-    pub footer: TableRow,
-    /// Per-value-column display widths (one per header[1..]). Each width is
-    /// the max visible width across that column's header, all row values,
-    /// and the footer value, so per-row items right-align to the widest
-    /// value — usually the footer ("Total") — and the total never has
-    /// fewer digits than any per-row entry.
-    #[serde(default)]
-    pub value_widths: Vec<usize>,
-    /// Optional skipped-file changes summary (e.g., "Skipped changes: +10/-5/5 net")
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub non_rust_summary: Option<String>,
-    /// Optional legend text below the table (e.g., "+added / -removed / net")
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub legend: Option<String>,
+/// Generic over the cell type because count cells are a single number and diff
+/// cells are a [`DiffValue`] triple — the row shape itself is identical.
+#[derive(Debug, Clone, Serialize)]
+pub struct Row<V> {
+    /// File path, crate name, module name — whatever the aggregation groups by.
+    pub label: String,
+    /// One value per enabled column, positionally matching `columns`.
+    pub values: Vec<V>,
 }
 
-impl LOCTable {
-    /// Create a LOCTable from a CountQuerySet.
-    ///
-    /// The QuerySet already contains filtered, aggregated, and sorted data.
-    /// This method just formats it into displayable strings.
-    pub fn from_count_queryset(qs: &CountQuerySet) -> Self {
-        let columns = enabled_columns(&qs.line_types);
-        let headers = build_headers(&qs.aggregation, &columns);
-        let rows: Vec<TableRow> = qs
-            .items
-            .iter()
-            .map(|item| TableRow {
-                label: item.label.clone(),
-                values: format_locs(&item.stats, &columns),
-            })
-            .collect();
-        let footer = TableRow {
-            label: build_footer_label(
-                &qs.aggregation,
-                rows.len(),
-                qs.total_items,
-                qs.file_count,
-                qs.top_applied,
-            ),
-            values: format_locs(&qs.total, &columns),
-        };
-        let value_widths = compute_value_widths(&headers, &rows, &footer);
+/// The facts the footer's wording is derived from.
+///
+/// Facts, not a sentence: whether the footer reads "Total (2 crates)",
+/// "Total (top 1 of 2 crates)" or "Total (1 of 2 crates)" is wording, and the
+/// template decides it. This struct only reports what happened.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Footer {
+    /// Rows actually shown, after any user-driven reduction.
+    pub displayed: usize,
+    /// Rows before that reduction. Equals `displayed` when nothing reduced them.
+    pub total_items: usize,
+    /// Files analyzed — what total aggregation counts, having no rows to count.
+    pub file_count: usize,
+    /// True iff `--top` did the reducing (a sorted slice) rather than a filter
+    /// (predicate-eliminated rows). The two mean different things to a reader,
+    /// so the template needs to tell them apart.
+    pub top_applied: bool,
+}
 
-        LOCTable {
-            title: None,
-            headers,
-            rows,
-            footer,
-            value_widths,
-            non_rust_summary: None,
-            legend: None,
+impl Footer {
+    fn new(displayed: usize, total_items: usize, file_count: usize, top_applied: bool) -> Self {
+        Footer {
+            displayed,
+            // `total_items < displayed` is logically impossible — reductions
+            // only ever shrink the row set — but a query set deserialized from
+            // a payload predating the `total_items` field arrives with 0.
+            //
+            // The clamp is here rather than in the template because it is data
+            // repair, not presentation: it answers "which of these two numbers
+            // is trustworthy?", which is a question about the payload. Without
+            // it the template would faithfully render "Total (0 crates)" above
+            // two visible rows.
+            total_items: total_items.max(displayed),
+            file_count,
+            top_applied,
         }
     }
+}
 
-    /// Create a LOCTable from a DiffQuerySet.
-    ///
-    /// The QuerySet already contains filtered, aggregated, and sorted data.
-    /// This method just formats it into displayable strings with diff notation.
-    pub fn from_diff_queryset(qs: &DiffQuerySet) -> Self {
+/// The count table's payload.
+#[derive(Debug, Clone, Serialize)]
+pub struct CountView {
+    /// Aggregation key: `total`, `crate`, `module`, or `file`.
+    pub aggregation: &'static str,
+    /// Enabled column keys, in display order.
+    pub columns: Vec<&'static str>,
+    /// Data rows.
+    pub rows: Vec<Row<u64>>,
+    /// The totals row's values, positionally matching `columns`.
+    pub total: Vec<u64>,
+    /// Facts behind the footer's wording.
+    pub footer: Footer,
+}
+
+impl CountView {
+    /// Build the count table's payload from its canonical response.
+    pub fn from_queryset(qs: &CountQuerySet) -> Self {
         let columns = enabled_columns(&qs.line_types);
-        let headers = build_headers(&qs.aggregation, &columns);
-
-        // Two-pass formatting so the `+added`, `-removed`, and `net` sub-fields
-        // line up across every row in a column: gather raw pairs first,
-        // compute per-column sub-widths from rows+footer, then render every
-        // cell padded to those widths.
-        let raw_rows: Vec<Vec<(u64, u64)>> = qs
-            .items
-            .iter()
-            .map(|item| diff_pairs(&item.stats, &columns))
-            .collect();
-        let raw_footer = diff_pairs(&qs.total, &columns);
-        let sub_widths = compute_diff_sub_widths(&raw_rows, &raw_footer);
-
-        let rows: Vec<TableRow> = qs
-            .items
-            .iter()
-            .zip(&raw_rows)
-            .map(|(item, pairs)| TableRow {
-                label: item.label.clone(),
-                values: format_diff_row(pairs, &sub_widths),
-            })
-            .collect();
-        let footer = TableRow {
-            label: build_footer_label(
-                &qs.aggregation,
-                rows.len(),
+        CountView {
+            aggregation: aggregation_key(&qs.aggregation),
+            rows: qs
+                .items
+                .iter()
+                .map(|item| Row {
+                    label: item.label.clone(),
+                    values: columns.iter().map(|c| c.count(&item.stats)).collect(),
+                })
+                .collect(),
+            total: columns.iter().map(|c| c.count(&qs.total)).collect(),
+            footer: Footer::new(
+                qs.items.len(),
                 qs.total_items,
                 qs.file_count,
                 qs.top_applied,
             ),
-            values: format_diff_row(&raw_footer, &sub_widths),
-        };
-        let value_widths = compute_value_widths(&headers, &rows, &footer);
-        let title = Some(format!("Diff: {} → {}", qs.from_commit, qs.to_commit));
+            columns: columns.iter().map(|c| c.key()).collect(),
+        }
+    }
+}
 
-        let non_rust_summary = if qs.non_rust_added > 0 || qs.non_rust_removed > 0 {
-            let nr_net = qs.non_rust_added as i64 - qs.non_rust_removed as i64;
-            Some(format!(
-                "Skipped changes: [additions]+{}[/additions] / [deletions]-{}[/deletions] / {} net",
-                qs.non_rust_added, qs.non_rust_removed, nr_net
-            ))
-        } else {
-            None
-        };
+/// One diff cell's numbers.
+///
+/// `net` is `i64` so a net removal stays negative rather than underflowing into
+/// a very large positive number.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct DiffValue {
+    /// Lines added.
+    pub added: u64,
+    /// Lines removed.
+    pub removed: u64,
+    /// `added - removed`.
+    pub net: i64,
+}
 
-        LOCTable {
-            title,
-            headers,
-            rows,
-            footer,
-            value_widths,
-            non_rust_summary,
-            legend: Some("(+added / -removed / net)".to_string()),
+impl DiffValue {
+    fn new(added: u64, removed: u64) -> Self {
+        DiffValue {
+            added,
+            removed,
+            net: added as i64 - removed as i64,
+        }
+    }
+}
+
+/// The diff table's payload.
+#[derive(Debug, Clone, Serialize)]
+pub struct DiffView {
+    /// Aggregation key: `total`, `crate`, `module`, or `file`.
+    pub aggregation: &'static str,
+    /// Enabled column keys, in display order.
+    pub columns: Vec<&'static str>,
+    /// Data rows.
+    pub rows: Vec<Row<DiffValue>>,
+    /// The totals row's values, positionally matching `columns`.
+    pub total: Vec<DiffValue>,
+    /// Facts behind the footer's wording.
+    pub footer: Footer,
+    /// The revision compared from.
+    pub from_commit: String,
+    /// The revision compared to.
+    pub to_commit: String,
+    /// Changes in files the active language selection skipped.
+    ///
+    /// Always present, even when zero: whether a zero summary is worth showing
+    /// a reader is the template's call, not this module's.
+    pub non_rust: DiffValue,
+}
+
+impl DiffView {
+    /// Build the diff table's payload from its canonical response.
+    pub fn from_queryset(qs: &DiffQuerySet) -> Self {
+        let columns = enabled_columns(&qs.line_types);
+        DiffView {
+            aggregation: aggregation_key(&qs.aggregation),
+            rows: qs
+                .items
+                .iter()
+                .map(|item| Row {
+                    label: item.label.clone(),
+                    values: columns.iter().map(|c| c.diff_value(&item.stats)).collect(),
+                })
+                .collect(),
+            total: columns.iter().map(|c| c.diff_value(&qs.total)).collect(),
+            footer: Footer::new(
+                qs.items.len(),
+                qs.total_items,
+                qs.file_count,
+                qs.top_applied,
+            ),
+            from_commit: qs.from_commit.clone(),
+            to_commit: qs.to_commit.clone(),
+            non_rust: DiffValue::new(qs.non_rust_added, qs.non_rust_removed),
+            columns: columns.iter().map(|c| c.key()).collect(),
         }
     }
 }
 
 /// One value column of the table.
 ///
-/// The query set's `line_types` selects which of these appear; this enum is
-/// the single source of truth for their order and per-column accessors, so
-/// headers, count cells, and diff cells can never drift out of alignment.
+/// The query set's `line_types` selects which of these appear; this enum is the
+/// single source of truth for their order and per-column accessors, so the
+/// column keys and the cells beneath them can never drift out of alignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Column {
     Code,
@@ -186,16 +229,21 @@ enum Column {
 }
 
 impl Column {
-    /// Display header for this column.
-    fn header(self) -> &'static str {
+    /// This column's key.
+    ///
+    /// A *data* name — it matches the `Locs` field and the JSON/CSV schemas, and
+    /// is deliberately not a display word. The templates map keys to the words a
+    /// reader sees, which is why nothing in Rust needs to know that `code` is
+    /// shown as "Code".
+    fn key(self) -> &'static str {
         match self {
-            Column::Code => "Code",
-            Column::Tests => "Tests",
-            Column::Examples => "Examples",
-            Column::Docs => "Docs",
-            Column::Comments => "Comments",
-            Column::Blanks => "Blanks",
-            Column::Total => "Total",
+            Column::Code => "code",
+            Column::Tests => "tests",
+            Column::Examples => "examples",
+            Column::Docs => "docs",
+            Column::Comments => "comments",
+            Column::Blanks => "blanks",
+            Column::Total => "total",
         }
     }
 
@@ -213,9 +261,9 @@ impl Column {
         }
     }
 
-    /// This column's `(added, removed)` pair out of a `LocsDiff`.
-    fn diff_pair(self, diff: &LocsDiff) -> (u64, u64) {
-        (self.count(&diff.added), self.count(&diff.removed))
+    /// This column's cell out of a `LocsDiff`.
+    fn diff_value(self, diff: &LocsDiff) -> DiffValue {
+        DiffValue::new(self.count(&diff.added), self.count(&diff.removed))
     }
 }
 
@@ -235,178 +283,17 @@ fn enabled_columns(line_types: &LineTypes) -> Vec<Column> {
     .collect()
 }
 
-/// Visible width of a string, skipping BBCode-style `[tag]`/`[/tag]` markup
-/// that the renderer strips before display. Mirrors what `standout`'s
-/// `strip_tags` does for the simple tag forms our diff values produce —
-/// the only markup we emit is `[additions]`, `[/additions]`, `[deletions]`,
-/// `[/deletions]`, so a naive bracket-balanced skip is sufficient.
-fn visible_width(s: &str) -> usize {
-    let mut count = 0usize;
-    let mut in_tag = false;
-    for c in s.chars() {
-        match c {
-            '[' => in_tag = true,
-            ']' if in_tag => in_tag = false,
-            _ if !in_tag => count += 1,
-            _ => {}
-        }
-    }
-    count
-}
-
-/// For each value column, return the max visible width across its header,
-/// every row value, and the footer value. The result has length
-/// `headers.len() - 1` (the label header is not a value column).
-fn compute_value_widths(headers: &[String], rows: &[TableRow], footer: &TableRow) -> Vec<usize> {
-    if headers.len() <= 1 {
-        return Vec::new();
-    }
-    (0..headers.len() - 1)
-        .map(|i| {
-            let header_w = visible_width(&headers[i + 1]);
-            let row_w = rows
-                .iter()
-                .filter_map(|r| r.values.get(i))
-                .map(|v| visible_width(v))
-                .max()
-                .unwrap_or(0);
-            let footer_w = footer.values.get(i).map(|v| visible_width(v)).unwrap_or(0);
-            header_w.max(row_w).max(footer_w)
-        })
-        .collect()
-}
-
-/// Build footer label based on aggregation level.
+/// The aggregation's key.
 ///
-/// `displayed` is the number of rows actually shown after any user-driven
-/// reduction. `total` is the pre-reduction row count. When they differ the
-/// label makes the gap explicit so the reader can see that the totals row
-/// reflects more data than what's visible.
-///
-/// `top_applied` distinguishes the two reduction paths so the wording is
-/// honest: "top X of Y" for `--top` (a sorted slice), plain "X of Y" for
-/// filter-eliminated rows. Both can apply at once, in which case the
-/// "top" wording dominates because the visible rows ARE the top of what
-/// passed the filter.
-///
-/// `total < displayed` is logically impossible (reductions only shrink
-/// the row set), but a deserialized queryset from a payload that pre-dates
-/// the `total_items` field will arrive with `total = 0`. The `.max` clamp
-/// keeps the footer correct for that case rather than rendering nonsense
-/// like "Total (0 crates)" alongside two visible rows.
-fn build_footer_label(
-    aggregation: &Aggregation,
-    displayed: usize,
-    total: usize,
-    file_count: usize,
-    top_applied: bool,
-) -> String {
-    let unit = match aggregation {
-        Aggregation::Total => return format!("Total ({} files)", file_count),
-        Aggregation::ByCrate => "crates",
-        Aggregation::ByModule => "modules",
-        Aggregation::ByFile => "files",
-    };
-    let total = total.max(displayed);
-    if displayed == total {
-        format!("Total ({} {})", total, unit)
-    } else if top_applied {
-        format!("Total (top {} of {} {})", displayed, total, unit)
-    } else {
-        format!("Total ({} of {} {})", displayed, total, unit)
+/// Like [`Column::key`], a data name: the templates turn `crate` into the
+/// "Crate" header and the "crates" footer unit.
+fn aggregation_key(aggregation: &Aggregation) -> &'static str {
+    match aggregation {
+        Aggregation::Total => "total",
+        Aggregation::ByCrate => "crate",
+        Aggregation::ByModule => "module",
+        Aggregation::ByFile => "file",
     }
-}
-
-/// Build column headers based on aggregation level and enabled columns.
-fn build_headers(aggregation: &Aggregation, columns: &[Column]) -> Vec<String> {
-    let label_header = match aggregation {
-        Aggregation::Total => "Name",
-        Aggregation::ByCrate => "Crate",
-        Aggregation::ByModule => "Module",
-        Aggregation::ByFile => "File",
-    };
-
-    std::iter::once(label_header)
-        .chain(columns.iter().map(|c| c.header()))
-        .map(String::from)
-        .collect()
-}
-
-/// Format Locs values as strings for display.
-fn format_locs(locs: &Locs, columns: &[Column]) -> Vec<String> {
-    columns.iter().map(|c| c.count(locs).to_string()).collect()
-}
-
-/// Per-column max widths of the three sub-fields inside a diff value
-/// (`+added/-removed/net`). Used to right-align each sub-field across
-/// every row in the same column so the `/` separators line up.
-#[derive(Debug, Clone, Default)]
-struct DiffSubWidths {
-    added: usize,
-    removed: usize,
-    net: usize,
-}
-
-/// Format a diff value as "+added/-removed/net" with standout style tags,
-/// right-padding each sub-field to the given widths. Padding spaces sit
-/// *outside* the style tags so coloring stays on the digits only. Passing
-/// zero widths produces a tight unpadded value.
-fn format_diff_value_padded(added: u64, removed: u64, w: &DiffSubWidths) -> String {
-    let net = added as i64 - removed as i64;
-    let added_str = format!("+{}", added);
-    let removed_str = format!("-{}", removed);
-    let net_str = net.to_string();
-    let apad = " ".repeat(w.added.saturating_sub(added_str.len()));
-    let rpad = " ".repeat(w.removed.saturating_sub(removed_str.len()));
-    let npad = " ".repeat(w.net.saturating_sub(net_str.len()));
-    format!(
-        "{}[additions]{}[/additions]/{}[deletions]{}[/deletions]/{}{}",
-        apad, added_str, rpad, removed_str, npad, net_str,
-    )
-}
-
-/// Return raw `(added, removed)` pairs in the order of the enabled columns.
-/// The shape matches what `build_headers` produces, so callers can pair
-/// widths with cells positionally.
-fn diff_pairs(diff: &LocsDiff, columns: &[Column]) -> Vec<(u64, u64)> {
-    columns.iter().map(|c| c.diff_pair(diff)).collect()
-}
-
-/// For each value column, compute the max widths of the `+added`, `-removed`,
-/// and `net` sub-fields across every row and the footer. With these widths,
-/// the three `/`-separated sub-fields line up across every row in the column
-/// — the usual case is the footer wins each sub-width because it sums the
-/// rows.
-fn compute_diff_sub_widths(rows: &[Vec<(u64, u64)>], footer: &[(u64, u64)]) -> Vec<DiffSubWidths> {
-    (0..footer.len())
-        .map(|i| {
-            let mut w = DiffSubWidths::default();
-            let update = |a: u64, r: u64, w: &mut DiffSubWidths| {
-                let aw = format!("+{}", a).len();
-                let rw = format!("-{}", r).len();
-                let nw = (a as i64 - r as i64).to_string().len();
-                w.added = w.added.max(aw);
-                w.removed = w.removed.max(rw);
-                w.net = w.net.max(nw);
-            };
-            for row in rows {
-                if let Some(&(a, r)) = row.get(i) {
-                    update(a, r, &mut w);
-                }
-            }
-            update(footer[i].0, footer[i].1, &mut w);
-            w
-        })
-        .collect()
-}
-
-/// Format every `(added, removed)` pair against its column's sub-widths.
-fn format_diff_row(pairs: &[(u64, u64)], widths: &[DiffSubWidths]) -> Vec<String> {
-    pairs
-        .iter()
-        .zip(widths)
-        .map(|(&(a, r), w)| format_diff_value_padded(a, r, w))
-        .collect()
 }
 
 #[cfg(test)]
@@ -451,375 +338,143 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_headers_by_crate() {
-        let columns = enabled_columns(&LineTypes::everything());
-        let headers = build_headers(&Aggregation::ByCrate, &columns);
-        assert_eq!(headers[0], "Crate");
-        assert_eq!(headers[1], "Code");
-        assert_eq!(headers[2], "Tests");
-        assert_eq!(headers[3], "Examples");
-        assert_eq!(headers[4], "Docs");
-        assert_eq!(headers[5], "Comments");
-        assert_eq!(headers[6], "Blanks");
-        assert_eq!(headers[7], "Total");
-    }
-
-    #[test]
-    fn test_headers_filtered_line_types() {
-        let columns = enabled_columns(&LineTypes::new().with_code());
-        let headers = build_headers(&Aggregation::ByFile, &columns);
-        assert_eq!(headers.len(), 3); // File, Code, Total
-        assert_eq!(headers[0], "File");
-        assert_eq!(headers[1], "Code");
-        assert_eq!(headers[2], "Total");
-    }
-
-    #[test]
-    fn test_format_locs() {
-        let locs = sample_locs(100, 50);
-        let columns = enabled_columns(&LineTypes::everything());
-        let values = format_locs(&locs, &columns);
-        assert_eq!(values[0], "100"); // Code
-        assert_eq!(values[1], "50"); // Tests
-        assert_eq!(values[2], "0"); // Examples
-        assert_eq!(values[3], "0"); // Docs
-        assert_eq!(values[4], "0"); // Comments
-        assert_eq!(values[5], "0"); // Blanks
-        assert_eq!(values[6], "150"); // Total
-    }
-
-    #[test]
-    fn test_loc_table_from_queryset() {
-        let result = sample_count_result();
-        let qs = CountQuerySet::from_result(
-            &result,
+    fn queryset(line_types: LineTypes, ordering: Ordering) -> CountQuerySet {
+        CountQuerySet::from_result(
+            &sample_count_result(),
             Aggregation::ByCrate,
-            LineTypes::everything(),
-            Ordering::default(),
-        );
-        let table = LOCTable::from_count_queryset(&qs);
-
-        assert!(table.title.is_none());
-        assert_eq!(table.headers[0], "Crate");
-        assert_eq!(table.rows.len(), 2);
-        // Default ordering is by label ascending: alpha before beta
-        assert_eq!(table.rows[0].label, "alpha");
-        assert_eq!(table.rows[1].label, "beta");
-        assert_eq!(table.footer.label, "Total (2 crates)");
-    }
-
-    #[test]
-    fn test_footer_label_marks_truncation_when_top_applied() {
-        let result = sample_count_result();
-        let qs = CountQuerySet::from_result(
-            &result,
-            Aggregation::ByCrate,
-            LineTypes::everything(),
-            Ordering::default(),
+            line_types,
+            ordering,
         )
-        .top(1);
-        let table = LOCTable::from_count_queryset(&qs);
-
-        assert_eq!(table.rows.len(), 1);
-        assert_eq!(table.footer.label, "Total (top 1 of 2 crates)");
     }
 
     #[test]
-    fn test_footer_label_filter_only_uses_plain_x_of_y() {
-        // When rows are reduced by a filter (not by --top), the footer
-        // says "X of Y" without the "top" qualifier, because the visible
-        // rows aren't sorted-and-sliced — they're just the ones that
-        // passed the predicate.
-        use rustloclib::{Field, Op, Predicate};
+    fn columns_are_data_keys_not_display_words() {
+        let view =
+            CountView::from_queryset(&queryset(LineTypes::everything(), Ordering::default()));
+        // Keys, lowercase, matching the JSON/CSV field names. The header words
+        // ("Code", "Tests", ...) belong to the template and must not appear.
+        assert_eq!(
+            view.columns,
+            vec!["code", "tests", "examples", "docs", "comments", "blanks", "total"]
+        );
+    }
 
-        let result = sample_count_result();
-        let qs = CountQuerySet::from_result(
-            &result,
-            Aggregation::ByCrate,
-            LineTypes::everything(),
+    #[test]
+    fn line_types_narrow_the_columns() {
+        // `with_code` keeps the Total column, which `LineTypes::new` enables.
+        let view =
+            CountView::from_queryset(&queryset(LineTypes::new().with_code(), Ordering::default()));
+        assert_eq!(view.columns, vec!["code", "total"]);
+        // ...and the cells narrow with them, positionally.
+        assert_eq!(view.rows[0].values.len(), 2);
+        assert_eq!(view.total.len(), 2);
+    }
+
+    #[test]
+    fn line_types_can_drop_the_total_column_too() {
+        // `--type code` (no `total`) is the shape that proves the narrowing is
+        // driven by the descriptor rather than by a Total column special case.
+        let view = CountView::from_queryset(&queryset(
+            LineTypes::new().with_code().without_total(),
             Ordering::default(),
-        )
-        .filter(&[Predicate::new(Field::Code, Op::Gte, 100)]);
-        let table = LOCTable::from_count_queryset(&qs);
-
-        assert_eq!(table.rows.len(), 1);
-        assert_eq!(table.footer.label, "Total (1 of 2 crates)");
+        ));
+        assert_eq!(view.columns, vec!["code"]);
+        assert_eq!(view.rows[0].values, vec![50]);
+        assert_eq!(view.total, vec![200]);
     }
 
     #[test]
-    fn test_footer_label_filter_then_top_uses_top_wording() {
-        use rustloclib::{Field, Op, Predicate};
-
-        let result = sample_count_result();
-        let qs = CountQuerySet::from_result(
-            &result,
-            Aggregation::ByCrate,
-            LineTypes::everything(),
-            Ordering::default(),
-        )
-        .filter(&[Predicate::new(Field::Code, Op::Gte, 50)])
-        .top(1);
-        let table = LOCTable::from_count_queryset(&qs);
-
-        // Both filter (kept 2) and top (kept 1) ran; "top" wording wins
-        // because the visible row IS the top of what passed the filter.
-        assert_eq!(table.rows.len(), 1);
-        assert_eq!(table.footer.label, "Total (top 1 of 2 crates)");
+    fn values_are_typed_numbers_in_column_order() {
+        let view =
+            CountView::from_queryset(&queryset(LineTypes::everything(), Ordering::default()));
+        // Default ordering is by label ascending: alpha before beta.
+        assert_eq!(view.rows[0].label, "alpha");
+        assert_eq!(view.rows[0].values, vec![50, 25, 0, 0, 0, 0, 75]);
+        assert_eq!(view.total, vec![200, 100, 0, 0, 0, 0, 300]);
     }
 
     #[test]
-    fn test_footer_label_clamps_when_total_items_missing() {
-        // A queryset deserialized from a payload that predates `total_items`
-        // arrives with `total_items = 0`. The footer must still show the
-        // correct row count rather than "Total (0 crates)".
-        let result = sample_count_result();
-        let mut qs = CountQuerySet::from_result(
-            &result,
-            Aggregation::ByCrate,
-            LineTypes::everything(),
-            Ordering::default(),
-        );
-        qs.total_items = 0; // simulate stale payload
-        let table = LOCTable::from_count_queryset(&qs);
-
-        assert_eq!(table.rows.len(), 2);
-        assert_eq!(table.footer.label, "Total (2 crates)");
-    }
-
-    #[test]
-    fn test_ordering_by_label_ascending() {
-        let result = sample_count_result();
-        let qs = CountQuerySet::from_result(
-            &result,
-            Aggregation::ByCrate,
-            LineTypes::everything(),
-            Ordering::by_label(),
-        );
-        let table = LOCTable::from_count_queryset(&qs);
-
-        assert_eq!(table.rows[0].label, "alpha");
-        assert_eq!(table.rows[1].label, "beta");
-    }
-
-    #[test]
-    fn test_ordering_by_label_descending() {
-        let result = sample_count_result();
-        let qs = CountQuerySet::from_result(
-            &result,
-            Aggregation::ByCrate,
-            LineTypes::everything(),
-            Ordering::by_label().descending(),
-        );
-        let table = LOCTable::from_count_queryset(&qs);
-
-        assert_eq!(table.rows[0].label, "beta");
-        assert_eq!(table.rows[1].label, "alpha");
-    }
-
-    #[test]
-    fn test_ordering_by_code_descending() {
-        let result = sample_count_result();
-        let qs = CountQuerySet::from_result(
-            &result,
-            Aggregation::ByCrate,
-            LineTypes::everything(),
-            Ordering::by_code(), // Descending by default
-        );
-        let table = LOCTable::from_count_queryset(&qs);
-
-        // beta has 150 code, alpha has 50
-        assert_eq!(table.rows[0].label, "beta");
-        assert_eq!(table.rows[0].values[0], "150");
-        assert_eq!(table.rows[1].label, "alpha");
-        assert_eq!(table.rows[1].values[0], "50");
-    }
-
-    #[test]
-    fn test_ordering_by_code_ascending() {
-        let result = sample_count_result();
-        let qs = CountQuerySet::from_result(
-            &result,
-            Aggregation::ByCrate,
-            LineTypes::everything(),
-            Ordering::by_code().ascending(),
-        );
-        let table = LOCTable::from_count_queryset(&qs);
-
-        // alpha has 50 code, beta has 150
-        assert_eq!(table.rows[0].label, "alpha");
-        assert_eq!(table.rows[1].label, "beta");
-    }
-
-    #[test]
-    fn test_ordering_by_total_descending() {
-        let result = sample_count_result();
-        let qs = CountQuerySet::from_result(
-            &result,
-            Aggregation::ByCrate,
-            LineTypes::everything(),
-            Ordering::by_total(),
-        );
-        let table = LOCTable::from_count_queryset(&qs);
-
-        // beta has 225 total, alpha has 75
-        assert_eq!(table.rows[0].label, "beta");
-        assert_eq!(table.rows[1].label, "alpha");
-    }
-
-    #[test]
-    fn test_format_diff_value_unpadded() {
-        let zero = DiffSubWidths::default();
-        assert_eq!(
-            format_diff_value_padded(10, 5, &zero),
-            "[additions]+10[/additions]/[deletions]-5[/deletions]/5"
-        );
-        assert_eq!(
-            format_diff_value_padded(5, 10, &zero),
-            "[additions]+5[/additions]/[deletions]-10[/deletions]/-5"
-        );
-        assert_eq!(
-            format_diff_value_padded(0, 0, &zero),
-            "[additions]+0[/additions]/[deletions]-0[/deletions]/0"
-        );
-    }
-
-    #[test]
-    fn test_format_diff_value_pads_sub_fields_outside_tags() {
-        // Padding goes outside the style tags so coloring stays on digits.
-        let w = DiffSubWidths {
-            added: 4,
-            removed: 2,
-            net: 3,
-        };
-        assert_eq!(
-            format_diff_value_padded(0, 0, &w),
-            "  [additions]+0[/additions]/[deletions]-0[/deletions]/  0"
-        );
-        // Already-wide values keep zero padding.
-        assert_eq!(
-            format_diff_value_padded(111, 0, &w),
-            "[additions]+111[/additions]/[deletions]-0[/deletions]/111"
-        );
-    }
-
-    #[test]
-    fn test_diff_sub_widths_align_separators_across_rows() {
-        // For a column with rows (a=0, r=0) and (a=111, r=0), the footer
-        // (a=111, r=0) determines the max widths. After padding, every
-        // cell in the column has the same visible width, so the `/`
-        // separators sit at the same offset in every row.
-        let rows = vec![vec![(0u64, 0u64)], vec![(9u64, 0u64)]];
-        let footer = vec![(111u64, 0u64)];
-        let widths = compute_diff_sub_widths(&rows, &footer);
-        assert_eq!(widths.len(), 1);
-        assert_eq!(widths[0].added, "+111".len());
-        assert_eq!(widths[0].removed, "-0".len());
-        assert_eq!(widths[0].net, "111".len());
-
-        let cell_a = format_diff_value_padded(0, 0, &widths[0]);
-        let cell_b = format_diff_value_padded(9, 0, &widths[0]);
-        let cell_c = format_diff_value_padded(111, 0, &widths[0]);
-        // All cells render to the same visible width.
-        let wa = visible_width(&cell_a);
-        let wb = visible_width(&cell_b);
-        let wc = visible_width(&cell_c);
-        assert_eq!(wa, wb);
-        assert_eq!(wb, wc);
-        // And the `/` separators sit at the same visible positions.
-        let slash_positions = |s: &str| -> Vec<usize> {
-            let stripped: String = {
-                let mut out = String::new();
-                let mut in_tag = false;
-                for c in s.chars() {
-                    match c {
-                        '[' => in_tag = true,
-                        ']' if in_tag => in_tag = false,
-                        _ if !in_tag => out.push(c),
-                        _ => {}
-                    }
-                }
-                out
-            };
-            stripped
-                .char_indices()
-                .filter(|&(_, c)| c == '/')
-                .map(|(i, _)| i)
-                .collect()
-        };
-        assert_eq!(slash_positions(&cell_a), slash_positions(&cell_c));
-        assert_eq!(slash_positions(&cell_b), slash_positions(&cell_c));
-    }
-
-    #[test]
-    fn test_visible_width_strips_bbcode_tags() {
-        assert_eq!(visible_width("plain"), 5);
-        assert_eq!(
-            visible_width("[additions]+10[/additions]/[deletions]-5[/deletions]/5"),
-            "+10/-5/5".len()
-        );
-        assert_eq!(visible_width("[header]Code[/header]"), 4);
-    }
-
-    #[test]
-    fn test_compute_value_widths_picks_widest_cell_per_column() {
-        // Each column's width = max(header, row values, footer value).
-        // The footer here has the longest values, so widths match it.
-        let zero = DiffSubWidths::default();
-        let make = |a: u64, r: u64| format_diff_value_padded(a, r, &zero);
-        let headers = vec!["File".to_string(), "Code".to_string(), "Total".to_string()];
-        let rows = vec![
-            TableRow {
-                label: "a.rs".to_string(),
-                values: vec![make(1, 0), make(1, 0)],
-            },
-            TableRow {
-                label: "b.rs".to_string(),
-                values: vec![make(9, 0), make(9, 0)],
-            },
-        ];
-        let footer = TableRow {
-            label: "Total (2 files)".to_string(),
-            values: vec![make(100, 0), make(100, 0)],
-        };
-
-        let widths = compute_value_widths(&headers, &rows, &footer);
-        assert_eq!(widths.len(), 2);
-        // Footer wins both columns: "+100/-0/100" is 11 visible chars.
-        assert_eq!(widths[0], visible_width("+100/-0/100"));
-        assert_eq!(widths[1], visible_width("+100/-0/100"));
-        // Every per-row value fits within its column — the total never
-        // has fewer digits than any row entry.
-        for row in &rows {
-            for (i, v) in row.values.iter().enumerate() {
-                assert!(visible_width(v) <= widths[i]);
-            }
+    fn aggregation_is_a_key_not_a_header_word() {
+        for (aggregation, expected) in [
+            (Aggregation::Total, "total"),
+            (Aggregation::ByCrate, "crate"),
+            (Aggregation::ByModule, "module"),
+            (Aggregation::ByFile, "file"),
+        ] {
+            assert_eq!(aggregation_key(&aggregation), expected);
         }
     }
 
     #[test]
-    fn test_value_widths_at_least_header_width() {
-        // If every value is short ("0"), each column must still be wide
-        // enough to fit its header word.
-        let result = sample_count_result();
-        let qs = CountQuerySet::from_result(
-            &result,
-            Aggregation::ByCrate,
-            LineTypes::everything(),
-            Ordering::default(),
+    fn footer_reports_reduction_facts_rather_than_wording() {
+        let view = CountView::from_queryset(
+            &queryset(LineTypes::everything(), Ordering::default()).top(1),
         );
-        let table = LOCTable::from_count_queryset(&qs);
+        assert_eq!(view.footer.displayed, 1);
+        assert_eq!(view.footer.total_items, 2);
+        assert!(view.footer.top_applied);
+        assert_eq!(view.footer.file_count, 4);
+    }
 
-        // headers[1..] = Code, Tests, Examples, Docs, Comments, Blanks, Total
-        for (i, header) in table.headers[1..].iter().enumerate() {
-            assert!(
-                table.value_widths[i] >= header.len(),
-                "column {} ({}) width {} < header {}",
-                i,
-                header,
-                table.value_widths[i],
-                header.len()
-            );
-        }
+    #[test]
+    fn footer_distinguishes_filtering_from_top() {
+        use rustloclib::{Field, Op, Predicate};
+
+        let view = CountView::from_queryset(
+            &queryset(LineTypes::everything(), Ordering::default()).filter(&[Predicate::new(
+                Field::Code,
+                Op::Gte,
+                100,
+            )]),
+        );
+        // Rows were reduced, but not by --top: the template needs both facts to
+        // pick "1 of 2" over "top 1 of 2".
+        assert_eq!(view.footer.displayed, 1);
+        assert_eq!(view.footer.total_items, 2);
+        assert!(!view.footer.top_applied);
+    }
+
+    #[test]
+    fn footer_clamps_total_items_when_the_payload_predates_the_field() {
+        // A query set deserialized from a stale payload arrives with
+        // `total_items = 0`. Clamping here keeps the template from rendering
+        // "Total (0 crates)" above two visible rows.
+        let mut qs = queryset(LineTypes::everything(), Ordering::default());
+        qs.total_items = 0;
+        let view = CountView::from_queryset(&qs);
+
+        assert_eq!(view.footer.displayed, 2);
+        assert_eq!(view.footer.total_items, 2);
+    }
+
+    #[test]
+    fn diff_values_carry_added_removed_and_a_signed_net() {
+        assert_eq!(DiffValue::new(10, 5).net, 5);
+        // A net removal stays negative rather than underflowing.
+        assert_eq!(DiffValue::new(5, 10).net, -5);
+        assert_eq!(DiffValue::new(0, 0).net, 0);
+    }
+
+    #[test]
+    fn diff_view_exposes_skipped_changes_even_when_zero() {
+        // Zero is still reported: whether to *show* it is the template's call.
+        let qs = DiffQuerySet {
+            aggregation: Aggregation::Total,
+            line_types: LineTypes::everything(),
+            items: vec![],
+            total: LocsDiff::default(),
+            file_count: 0,
+            from_commit: "HEAD".to_string(),
+            to_commit: "working tree".to_string(),
+            non_rust_added: 0,
+            non_rust_removed: 0,
+            total_items: 0,
+            top_applied: false,
+        };
+        let view = DiffView::from_queryset(&qs);
+
+        assert_eq!(view.non_rust.added, 0);
+        assert_eq!(view.non_rust.removed, 0);
+        assert_eq!(view.non_rust.net, 0);
     }
 }

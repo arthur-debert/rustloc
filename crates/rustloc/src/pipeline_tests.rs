@@ -240,11 +240,11 @@ fn csv_schema_is_stable_regardless_of_type_flag() {
 // Text rendering and the template
 // ---------------------------------------------------------------------------
 
-/// Text mode goes through the `stats_table` template. Asserting the headers
-/// and the total row proves the template rendered the LOCTable rather than
+/// Text mode goes through the `count_table` template. Asserting the headers
+/// and the total row proves the template rendered the view rather than
 /// erroring into an empty string.
 #[test]
-fn text_mode_renders_the_stats_table_template() {
+fn text_mode_renders_the_count_table_template() {
     let dir = workspace();
     let out = stdout(&[&path_of(&dir), "--output", "text"]);
 
