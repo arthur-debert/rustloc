@@ -32,7 +32,19 @@ use std::str::FromStr;
 /// - `blanks`: Blank lines (anywhere)
 /// - `total`: Total line count (precomputed sum of all types)
 ///
-/// When a line type is disabled, it will be zeroed in returned stats.
+/// The meaning depends on where a `LineTypes` is used:
+///
+/// - As a **data filter** ([`Locs::filter`], [`CountOptions::line_types`]) a
+///   disabled line type is zeroed in the returned stats.
+/// - As a **view descriptor** (on [`CountQuerySet`] / [`DiffQuerySet`]) nothing
+///   is zeroed: it records which line types the caller asked to *see*, and the
+///   render layer uses it to pick columns. Query-set data is always complete so
+///   that one response can serve every output mode.
+///
+/// [`Locs::filter`]: crate::data::stats::Locs::filter
+/// [`CountOptions::line_types`]: crate::data::counter::CountOptions::line_types
+/// [`CountQuerySet`]: crate::query::queryset::CountQuerySet
+/// [`DiffQuerySet`]: crate::query::queryset::DiffQuerySet
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LineTypes {
     /// Include production code logic lines

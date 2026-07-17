@@ -105,7 +105,9 @@
 //!
 //! // Stage 3: Query — aggregate, sort, then filter and slice. Chain
 //! // `.filter(...)` and `.top(...)` for the equivalent of the CLI's
-//! // `--code-gte 1000 --top 10`.
+//! // `--code-gte 1000 --top 10`. The `LineTypes` argument records which
+//! // line types to *display*; it does not filter the data, so predicates
+//! // and ordering always see real counts.
 //! let queryset = CountQuerySet::from_result(
 //!     &result,
 //!     Aggregation::ByFile,
@@ -115,7 +117,9 @@
 //! .filter(&[Predicate::new(Field::Code, Op::Gte, 1000)])
 //! .top(10);
 //!
-//! // Stage 4: Format for output
+//! // Stage 4: Format for output. The query set is the canonical, output-mode
+//! // independent response — serialize it directly for JSON/YAML/XML, or format
+//! // it into a LOCTable for human display.
 //! let table = LOCTable::from_count_queryset(&queryset);
 //! ```
 //!

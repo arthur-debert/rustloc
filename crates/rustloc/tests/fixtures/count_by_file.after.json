@@ -1,0 +1,50 @@
+{
+  "aggregation": "ByFile",
+  "file_count": 2,
+  "items": [
+    {
+      "label": "src/lib.rs",
+      "stats": {
+        "blanks": 3,
+        "code": 6,
+        "comments": 1,
+        "docs": 2,
+        "examples": 0,
+        "tests": 8,
+        "total": 20
+      }
+    },
+    {
+      "label": "src/util.rs",
+      "stats": {
+        "blanks": 0,
+        "code": 1,
+        "comments": 0,
+        "docs": 1,
+        "examples": 0,
+        "tests": 0,
+        "total": 2
+      }
+    }
+  ],
+  "line_types": {
+    "blanks": false,
+    "code": true,
+    "comments": false,
+    "docs": true,
+    "examples": false,
+    "tests": true,
+    "total": true
+  },
+  "top_applied": false,
+  "total": {
+    "blanks": 3,
+    "code": 7,
+    "comments": 1,
+    "docs": 3,
+    "examples": 0,
+    "tests": 8,
+    "total": 22
+  },
+  "total_items": 2
+}

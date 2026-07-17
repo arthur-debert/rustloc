@@ -102,11 +102,11 @@ struct Cli {
 #[dispatch(handlers = handlers)]
 enum Commands {
     /// Count lines of code (default command)
-    #[dispatch(default, template = "stats_table")]
+    #[dispatch(default, template = "stats_table", post_dispatch = presentation::count)]
     Count(CountArgs),
 
     /// Show LOC differences between git commits
-    #[dispatch(template = "stats_table")]
+    #[dispatch(template = "stats_table", post_dispatch = presentation::diff)]
     #[command(long_about = "\
 Show LOC differences between git commits.
 
@@ -333,129 +333,27 @@ truncated slice. No-op when no `--by-*` aggregation is in effect.")]
     top: Option<usize>,
 }
 
-/// Command handlers module
+/// Command handlers.
+///
+/// Handlers are **pure with respect to presentation**: each builds and returns
+/// the one canonical typed response for its command ([`CountQuerySet`] /
+/// [`DiffQuerySet`]) and never inspects the output mode. Choosing how that
+/// response is presented — human table, CSV rows, or direct serialization —
+/// belongs to [`super::presentation`], which runs at the render boundary.
 mod handlers {
     use clap::ArgMatches;
     use rustloclib::{
         available_languages, count_directory_with_options, count_file_with_filter, count_workspace,
         default_languages, diff_revspec, diff_workdir, Aggregation, CountOptions, CountQuerySet,
-        CountResult, DiffOptions, DiffQuerySet, FilterConfig, LOCTable, LanguageName,
-        LanguageSelection, LineTypes, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
+        CountResult, DiffOptions, DiffQuerySet, FilterConfig, LanguageName, LanguageSelection,
+        LineTypes, OrderBy, OrderDirection, Ordering, WorkdirDiffMode,
     };
     use standout::cli::{CommandContext, HandlerResult, Output};
 
-    /// Check if the output mode is a structured data format (json, yaml, xml, csv).
-    fn is_structured_output(matches: &ArgMatches) -> bool {
-        matches!(
-            matches
-                .get_one::<String>("_output_mode")
-                .map(|s| s.as_str()),
-            Some("json" | "yaml" | "xml" | "csv")
-        )
-    }
-
-    fn is_csv_output(matches: &ArgMatches) -> bool {
-        matches
-            .get_one::<String>("_output_mode")
-            .map(|s| s.as_str())
-            == Some("csv")
-    }
-
-    /// Reshape a CountQuerySet into a top-level array of flat row objects
-    /// so standout's CSV flattener produces one row per item rather than
-    /// hammering the whole queryset into a single mega-row.
-    fn count_queryset_to_csv(qs: &CountQuerySet) -> serde_json::Value {
-        use rustloclib::Locs;
-        use serde_json::{json, Value};
-
-        let locs_row = |label: &str, stats: &Locs| -> Value {
-            json!({
-                "label": label,
-                "code": stats.code,
-                "tests": stats.tests,
-                "examples": stats.examples,
-                "docs": stats.docs,
-                "comments": stats.comments,
-                "blanks": stats.blanks,
-                "total": stats.total,
-            })
-        };
-
-        let mut rows: Vec<Value> = qs
-            .items
-            .iter()
-            .map(|item| locs_row(&item.label, &item.stats))
-            .collect();
-        rows.push(locs_row("TOTAL", &qs.total));
-        Value::Array(rows)
-    }
-
-    /// Reshape a DiffQuerySet into a top-level array of flat row objects.
-    /// Each row has the label plus added/removed/net columns for every
-    /// line type, so the CSV is one row per file (or crate/module).
-    fn diff_queryset_to_csv(qs: &DiffQuerySet) -> serde_json::Value {
-        use rustloclib::{Locs, LocsDiff};
-        use serde_json::{json, Value};
-
-        // i64 net so removals don't underflow to "very large positive".
-        let diff_row = |label: &str, d: &LocsDiff| -> Value {
-            json!({
-                "label": label,
-                "added_code": d.added.code,
-                "added_tests": d.added.tests,
-                "added_examples": d.added.examples,
-                "added_docs": d.added.docs,
-                "added_comments": d.added.comments,
-                "added_blanks": d.added.blanks,
-                "added_total": d.added.total,
-                "removed_code": d.removed.code,
-                "removed_tests": d.removed.tests,
-                "removed_examples": d.removed.examples,
-                "removed_docs": d.removed.docs,
-                "removed_comments": d.removed.comments,
-                "removed_blanks": d.removed.blanks,
-                "removed_total": d.removed.total,
-                "net_code": d.net_code(),
-                "net_tests": d.net_tests(),
-                "net_examples": d.net_examples(),
-                "net_docs": d.net_docs(),
-                "net_comments": d.net_comments(),
-                "net_blanks": d.net_blanks(),
-                "net_total": d.net_total(),
-            })
-        };
-
-        let mut rows: Vec<Value> = qs
-            .items
-            .iter()
-            .map(|item| diff_row(&item.label, &item.stats))
-            .collect();
-
-        // Preserve the skipped-file summary that the text footer and JSON
-        // output expose. We have no per-line-type breakdown for skipped
-        // files, so only the *_total fields carry data; everything else
-        // is left at zero. Skip the row entirely when there's nothing to
-        // show, so a fully analyzed diff stays clean.
-        if qs.non_rust_added > 0 || qs.non_rust_removed > 0 {
-            let non_rust = LocsDiff {
-                added: Locs {
-                    total: qs.non_rust_added,
-                    ..Locs::default()
-                },
-                removed: Locs {
-                    total: qs.non_rust_removed,
-                    ..Locs::default()
-                },
-            };
-            rows.push(diff_row("SKIPPED", &non_rust));
-        }
-
-        rows.push(diff_row("TOTAL", &qs.total));
-        Value::Array(rows)
-    }
-
-    /// Handler for count command
-    pub fn count(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
+    /// Handler for count command.
+    ///
+    /// Returns the canonical [`CountQuerySet`] regardless of output mode.
+    pub fn count(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<CountQuerySet> {
         let path = matches
             .get_one::<String>("path")
             .map(|s| s.as_str())
@@ -479,13 +377,6 @@ mod handlers {
             Aggregation::Total
         };
 
-        let structured = is_structured_output(matches);
-        let effective_line_types = if structured {
-            LineTypes::everything()
-        } else {
-            line_types
-        };
-
         let path_ref = std::path::Path::new(path);
         let is_workspace = path_ref.is_dir() && path_ref.join("Cargo.toml").exists()
             || path_ref.is_file() && path_ref.file_name() == Some("Cargo.toml".as_ref());
@@ -498,12 +389,14 @@ mod handlers {
             ));
         }
 
+        // The canonical response always carries complete counts; `line_types`
+        // only describes the requested view and is applied when rendering.
         let result: CountResult = if is_workspace {
             let options = CountOptions::new()
                 .crates(crates)
                 .filter(filter)
                 .aggregation(aggregation)
-                .line_types(effective_line_types);
+                .line_types(LineTypes::everything());
             count_workspace(path, options)?
         } else if path_ref.is_file() {
             let stats = count_file_with_filter(path, &filter)?;
@@ -518,7 +411,7 @@ mod handlers {
                 CountOptions::new()
                     .filter(filter)
                     .aggregation(aggregation)
-                    .line_types(effective_line_types),
+                    .line_types(LineTypes::everything()),
             )?
         };
 
@@ -535,32 +428,18 @@ mod handlers {
             }
         };
 
-        if structured {
-            let queryset = apply_post(CountQuerySet::from_result(
-                &result,
-                aggregation,
-                LineTypes::everything(),
-                ordering,
-            ));
-            if is_csv_output(matches) {
-                Ok(Output::Render(count_queryset_to_csv(&queryset)))
-            } else {
-                Ok(Output::Render(serde_json::to_value(queryset)?))
-            }
-        } else {
-            let queryset = apply_post(CountQuerySet::from_result(
-                &result,
-                aggregation,
-                line_types,
-                ordering,
-            ));
-            let table = LOCTable::from_count_queryset(&queryset);
-            Ok(Output::Render(serde_json::to_value(table)?))
-        }
+        Ok(Output::Render(apply_post(CountQuerySet::from_result(
+            &result,
+            aggregation,
+            line_types,
+            ordering,
+        ))))
     }
 
-    /// Handler for diff command
-    pub fn diff(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<serde_json::Value> {
+    /// Handler for diff command.
+    ///
+    /// Returns the canonical [`DiffQuerySet`] regardless of output mode.
+    pub fn diff(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<DiffQuerySet> {
         let path = matches
             .get_one::<String>("path")
             .map(|s| s.as_str())
@@ -585,18 +464,13 @@ mod handlers {
             Aggregation::Total
         };
 
-        let structured = is_structured_output(matches);
-        let effective_line_types = if structured {
-            LineTypes::everything()
-        } else {
-            line_types
-        };
-
+        // The canonical response always carries complete counts; `line_types`
+        // only describes the requested view and is applied when rendering.
         let options = DiffOptions::new()
             .crates(crates)
             .filter(filter)
             .aggregation(aggregation)
-            .line_types(effective_line_types);
+            .line_types(LineTypes::everything());
 
         let from = matches.get_one::<String>("from");
         let to = matches.get_one::<String>("to");
@@ -644,28 +518,12 @@ mod handlers {
             }
         };
 
-        if structured {
-            let queryset = apply_post(DiffQuerySet::from_result(
-                &result,
-                aggregation,
-                LineTypes::everything(),
-                ordering,
-            ));
-            if is_csv_output(matches) {
-                Ok(Output::Render(diff_queryset_to_csv(&queryset)))
-            } else {
-                Ok(Output::Render(serde_json::to_value(queryset)?))
-            }
-        } else {
-            let queryset = apply_post(DiffQuerySet::from_result(
-                &result,
-                aggregation,
-                line_types,
-                ordering,
-            ));
-            let table = LOCTable::from_diff_queryset(&queryset);
-            Ok(Output::Render(serde_json::to_value(table)?))
-        }
+        Ok(Output::Render(apply_post(DiffQuerySet::from_result(
+            &result,
+            aggregation,
+            line_types,
+            ordering,
+        ))))
     }
 
     // Helper functions
@@ -771,6 +629,236 @@ mod handlers {
             .get_many::<String>("crates")
             .map(|v| v.cloned().collect())
             .unwrap_or_default()
+    }
+}
+
+/// Presentation adapters — the render boundary.
+///
+/// Handlers return one canonical response per command, independent of output
+/// mode. Something still has to decide how that response reaches the user, and
+/// that decision lives here, in post-dispatch hooks that run *after* the
+/// handler and *before* rendering. This is the one place in the application
+/// that is allowed to know the output mode.
+///
+/// Three targets:
+///
+/// - **Data** (`json`/`yaml`/`xml`) — the canonical response is passed through
+///   untouched and standout serializes it directly. Numbers stay numbers.
+/// - **Csv** — standout's CSV writer flattens whatever object it is handed
+///   into a *single* row, which would turn a query set into hundreds of
+///   `items.0.code`-style columns. So we adapt the response into a top-level
+///   array of flat, typed row structs (see [`CountCsvRow`] / [`DiffCsvRow`]),
+///   which flattens to the row-per-item CSV users expect. This is the isolated
+///   workaround for that render-layer limitation — it is deliberately *not* a
+///   branch in the handler.
+/// - **Table** (everything else: `auto`/`term`/`text`/`term-debug`) — the
+///   response is formatted into a `LOCTable` for the `stats_table` template.
+///   `line_types` picks the columns here, at render time.
+mod presentation {
+    use clap::ArgMatches;
+    use rustloclib::{CountQuerySet, DiffQuerySet, LOCTable, Locs, LocsDiff};
+    use serde::{Deserialize, Serialize};
+    use serde_json::Value;
+    use standout::cli::{CommandContext, HookError};
+
+    /// How the canonical response should reach the user.
+    enum Target {
+        /// Serialize the response as-is (json/yaml/xml).
+        Data,
+        /// Adapt to row-per-item CSV.
+        Csv,
+        /// Format into a `LOCTable` for the template.
+        Table,
+    }
+
+    /// Read the render target from standout's injected `_output_mode` arg.
+    ///
+    /// Reading the output mode is legitimate *here* — this is the render
+    /// boundary, not command logic.
+    fn target(matches: &ArgMatches) -> Target {
+        match matches
+            .get_one::<String>("_output_mode")
+            .map(|s| s.as_str())
+        {
+            Some("csv") => Target::Csv,
+            Some("json" | "yaml" | "xml") => Target::Data,
+            _ => Target::Table,
+        }
+    }
+
+    fn decode<T: for<'de> Deserialize<'de>>(data: Value) -> Result<T, HookError> {
+        serde_json::from_value(data).map_err(|e| {
+            HookError::post_dispatch(format!("canonical response was not well-formed: {e}"))
+        })
+    }
+
+    fn encode<T: Serialize>(value: T) -> Result<Value, HookError> {
+        serde_json::to_value(value)
+            .map_err(|e| HookError::post_dispatch(format!("failed to encode presentation: {e}")))
+    }
+
+    /// One CSV row of the count schema.
+    ///
+    /// The schema is **stable and mode-independent**: every line-type column is
+    /// always present with its real count, regardless of `--type`. `--type` is
+    /// a display filter for the human table; narrowing CSV columns to match it
+    /// would make the schema vary per invocation, which is exactly what a
+    /// machine-readable format must not do.
+    #[derive(Serialize)]
+    struct CountCsvRow {
+        label: String,
+        code: u64,
+        tests: u64,
+        examples: u64,
+        docs: u64,
+        comments: u64,
+        blanks: u64,
+        total: u64,
+    }
+
+    impl CountCsvRow {
+        fn new(label: impl Into<String>, stats: &Locs) -> Self {
+            Self {
+                label: label.into(),
+                code: stats.code,
+                tests: stats.tests,
+                examples: stats.examples,
+                docs: stats.docs,
+                comments: stats.comments,
+                blanks: stats.blanks,
+                total: stats.total,
+            }
+        }
+    }
+
+    /// One CSV row of the diff schema: label plus added/removed/net columns for
+    /// every line type. Same stability contract as [`CountCsvRow`].
+    ///
+    /// `net_*` is `i64` so a net removal reads `-42` rather than underflowing
+    /// into a very large positive number.
+    #[derive(Serialize)]
+    struct DiffCsvRow {
+        label: String,
+        added_code: u64,
+        added_tests: u64,
+        added_examples: u64,
+        added_docs: u64,
+        added_comments: u64,
+        added_blanks: u64,
+        added_total: u64,
+        removed_code: u64,
+        removed_tests: u64,
+        removed_examples: u64,
+        removed_docs: u64,
+        removed_comments: u64,
+        removed_blanks: u64,
+        removed_total: u64,
+        net_code: i64,
+        net_tests: i64,
+        net_examples: i64,
+        net_docs: i64,
+        net_comments: i64,
+        net_blanks: i64,
+        net_total: i64,
+    }
+
+    impl DiffCsvRow {
+        fn new(label: impl Into<String>, d: &LocsDiff) -> Self {
+            Self {
+                label: label.into(),
+                added_code: d.added.code,
+                added_tests: d.added.tests,
+                added_examples: d.added.examples,
+                added_docs: d.added.docs,
+                added_comments: d.added.comments,
+                added_blanks: d.added.blanks,
+                added_total: d.added.total,
+                removed_code: d.removed.code,
+                removed_tests: d.removed.tests,
+                removed_examples: d.removed.examples,
+                removed_docs: d.removed.docs,
+                removed_comments: d.removed.comments,
+                removed_blanks: d.removed.blanks,
+                removed_total: d.removed.total,
+                net_code: d.net_code(),
+                net_tests: d.net_tests(),
+                net_examples: d.net_examples(),
+                net_docs: d.net_docs(),
+                net_comments: d.net_comments(),
+                net_blanks: d.net_blanks(),
+                net_total: d.net_total(),
+            }
+        }
+    }
+
+    /// One row per item, then a `TOTAL` summary row.
+    fn count_csv_rows(qs: &CountQuerySet) -> Vec<CountCsvRow> {
+        let mut rows: Vec<CountCsvRow> = qs
+            .items
+            .iter()
+            .map(|item| CountCsvRow::new(item.label.clone(), &item.stats))
+            .collect();
+        rows.push(CountCsvRow::new("TOTAL", &qs.total));
+        rows
+    }
+
+    /// One row per item, an optional `SKIPPED` row, then a `TOTAL` row.
+    fn diff_csv_rows(qs: &DiffQuerySet) -> Vec<DiffCsvRow> {
+        let mut rows: Vec<DiffCsvRow> = qs
+            .items
+            .iter()
+            .map(|item| DiffCsvRow::new(item.label.clone(), &item.stats))
+            .collect();
+
+        // Preserve the skipped-file summary that the text footer and JSON
+        // output expose. We have no per-line-type breakdown for skipped
+        // files, so only the *_total fields carry data; everything else
+        // is left at zero. Skip the row entirely when there's nothing to
+        // show, so a fully analyzed diff stays clean.
+        if qs.non_rust_added > 0 || qs.non_rust_removed > 0 {
+            let non_rust = LocsDiff {
+                added: Locs {
+                    total: qs.non_rust_added,
+                    ..Locs::default()
+                },
+                removed: Locs {
+                    total: qs.non_rust_removed,
+                    ..Locs::default()
+                },
+            };
+            rows.push(DiffCsvRow::new("SKIPPED", &non_rust));
+        }
+
+        rows.push(DiffCsvRow::new("TOTAL", &qs.total));
+        rows
+    }
+
+    /// Post-dispatch adapter for `count`.
+    pub fn count(
+        matches: &ArgMatches,
+        _ctx: &CommandContext,
+        data: Value,
+    ) -> Result<Value, HookError> {
+        match target(matches) {
+            Target::Data => Ok(data),
+            Target::Csv => encode(count_csv_rows(&decode::<CountQuerySet>(data)?)),
+            Target::Table => encode(LOCTable::from_count_queryset(&decode::<CountQuerySet>(
+                data,
+            )?)),
+        }
+    }
+
+    /// Post-dispatch adapter for `diff`.
+    pub fn diff(
+        matches: &ArgMatches,
+        _ctx: &CommandContext,
+        data: Value,
+    ) -> Result<Value, HookError> {
+        match target(matches) {
+            Target::Data => Ok(data),
+            Target::Csv => encode(diff_csv_rows(&decode::<DiffQuerySet>(data)?)),
+            Target::Table => encode(LOCTable::from_diff_queryset(&decode::<DiffQuerySet>(data)?)),
+        }
     }
 }
 
