@@ -11,7 +11,6 @@ test = "./bin/shipit test"
 # <<< shipit-managed test task <<<
 # >>> shipit-managed tasks (do not edit; regenerate via `shipit install`) >>>
 changelog = "./bin/shipit changelog"
-lint = "./bin/shipit lint"
 logs = "./bin/shipit logs"
 # <<< shipit-managed tasks <<<
 
@@ -52,6 +51,9 @@ lefthook = "2.1.*"
 # <<< shipit-managed lint deps <<<
 
 [feature.lint.tasks]
+# >>> shipit-managed lint task (do not edit; regenerate via `shipit install`) >>>
+lint = "./bin/shipit lint"
+# <<< shipit-managed lint task <<<
 # The wf-checks LINT LANE's run (ADP02-WS05, #104), modeled on lex#829 /
 # shipit's own: the lint toolchain (rust 1.96 + clippy/rustfmt, shellcheck,
 # shfmt, yamllint, prettier, markdownlint, actionlint) lives in THIS feature's
@@ -79,6 +81,60 @@ lint = ["lint", "shipit-lexd"]
 # `cargo nextest` stack itself. Same conda-forge rust pin as the managed
 # [feature.lint.dependencies] rust.
 [dependencies]
+# >>> shipit-managed rust release toolchain (do not edit; regenerate via `shipit install`) >>>
+# The rust RELEASE toolchain (#801, closing open hole 1 of the TOL02-WS17
+# inventory): hosted runner images no longer carry Rust, and the managed rust
+# LINT block anchors in the lint feature — an env the release runs' bare
+# `pixi run --locked ./bin/shipit` never resolves. So `cargo` itself (prepare's
+# subcommand dispatch, `cargo build`, `cargo publish`/`cargo metadata`)
+# anchors HERE, in the DEFAULT env's [dependencies], exactly the PATH every
+# wf-release stage executes with. conda-forge's `rust` is the official
+# toolchain (cargo included), provisioned under setup-pixi's lockfile-keyed
+# cache (the #582 doctrine: the release run NEVER installs at run time).
+# Deliberately the SYSROOT-ONLY block, SEPARATE from the cargo-edit
+# release-deps block: a consumer already pinning `rust` in its own
+# [dependencies] (the pre-#801 consumer-side workaround) keeps its pin via
+# the PixiKeyConflict first-splice guard WITHOUT losing cargo-edit delivery
+# — a block shared with the release deps would be skipped whole. Pinned in
+# lockstep with the rust lint block (drift-tested); a bump is one data edit
+# per block, same diff. If this repo no longer ships rust (the last
+# Cargo.toml is gone), delete this block and its
+# `pixi.toml#shipit-rust-release-toolchain` entry in .shipit.toml's
+# [managed] table — a reconcile only ADDS toolchain blocks, never retires one.
+rust = "1.96.*"
+# The wasm32 target std for this managed sysroot (#853): conda-forge's
+# wasm-pack does NOT pull it — its only deps are __glibc/libgcc (osx: __osx),
+# so the WS12 record's "wasm-pack pulls the wasm32 std" claim was false and
+# every wasm build against the managed `rust` toolchain died with
+# "wasm32-unknown-unknown target not found in sysroot" (found live in the
+# ADP02 rust reconcile wave). Anchors HERE, beside the `rust` line it is a
+# component of — NOT in the release-deps block — so a consumer that owns its
+# `rust` pin skips the std WITH the toolchain (one sysroot, one owner: that
+# consumer self-provisions the matching std, the sanctioned #759 rule)
+# instead of receiving a std that misses its own rust version. Still no
+# wasm-gated block (the WS12 record); accepted residue: ~20MB in every rust
+# consumer's default env, wasm or not. Pinned in LOCKSTEP with the `rust`
+# line above (drift-tested, `test_pins_agree_with_their_one_authority`) —
+# bump both keys in the same diff, or the std misses the sysroot version.
+rust-std-wasm32-unknown-unknown = "1.96.*"
+# <<< shipit-managed rust release toolchain <<<
+# >>> shipit-managed launcher deps (do not edit; regenerate via `shipit install`) >>>
+# The pinned `bin/shipit` launcher's one prerequisite (#758, TOL02-WS17
+# #794): every workflow block (wf-checks and the whole wf-release family)
+# runs `pixi run --locked ./bin/shipit ...`, and the ADR-0033 launcher
+# resolves the repo's shipit pin via `uv tool run` — but hosted runners do
+# not carry uv, so without this block the very first `./bin/shipit` dies 127
+# before any verb runs. Provisioned from conda-forge under setup-pixi's
+# lockfile-keyed cache (the #582 doctrine; the spike measured the launcher's
+# uv resolve at 5s cold / 0-3s warm riding this env — no extra cache step).
+# Anchored under [dependencies] — the DEFAULT env — because that is exactly
+# the PATH a bare `pixi run --locked <task>` resolves. Pinned to the minor
+# line of Layer 0's UV_PIN (bin/setup-dev-env.sh), so dev machines and CI
+# provision the same uv; a lockstep drift test (tests/test_install.py) fails
+# when the two move apart. `uv build` (the python bundle composition) rides
+# this same entry.
+uv = "0.11.*"
+# <<< shipit-managed launcher deps <<<
 # >>> shipit-managed rust release deps (do not edit; regenerate via `shipit install`) >>>
 # The rust RELEASE-side bump tool (#793, the #784-F2 failure class): `shipit
 # release prepare`'s rust bump adapter runs `cargo set-version --workspace`
@@ -124,14 +180,14 @@ wasm-pack = "0.15.*"
 # declares a `conda` endpoint — so a rust+conda repo gets it EXACTLY once and a
 # rust-without-conda repo (which publishes no `.conda`) no longer carries it.
 # <<< shipit-managed rust release deps <<<
-rust = "1.96.*"
 cargo-nextest = ">=0.9.138,<0.10"
-# uv backs the pinned bin/shipit launcher (ADR-0033: it provisions the repo's
-# pinned shipit via uv, PATH-independent). Both wf-checks lanes run
-# `pixi run --locked <task>` → ./bin/shipit on a hosted runner where uv is not
-# otherwise present, so the launcher's one prerequisite must ride the env too
-# (known gap shipit#758: the block/managed set should own this).
-uv = ">=0.5"
+# `rust` and `uv` used to be declared here as consumer keys; both are now
+# shipit-managed and MUST NOT come back. `uv` (the pinned bin/shipit launcher's
+# one prerequisite, ADR-0033) rides `pixi.toml#shipit-launcher-deps` — the
+# shipit#758 gap this repo worked around is closed. `rust` rides
+# `pixi.toml#shipit-rust-release-toolchain`, which delivers the same pin PLUS
+# `rust-std-wasm32-unknown-unknown`; a consumer-owned `rust` key made that whole
+# block skip, so the shadow copy silently cost this repo the wasm32 sysroot.
 
 # >>> shipit-managed lexd feature (do not edit; regenerate via `shipit install`) >>>
 [feature.shipit-lexd]
