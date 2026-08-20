@@ -96,7 +96,7 @@ pub fn diff(request: &DiffRequest) -> Result<DiffQuerySet, anyhow::Error> {
         .line_types(LineTypes::everything());
 
     let result = match &request.endpoints {
-        // The revspec goes to the library verbatim; gix owns rev parsing.
+        // The revspec goes to the library verbatim; git rev-parse owns resolution.
         DiffEndpoints::Revspec(revspec) => diff_revspec(&request.repo, revspec, options)?,
         DiffEndpoints::Workdir(mode) => diff_workdir(&request.repo, *mode, options)?,
     };

@@ -236,14 +236,13 @@ truncated slice. No-op when no `--by-*` aggregation is in effect.")]
 struct DiffArgs {
     /// Revspec or range [HEAD~5..HEAD, v1.0.0..v2.0.0, main]
     #[arg(long_help = "\
-Revspec or range, parsed by gix. Common forms work: tags (annotated or
-lightweight), branches, short hashes, HEAD~N, ranges (a..b), merge-base
-ranges (a...b). A single rev is diffed against HEAD. Without arguments,
-diffs the working directory.
+Revspec or range, parsed by `git rev-parse`. Common forms work: tags
+(annotated or lightweight), branches, short hashes, HEAD~N, @{-N},
+:/regex, ranges (a..b), merge-base ranges (a...b). A single rev is
+diffed against HEAD. Without arguments, diffs the working directory.
 
-Some less-common rev-parse forms (e.g. `@{-N}` for previous branch,
-`:/regex` for commit-message search) aren't supported by gix yet — pass
-the resolved hash from `git rev-parse` if you need them.")]
+A revspec diff requires `git` on PATH. Working-tree diffs (`rustloc
+diff` / `rustloc diff --staged`) stay in-process and do not.")]
     from: Option<String>,
 
     /// Target revspec (alternative to a..b range syntax)

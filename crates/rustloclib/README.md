@@ -58,8 +58,9 @@ let result = count_workspace(".", CountOptions::new()
 ```rust,ignore
 use rustloclib::{diff_revspec, DiffOptions};
 
-// Single revspec — accepts ranges (`a..b`), merge-base (`a...b`), tags,
-// branches, short hashes, HEAD~N. A single rev is diffed against HEAD.
+// Single revspec — resolved by `git rev-parse`. Accepts ranges (`a..b`),
+// merge-base (`a...b`), tags, branches, short hashes, HEAD~N. A single
+// rev is diffed against HEAD. Requires `git` on PATH.
 let diff = diff_revspec(".", "HEAD~5..HEAD", DiffOptions::new())?;
 println!("Code: +{}/-{}", diff.total.added.code, diff.total.removed.code);
 ```

@@ -853,7 +853,7 @@ fn repo() -> TempDir {
 
 /// A workdir diff renders added lines. Representative coverage that the diff
 /// command's own handler → post-dispatch → template chain is wired, without
-/// re-testing gix's rev parsing (that is `rustloclib`'s job).
+/// re-testing git's rev-parse (that is `rustloclib`'s job).
 #[test]
 fn diff_workdir_reports_the_added_line() {
     let dir = repo();
@@ -1384,4 +1384,21 @@ fn diff_staged_with_revs_is_rejected() {
         RunResult::Error(msg) => assert!(msg.contains("--staged"), "unexpected message: {msg}"),
         other => panic!("expected an Error, got {other:?}"),
     }
+}
+
+/// A library revspec failure is a dispatch error, not clap usage. Git's
+/// parser is covered in rustloclib; this only checks the error surfaces.
+#[test]
+fn diff_invalid_revspec_is_a_dispatch_error() {
+    let dir = repo();
+    let msg = error(&[
+        "diff",
+        "-p",
+        dir.path().to_str().unwrap(),
+        "definitely_not_a_real_ref_xyz",
+    ]);
+    assert!(
+        msg.contains("Could not resolve revision") && msg.contains("fatal:"),
+        "unexpected message: {msg}"
+    );
 }

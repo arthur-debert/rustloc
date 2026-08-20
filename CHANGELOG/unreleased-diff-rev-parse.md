@@ -1,0 +1,1 @@
+- Delegate `rustloc diff` revspec resolution to `git rev-parse` instead of gix (#138)

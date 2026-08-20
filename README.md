@@ -105,7 +105,7 @@ rustloc diff main feature --by-file  # two-arg form, per-file breakdown
 rustloc diff main...feature          # from the merge base of main and feature
 ```
 
-Revspec syntax mirrors `git diff` / `git rev-parse`: tags (annotated or lightweight), branches, short hashes, `HEAD~N`, ranges (`a..b`), and merge-base ranges (`a...b`) all work. A single rev is diffed against HEAD; tag objects are peeled to their target commit automatically.
+Revspec syntax is resolved by `git rev-parse`: tags (annotated or lightweight), branches, short hashes, `HEAD~N`, `@{-N}`, `:/regex`, ranges (`a..b`), and merge-base ranges (`a...b`) all work. A single rev is diffed against HEAD; tag objects are peeled to their target commit automatically. A revspec `diff` requires `git` on `PATH`. Working-tree diffs (`rustloc diff` / `rustloc diff --staged`) do not.
 
 The same `--by-*`, `-o`, `--top`, `-t`, `--lang`, and filter flags work on `diff` results — diff filters operate on the net change.
 
