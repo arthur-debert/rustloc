@@ -121,7 +121,8 @@ impl CountPath {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiffEndpoints {
     /// A git revspec (`HEAD~5..HEAD`, `main...feature`, a single rev vs HEAD).
-    /// Passed through to gix verbatim; we never parse revspec syntax ourselves.
+    /// Passed through to the library verbatim; we never parse revspec syntax
+    /// ourselves. The library resolves it with `git rev-parse`.
     Revspec(String),
     /// The working tree against HEAD, in the given mode.
     Workdir(WorkdirDiffMode),
@@ -131,9 +132,9 @@ impl DiffEndpoints {
     /// Resolve the positional revs and `--staged` into one endpoint pair.
     ///
     /// Two positional args (`diff main feature`) are joined into `main..feature`
-    /// so gix sees a single range expression. `--staged` is only meaningful for
-    /// a working-tree diff, so combining it with revs is rejected rather than
-    /// silently ignored.
+    /// so the library sees a single range expression. `--staged` is only
+    /// meaningful for a working-tree diff, so combining it with revs is
+    /// rejected rather than silently ignored.
     pub fn resolve(
         from: Option<&String>,
         to: Option<&String>,

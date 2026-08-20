@@ -5,6 +5,7 @@
 ## Unreleased
 
 - Test CLI help language list against registered backends
+- Delegate `rustloc diff` revspec resolution to `git rev-parse` instead of gix (#138)
 
 ## 0.19.1 - 2026-07-05
 

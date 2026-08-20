@@ -25,8 +25,10 @@
 //! 4. Applies crate filter via workspace's existing mechanisms
 
 use std::collections::HashMap;
+use std::io::ErrorKind;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use imara_diff::intern::InternedInput;
 use imara_diff::{diff, Algorithm};
@@ -734,21 +736,13 @@ fn compute_workdir_file_diff(change: &WorkdirFileChange, path: &Path) -> Result<
 /// - `<a>..<b>` — diff from `<a>` to `<b>`
 /// - `<a>...<b>` — diff from merge-base(`<a>`, `<b>`) to `<b>`
 ///
-/// `<rev>` can be any form gix understands: tags (annotated or lightweight),
-/// branches, short or full hashes, `HEAD~N`, `<branch>@{N}`, etc. Tag objects
-/// are peeled to their target commit transparently.
+/// `<rev>` is any form `git rev-parse` accepts: tags (annotated or lightweight),
+/// branches, short or full hashes, `HEAD~N`, `@{-N}`, `:/regex`, and so on.
+/// Tag objects are peeled to their target commit transparently.
 ///
-/// # Limitations
-///
-/// Resolution uses [`gix::Repository::rev_parse`], which doesn't yet implement
-/// every form `git rev-parse` accepts. Forms known to be unsupported in this
-/// version of gix include `@{-N}` (previous branch) and `:/regex` (commit
-/// message search). If you hit one, resolve it with `git rev-parse` first and
-/// pass the resulting hash.
-///
-/// If the gix gap becomes painful in practice, the next structural step is to
-/// shell out to `git rev-parse` for resolution — that trades the in-process
-/// advantage for full git-binary compatibility.
+/// Revision *resolution* shells out to `git rev-parse` in `repo_path` (the
+/// caller's `-p` / `.`), so a revspec diff requires `git` on `PATH`. Tree,
+/// blob, and working-tree diffs stay on gix and do not.
 pub fn diff_revspec(
     repo_path: impl AsRef<Path>,
     revspec: &str,
@@ -766,7 +760,7 @@ pub fn diff_revspec(
         .to_path_buf();
 
     // Resolve the revspec into two commit endpoints + display labels
-    let resolved = resolve_revspec(&repo, revspec)?;
+    let resolved = resolve_revspec(&repo, repo_path, revspec)?;
 
     // Get the trees for both commits
     let from_tree = resolved.from.tree().map_err(|e| {
@@ -902,26 +896,36 @@ struct ResolvedSpec<'repo> {
     to_label: String,
 }
 
+/// One line of `git rev-parse` rev-list notation: a positive object or `^oid`.
+enum RevParseLine {
+    Include(gix::ObjectId),
+    Exclude(gix::ObjectId),
+}
+
 /// Resolve a revspec string into a pair of commits.
 ///
-/// Delegates the parsing to [`gix::Repository::rev_parse`], which natively
-/// understands tags, branches, short hashes, ranges (`a..b`), and merge
-/// specs (`a...b`). Tag objects are peeled to their target commit.
+/// Shells out to `git -C <repo_path> rev-parse --end-of-options <spec>` and
+/// maps Git's stdout (rev-list notation) onto diff endpoints without inspecting
+/// `..` / `...` in the user's string:
+///
+/// - one SHA → that commit against `HEAD`
+/// - `B` plus `^A` → two-dot `A` → `B`
+/// - `B`, `A`, `^merge-base` → three-dot merge-base → `B`
+///
+/// Display labels still use the user string when it has both ends. A missing
+/// `git` binary or a non-zero/`empty` rev-parse is a git error, not a gix
+/// fallback.
 fn resolve_revspec<'repo>(
     repo: &'repo gix::Repository,
+    repo_path: &Path,
     revspec: &str,
 ) -> Result<ResolvedSpec<'repo>> {
-    use gix::revision::plumbing::Spec as InnerSpec;
-
-    let spec = repo
-        .rev_parse(revspec.as_bytes())
-        .map_err(|e| RustlocError::GitError(format!("Failed to resolve '{}': {}", revspec, e)))?
-        .detach();
-
-    match spec {
-        InnerSpec::Include(oid) => {
+    let stdout = git_rev_parse_with("git", repo_path, revspec)?;
+    let parsed = parse_rev_parse_lines(&stdout)?;
+    match parsed.as_slice() {
+        [RevParseLine::Include(from)] => {
             // Single rev: diff <rev>..HEAD, matching the prior CLI behavior.
-            let from = peel_oid_to_commit(repo, oid, revspec)?;
+            let from = peel_oid_to_commit(repo, *from, revspec)?;
             let head_id = repo
                 .head_id()
                 .map_err(|e| RustlocError::GitError(format!("Failed to resolve HEAD: {}", e)))?
@@ -934,11 +938,11 @@ fn resolve_revspec<'repo>(
                 to_label: "HEAD".to_string(),
             })
         }
-        InnerSpec::Range { from, to } => {
-            let from_commit = peel_oid_to_commit(repo, from, revspec)?;
-            let to_commit = peel_oid_to_commit(repo, to, revspec)?;
+        [RevParseLine::Include(to), RevParseLine::Exclude(from)] => {
+            let from_commit = peel_oid_to_commit(repo, *from, revspec)?;
+            let to_commit = peel_oid_to_commit(repo, *to, revspec)?;
             let (from_label, to_label) =
-                split_label(revspec, "..").unwrap_or_else(|| (short_hex(&from), short_hex(&to)));
+                split_label(revspec, "..").unwrap_or_else(|| (short_hex(from), short_hex(to)));
             Ok(ResolvedSpec {
                 from: from_commit,
                 to: to_commit,
@@ -946,26 +950,14 @@ fn resolve_revspec<'repo>(
                 to_label,
             })
         }
-        InnerSpec::Merge { theirs, ours } => {
-            // git diff a...b: diff from merge-base(a, b) to b.
-            // Peel both endpoints to commits first — `merge_base` expects
-            // commit ids and gix's rev_parse can hand us tag-object ids.
-            let theirs_commit = peel_oid_to_commit(repo, theirs, revspec)?;
-            let ours_commit = peel_oid_to_commit(repo, ours, revspec)?;
-            let mb = repo
-                .merge_base(theirs_commit.id, ours_commit.id)
-                .map_err(|e| {
-                    RustlocError::GitError(format!(
-                        "Failed to find merge base for '{}': {}",
-                        revspec, e
-                    ))
-                })?
-                .detach();
-            let from = peel_oid_to_commit(repo, mb, revspec)?;
-            let to = ours_commit;
+        [RevParseLine::Include(to_oid), RevParseLine::Include(_from), RevParseLine::Exclude(mb)] => {
+            // git diff a...b: diff from merge-base(a, b) to b. Git already
+            // printed the merge-base as the excluded oid; do not recompute it.
+            let from = peel_oid_to_commit(repo, *mb, revspec)?;
+            let to = peel_oid_to_commit(repo, *to_oid, revspec)?;
             let (from_label, to_label) = match split_label(revspec, "...") {
                 Some((a, b)) => (format!("merge-base({}, {})", a, b), b),
-                None => (short_hex(&mb), short_hex(&ours)),
+                None => (short_hex(mb), short_hex(to_oid)),
             };
             Ok(ResolvedSpec {
                 from,
@@ -974,14 +966,104 @@ fn resolve_revspec<'repo>(
                 to_label,
             })
         }
-        InnerSpec::Exclude(_) | InnerSpec::IncludeOnlyParents(_) | InnerSpec::ExcludeParents(_) => {
-            Err(RustlocError::GitError(format!(
-                "Revspec '{}' resolves to an unsupported form for diff. \
+        _ => Err(RustlocError::GitError(format!(
+            "Revspec '{}' resolves to an unsupported form for diff. \
              Use `<rev>`, `<a>..<b>`, or `<a>...<b>`.",
-                revspec
-            )))
-        }
+            revspec
+        ))),
     }
+}
+
+/// Run `git -C <repo_path> rev-parse --end-of-options <spec>`.
+///
+/// A literal `--` after `--end-of-options` is *not* passed: git treats that
+/// `--` as the rev/pathspec separator, echoes the flags, and never resolves
+/// the spec. `--end-of-options` alone still stops option parsing so a
+/// dash-prefixed spec is not mistaken for a flag.
+///
+/// `--revs-only` is not used: a bad name can exit 0 with empty stdout (and
+/// empty stderr), which would drop Git's `fatal:` text. Empty stdout and
+/// non-zero exit are both resolution errors; a missing binary says so.
+fn git_rev_parse_with(git_program: &str, repo_path: &Path, spec: &str) -> Result<String> {
+    let output = match Command::new(git_program)
+        .arg("-C")
+        .arg(repo_path)
+        .arg("rev-parse")
+        .arg("--end-of-options")
+        .arg(spec)
+        .stdin(Stdio::null())
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            return Err(revspec_resolve_error(spec, "git is not on PATH"));
+        }
+        Err(err) => return Err(revspec_resolve_error(spec, &err.to_string())),
+    };
+
+    if !output.status.success() {
+        return Err(revspec_resolve_error(
+            spec,
+            &String::from_utf8_lossy(&output.stderr),
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if stdout.trim().is_empty() {
+        return Err(revspec_resolve_error(
+            spec,
+            &String::from_utf8_lossy(&output.stderr),
+        ));
+    }
+    Ok(stdout)
+}
+
+/// One wrapper line, then Git's error text un-rephrased.
+///
+/// Trailing whitespace is stripped so the wrapper-plus-detail join does not
+/// leave a dangling blank line. This is join hygiene, not a byte-identical
+/// stderr dump: Git's wording is kept, the terminator is not.
+fn revspec_resolve_error(revspec: &str, detail: &str) -> RustlocError {
+    let detail = detail.trim_end();
+    let msg = if detail.is_empty() {
+        format!("Could not resolve revision '{revspec}'.")
+    } else {
+        format!("Could not resolve revision '{revspec}'.\n{detail}")
+    };
+    RustlocError::GitError(msg)
+}
+
+/// Parse `git rev-parse` stdout into include/exclude object ids.
+///
+/// Flag lines such as the echoed `--end-of-options` are skipped. Only 40- or
+/// 64-character hex object ids (optionally `^`-prefixed) count.
+fn parse_rev_parse_lines(stdout: &str) -> Result<Vec<RevParseLine>> {
+    let mut lines = Vec::new();
+    for raw in stdout.lines() {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let (exclude, hex) = match raw.strip_prefix('^') {
+            Some(rest) => (true, rest),
+            None => (false, raw),
+        };
+        if hex.len() != 40 && hex.len() != 64 {
+            continue;
+        }
+        if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue;
+        }
+        let oid = gix::ObjectId::from_hex(hex.as_bytes()).map_err(|e| {
+            RustlocError::GitError(format!("Could not parse git rev-parse object id: {e}"))
+        })?;
+        lines.push(if exclude {
+            RevParseLine::Exclude(oid)
+        } else {
+            RevParseLine::Include(oid)
+        });
+    }
+    Ok(lines)
 }
 
 /// Peel a resolved object id (which may point at a tag) down to a commit.
@@ -1000,7 +1082,7 @@ fn peel_oid_to_commit<'repo>(
         })
 }
 
-/// Split a revspec on a separator that we know gix accepted, for display only.
+/// Split a revspec on a separator for display only.
 /// Returns `None` if the separator is absent (label fallback uses hashes).
 fn split_label(revspec: &str, sep: &str) -> Option<(String, String)> {
     let (a, b) = revspec.split_once(sep)?;
@@ -1622,6 +1704,15 @@ mod tests {
             DiffOptions::new(),
         );
         assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Could not resolve revision 'definitely_not_a_real_ref_xyz'"),
+            "wrapper line missing: {err}"
+        );
+        assert!(
+            err.contains("fatal:"),
+            "Git's fatal: text must be included un-rephrased: {err}"
+        );
     }
 
     #[test]
@@ -1676,6 +1767,156 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("unsupported"), "got: {}", err);
+    }
+
+    /// Two commits on `main`: `a.rs` grows from one code line to two.
+    /// `HEAD~1` is a real ancestor, unlike the one-commit [`fixture_repo`].
+    fn two_commit_repo() -> TempDir {
+        let dir = workdir_repo(&[("a.rs", "fn a() {}\n")]);
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}\nfn b() {}\n").unwrap();
+        git_add(dir.path(), "a.rs");
+        git_commit(dir.path(), "second");
+        dir
+    }
+
+    /// Diverged `main` and `feature` from a shared base.
+    ///
+    /// Base: `base.rs`. Feature adds `feat.rs` (1 code line). Main then adds
+    /// `main_only.rs` (2 code lines). `main...feature` is merge-base → feature
+    /// (feat.rs only); `main..feature` is main → feature (feat.rs added and
+    /// main_only.rs deleted).
+    fn diverged_repo() -> TempDir {
+        let dir = workdir_repo(&[("base.rs", "fn base() {}\n")]);
+        let p = dir.path();
+        run_git(p, &["checkout", "-b", "feature", "--quiet"]);
+        std::fs::write(p.join("feat.rs"), "fn feat() {}\n").unwrap();
+        git_add(p, "feat.rs");
+        git_commit(p, "feature");
+        run_git(p, &["checkout", "main", "--quiet"]);
+        std::fs::write(p.join("main_only.rs"), "fn main_only() {}\nfn also() {}\n").unwrap();
+        git_add(p, "main_only.rs");
+        git_commit(p, "main-only");
+        dir
+    }
+
+    fn git_commit(dir: &Path, message: &str) {
+        let out = Command::new("git")
+            .args(["commit", "--quiet", "-m", message])
+            .env("GIT_AUTHOR_DATE", "2024-01-01T00:00:00Z")
+            .env("GIT_COMMITTER_DATE", "2024-01-01T00:00:00Z")
+            .current_dir(dir)
+            .output()
+            .expect("git spawn");
+        assert!(
+            out.status.success(),
+            "git commit {message:?} failed (status={:?})\nstdout: {}\nstderr: {}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+    }
+
+    #[test]
+    fn test_diff_revspec_head_tilde_one() {
+        let dir = two_commit_repo();
+        let diff = diff_revspec(dir.path(), "HEAD~1", DiffOptions::new()).unwrap();
+        assert_eq!(diff.from_commit, "HEAD~1");
+        assert_eq!(diff.to_commit, "HEAD");
+        assert_eq!(diff.total.added.code, 1);
+        assert_eq!(diff.total.removed.code, 0);
+    }
+
+    #[test]
+    fn test_diff_revspec_head_tilde_one_range() {
+        let dir = two_commit_repo();
+        let diff = diff_revspec(dir.path(), "HEAD~1..HEAD", DiffOptions::new()).unwrap();
+        assert_eq!(diff.from_commit, "HEAD~1");
+        assert_eq!(diff.to_commit, "HEAD");
+        assert_eq!(diff.total.added.code, 1);
+        assert_eq!(diff.total.removed.code, 0);
+    }
+
+    #[test]
+    fn test_diff_revspec_three_dot_uses_merge_base_not_left_tip() {
+        let dir = diverged_repo();
+        let three = diff_revspec(dir.path(), "main...feature", DiffOptions::new()).unwrap();
+        assert!(
+            three.from_commit.starts_with("merge-base("),
+            "three-dot must label the merge-base, got {}",
+            three.from_commit
+        );
+        assert_eq!(three.to_commit, "feature");
+        // merge-base → feature is feat.rs only (+1 code). main → feature would
+        // also delete main_only.rs (−2 code).
+        assert_eq!(three.total.added.code, 1);
+        assert_eq!(three.total.removed.code, 0);
+
+        let two = diff_revspec(dir.path(), "main..feature", DiffOptions::new()).unwrap();
+        assert_eq!(two.from_commit, "main");
+        assert_eq!(two.to_commit, "feature");
+        assert_eq!(two.total.added.code, 1);
+        assert_eq!(two.total.removed.code, 2);
+    }
+
+    #[test]
+    fn test_diff_revspec_omitted_range_ends() {
+        let dir = two_commit_repo();
+        for spec in ["..HEAD", "HEAD.."] {
+            let diff = diff_revspec(dir.path(), spec, DiffOptions::new())
+                .unwrap_or_else(|e| panic!("{spec} should resolve: {e}"));
+            assert_eq!(diff.total.net_total(), 0, "{spec} is HEAD..HEAD");
+        }
+    }
+
+    #[test]
+    fn test_diff_revspec_at_alias() {
+        let dir = two_commit_repo();
+        let diff = diff_revspec(dir.path(), "@", DiffOptions::new()).unwrap();
+        assert_eq!(diff.from_commit, "@");
+        assert_eq!(diff.to_commit, "HEAD");
+        assert_eq!(diff.total.net_total(), 0);
+    }
+
+    #[test]
+    fn test_diff_revspec_from_subdirectory() {
+        let dir = two_commit_repo();
+        let sub = dir.path().join("nested");
+        std::fs::create_dir(&sub).unwrap();
+        let diff = diff_revspec(&sub, "HEAD~1", DiffOptions::new()).unwrap();
+        assert_eq!(diff.from_commit, "HEAD~1");
+        assert_eq!(diff.to_commit, "HEAD");
+        assert_eq!(diff.total.added.code, 1);
+    }
+
+    #[test]
+    fn test_diff_revspec_not_a_repository() {
+        let dir = tempfile::Builder::new()
+            .prefix("rustloclib-not-a-repo-")
+            .tempdir()
+            .expect("tempdir");
+        let err = diff_revspec(dir.path(), "HEAD", DiffOptions::new())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.to_lowercase().contains("repository"),
+            "expected a not-a-repository error, got {err}"
+        );
+    }
+
+    #[test]
+    fn test_git_rev_parse_missing_binary() {
+        let dir = two_commit_repo();
+        let err = git_rev_parse_with("rustloc-no-such-git", dir.path(), "HEAD")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("Could not resolve revision 'HEAD'"),
+            "wrapper line missing: {err}"
+        );
+        assert!(
+            err.contains("PATH"),
+            "missing git must say it is not on PATH: {err}"
+        );
     }
 
     // ---------------------------------------------------------------------
