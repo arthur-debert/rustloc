@@ -1018,6 +1018,11 @@ fn git_rev_parse_with(git_program: &str, repo_path: &Path, spec: &str) -> Result
     Ok(stdout)
 }
 
+/// One wrapper line, then Git's error text un-rephrased.
+///
+/// Trailing whitespace is stripped so the wrapper-plus-detail join does not
+/// leave a dangling blank line. This is join hygiene, not a byte-identical
+/// stderr dump: Git's wording is kept, the terminator is not.
 fn revspec_resolve_error(revspec: &str, detail: &str) -> RustlocError {
     let detail = detail.trim_end();
     let msg = if detail.is_empty() {
@@ -1706,7 +1711,7 @@ mod tests {
         );
         assert!(
             err.contains("fatal:"),
-            "Git stderr must be included verbatim: {err}"
+            "Git's fatal: text must be included un-rephrased: {err}"
         );
     }
 
