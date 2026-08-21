@@ -577,12 +577,12 @@ fn theme_carries_the_expected_attributes() {
 
     // (tag, the SGR parameters its style must emit)
     for (tag, expected) in [
-        ("header", vec!["36", "1"]), // cyan + bold
-        ("additions", vec!["32"]),   // green
-        ("deletions", vec!["31"]),   // red
-        ("file_added", vec!["32"]),  // green — file names, not +N cells
+        ("header", vec!["36", "1"]),  // cyan + bold
+        ("additions", vec!["32"]),    // green
+        ("deletions", vec!["31"]),    // red
+        ("file_added", vec!["32"]),   // green — file names, not +N cells
         ("file_removed", vec!["31"]), // red — file names, not -N cells
-        ("muted", vec!["2"]),        // dim
+        ("muted", vec!["2"]),         // dim
     ] {
         let style = resolved
             .get(tag)
@@ -1546,15 +1546,7 @@ fn diff_by_file_structured_modes_include_change_type() {
         "yaml missing change_type values:\n{yaml}"
     );
 
-    let xml = stdout(&[
-        "diff",
-        "-p",
-        path,
-        "HEAD~1",
-        "--by-file",
-        "--output",
-        "xml",
-    ]);
+    let xml = stdout(&["diff", "-p", path, "HEAD~1", "--by-file", "--output", "xml"]);
     assert!(
         xml.contains("<change_type>Added</change_type>")
             && xml.contains("<change_type>Deleted</change_type>")
