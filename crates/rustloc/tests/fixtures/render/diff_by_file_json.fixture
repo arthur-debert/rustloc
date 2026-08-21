@@ -4,6 +4,7 @@
   "from_commit": "HEAD",
   "items": [
     {
+      "change_type": "Modified",
       "label": "src/this_is_a_deliberately_long_ascii_filename_for_the_parity_gate.rs",
       "stats": {
         "added": {
@@ -27,6 +28,7 @@
       }
     },
     {
+      "change_type": "Modified",
       "label": "src/数据处理模块.rs",
       "stats": {
         "added": {

@@ -14,8 +14,11 @@
   rather than reconstructed from a parameterised abstraction.
 
   Style tags are *semantic* — `[header]`, `[table_row_odd]`, `[additions]`,
-  `[deletions]`, `[muted]` — and resolve through `styles/default.css`. Never
-  write a raw ANSI sequence or a concrete colour here.
+  `[deletions]`, `[file_added]`, `[file_removed]`, `[muted]` — and resolve
+  through `styles/default.css`. Never write a raw ANSI sequence or a concrete
+  colour here. `[file_added]` / `[file_removed]` colour `--by-file` diff
+  labels; they are not `[additions]` / `[deletions]`, which are the `+N`/`-N`
+  cell notation.
 
   A tag the theme does not define does NOT fail the render: text mode strips it
   and term-debug prints it verbatim, so it looks correct in both. Adding a tag
@@ -90,6 +93,25 @@ Total ({{ footer.displayed }} of {{ footer.total_items }} {{ UNITS[aggregation] 
 {%- endif -%}
 {%- endmacro -%}
 
+{#- The label column cell.
+
+    File-status colour belongs on the path characters, not on the whitespace
+    that positions the column — the same padding-outside-tags rule as
+    `diff_cell`. Truncate first so tag characters are not counted as display
+    width; `col` then pads the tagged string (tags are zero-width).
+
+    Added → `[file_added]`, Deleted → `[file_removed]`, Modified / any other
+    row (count, crate, module, totals) → no extra tag. -#}
+{%- macro label_cell(row) -%}
+{%- if row.change_type == "Added" -%}
+{{ ("[file_added]" ~ (row.label | truncate_at(LABEL_WIDTH, 'start')) ~ "[/file_added]") | col(LABEL_WIDTH) }}
+{%- elif row.change_type == "Deleted" -%}
+{{ ("[file_removed]" ~ (row.label | truncate_at(LABEL_WIDTH, 'start')) ~ "[/file_removed]") | col(LABEL_WIDTH) }}
+{%- else -%}
+{{ row.label | col(LABEL_WIDTH, truncate='start') }}
+{%- endif -%}
+{%- endmacro -%}
+
 {#- One data row.
 
     Alternating rows: even-indexed (1-based) rows get a [table_row_odd] wrap
@@ -97,13 +119,14 @@ Total ({{ footer.displayed }} of {{ footer.total_items }} {{ UNITS[aggregation] 
     wrapping them in [table_row_even] (an empty style in the default theme)
     causes standout-bbparser to strip the inner [additions]/[deletions]
     resets without emitting its own, which makes the last cell's fg colour
-    bleed into the next row's label.
+    bleed into the next row's label. New label tags nest the same way:
+    inside `[table_row_odd]` on even rows, bare on odd rows.
 
     Labels truncate at the *start* so the distinctive tail of a long path
     survives; values right-align so digits line up. -#}
-{%- macro data_row(label, values, value_widths, index) -%}
+{%- macro data_row(row, value_widths, index) -%}
 {%- set line -%}
-{{ label | col(LABEL_WIDTH, truncate='start') }}{% for v in values %} {{ v | col(value_widths[loop.index0], align='right') }}{% endfor %}
+{{ label_cell(row) }}{% for v in row.values %} {{ v | col(value_widths[loop.index0], align='right') }}{% endfor %}
 {%- endset -%}
 {%- if index is even -%}
 [table_row_odd]{{ line }}[/table_row_odd]
@@ -126,7 +149,7 @@ Total ({{ footer.displayed }} of {{ footer.total_items }} {{ UNITS[aggregation] 
 [header]{{ LABEL_HEADERS[aggregation] | col(LABEL_WIDTH, align='center') }}{% for h in headers %} {{ h | col(value_widths[loop.index0], align='right') }}{% endfor %}[/header]
 {{ rule(value_widths) }}
 {% for row in rows -%}
-{{ data_row(row.label, row.values, value_widths, loop.index) }}
+{{ data_row(row, value_widths, loop.index) }}
 {% endfor -%}
 {%- if rows | length > 0 -%}
 {{ rule(value_widths) }}

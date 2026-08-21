@@ -43,6 +43,16 @@
     color: red;
 }
 
+/* Diff `--by-file` labels for added files. Not `.additions` (`+N` cells). */
+.file_added {
+    color: green;
+}
+
+/* Diff `--by-file` labels for deleted files. Not `.deletions` (`-N` cells). */
+.file_removed {
+    color: red;
+}
+
 /* Legends and secondary info that should recede from the data. */
 .muted {
     dim: true;

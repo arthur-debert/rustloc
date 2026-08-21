@@ -46,7 +46,7 @@
 //! detectors, whereas the argv-driven runs below touch no global state and are
 //! safe to run in parallel.
 
-use rustloclib::{CountQuerySet, DiffQuerySet};
+use rustloclib::{CountQuerySet, DiffQuerySet, FileChangeType};
 use serial_test::serial;
 use standout::cli::RunResult;
 use standout::{ColorMode, Theme, DEFAULT_MISSING_STYLE_INDICATOR};
@@ -468,7 +468,15 @@ fn type_flag_narrows_the_table_columns() {
 /// purpose even though the theme does not define it: it must keep resolving via
 /// the `Theme::default()` merge, and the day that merge is dropped this list is
 /// what notices.
-const SEMANTIC_TAGS: &[&str] = &["header", "additions", "deletions", "muted", "table_row_odd"];
+const SEMANTIC_TAGS: &[&str] = &[
+    "header",
+    "additions",
+    "deletions",
+    "file_added",
+    "file_removed",
+    "muted",
+    "table_row_odd",
+];
 
 /// Text mode is the contract every rendered-string assertion in this file rests
 /// on: no ANSI, and no leaked semantic tag either. A tag that survives the strip
@@ -572,6 +580,8 @@ fn theme_carries_the_expected_attributes() {
         ("header", vec!["36", "1"]), // cyan + bold
         ("additions", vec!["32"]),   // green
         ("deletions", vec!["31"]),   // red
+        ("file_added", vec!["32"]),  // green — file names, not +N cells
+        ("file_removed", vec!["31"]), // red — file names, not -N cells
         ("muted", vec!["2"]),        // dim
     ] {
         let style = resolved
@@ -1367,6 +1377,227 @@ fn diff_by_crate_term_debug_matches_the_approved_fixture() {
             "term-debug",
         ]),
     );
+}
+
+/// A two-commit repo whose range contains one added file, one deleted file,
+/// and one additions-only modified file. Status colour must come from
+/// `FileChangeType`, not from +added/-removed counts.
+fn status_repo() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    git(p, &["init", "-q"]);
+    std::fs::write(
+        p.join("Cargo.toml"),
+        "[package]\nname = \"status\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir(p.join("src")).unwrap();
+    std::fs::write(p.join("src/lib.rs"), "pub fn a() {}\n").unwrap();
+    std::fs::write(p.join("src/gone.rs"), "pub fn g() {}\n").unwrap();
+    git(p, &["add", "-A"]);
+    git(p, &["commit", "-qm", "baseline"]);
+
+    std::fs::write(p.join("src/lib.rs"), "pub fn a() {}\npub fn b() {}\n").unwrap();
+    std::fs::remove_file(p.join("src/gone.rs")).unwrap();
+    std::fs::write(p.join("src/added.rs"), "pub fn n() {}\n").unwrap();
+    git(p, &["add", "-A"]);
+    git(p, &["commit", "-qm", "changes"]);
+    dir
+}
+
+fn status_item<'a>(
+    qs: &'a DiffQuerySet,
+    suffix: &str,
+) -> &'a rustloclib::QueryItem<rustloclib::LocsDiff> {
+    qs.items
+        .iter()
+        .find(|item| item.label.ends_with(suffix))
+        .unwrap_or_else(|| {
+            let labels: Vec<_> = qs.items.iter().map(|i| &i.label).collect();
+            panic!("missing {suffix} in {labels:?}")
+        })
+}
+
+/// term-debug places `[file_added]` / `[file_removed]` on the path characters
+/// of added/deleted `--by-file` labels. Modified stays untagged, including an
+/// additions-only edit that would look "green" if we inferred from counts.
+#[test]
+fn diff_by_file_term_debug_tags_labels_by_change_type() {
+    let dir = status_repo();
+    let path = dir.path().to_str().unwrap();
+    let out = stdout(&[
+        "diff",
+        "-p",
+        path,
+        "HEAD~1",
+        "--by-file",
+        "--output",
+        "term-debug",
+    ]);
+
+    assert!(
+        out.contains("[file_added]src/added.rs[/file_added]"),
+        "added path should be tagged without padding inside the tag:\n{out}"
+    );
+    assert!(
+        out.contains("[file_removed]src/gone.rs[/file_removed]"),
+        "deleted path should be tagged without padding inside the tag:\n{out}"
+    );
+    // even 1-based index (gone.rs is second alphabetically) nests inside
+    // `[table_row_odd]`; do not reintroduce `[table_row_even]`.
+    assert!(
+        out.contains("[table_row_odd][file_removed]src/gone.rs[/file_removed]"),
+        "deleted label tags must nest inside table_row_odd:\n{out}"
+    );
+    assert!(
+        !out.contains("[file_added]src/lib.rs") && !out.contains("[file_removed]src/lib.rs"),
+        "modified additions-only file must not get a file-status tag:\n{out}"
+    );
+    assert!(
+        !out.contains("[table_row_even]"),
+        "must not reintroduce table_row_even:\n{out}"
+    );
+}
+
+/// Text mode strips the new tags; filenames stay readable.
+#[test]
+fn diff_by_file_text_strips_file_status_tags() {
+    let dir = status_repo();
+    let path = dir.path().to_str().unwrap();
+    let out = stdout(&[
+        "diff",
+        "-p",
+        path,
+        "HEAD~1",
+        "--by-file",
+        "--output",
+        "text",
+    ]);
+
+    assert!(
+        !out.contains("[file_added]") && !out.contains("[file_removed]"),
+        "text mode leaked a file-status tag:\n{out}"
+    );
+    for name in ["src/added.rs", "src/gone.rs", "src/lib.rs"] {
+        assert!(out.contains(name), "missing {name} in:\n{out}");
+    }
+}
+
+/// Crate, module, and total aggregations have no single-file status.
+#[test]
+fn diff_non_file_aggregations_do_not_tag_labels() {
+    let dir = status_repo();
+    let path = dir.path().to_str().unwrap();
+
+    for extra in [None, Some("--by-crate"), Some("--by-module")] {
+        let mut args = vec!["diff", "-p", path, "HEAD~1", "--output", "term-debug"];
+        if let Some(flag) = extra {
+            args.insert(args.len() - 2, flag);
+        }
+        let out = stdout(&args);
+        assert!(
+            !out.contains("[file_added]") && !out.contains("[file_removed]"),
+            "{extra:?} leaked a file-status tag:\n{out}"
+        );
+    }
+}
+
+/// JSON/YAML/XML serialize the queryset, so file-level items grow `change_type`.
+#[test]
+fn diff_by_file_structured_modes_include_change_type() {
+    let dir = status_repo();
+    let path = dir.path().to_str().unwrap();
+    let json = stdout(&[
+        "diff",
+        "-p",
+        path,
+        "HEAD~1",
+        "--by-file",
+        "--output",
+        "json",
+    ]);
+    let parsed: DiffQuerySet = serde_json::from_str(&json).expect("diff json");
+    assert_eq!(
+        status_item(&parsed, "added.rs").change_type,
+        Some(FileChangeType::Added)
+    );
+    assert_eq!(
+        status_item(&parsed, "gone.rs").change_type,
+        Some(FileChangeType::Deleted)
+    );
+    assert_eq!(
+        status_item(&parsed, "lib.rs").change_type,
+        Some(FileChangeType::Modified)
+    );
+
+    let yaml = stdout(&[
+        "diff",
+        "-p",
+        path,
+        "HEAD~1",
+        "--by-file",
+        "--output",
+        "yaml",
+    ]);
+    assert!(
+        yaml.contains("change_type: Added")
+            && yaml.contains("change_type: Deleted")
+            && yaml.contains("change_type: Modified"),
+        "yaml missing change_type values:\n{yaml}"
+    );
+
+    let xml = stdout(&[
+        "diff",
+        "-p",
+        path,
+        "HEAD~1",
+        "--by-file",
+        "--output",
+        "xml",
+    ]);
+    assert!(
+        xml.contains("<change_type>Added</change_type>")
+            && xml.contains("<change_type>Deleted</change_type>")
+            && xml.contains("<change_type>Modified</change_type>"),
+        "xml missing change_type values:\n{xml}"
+    );
+}
+
+/// Count JSON must not grow a serialized `change_type`.
+#[test]
+fn count_json_does_not_serialize_change_type() {
+    let dir = workspace();
+    let out = stdout(&[&path_of(&dir), "--by-file", "--output", "json"]);
+    assert!(
+        !out.contains("change_type"),
+        "count JSON grew a change_type field:\n{out}"
+    );
+}
+
+/// CSV is a fixed column projection — no `change_type` column.
+#[test]
+fn diff_csv_columns_do_not_include_change_type() {
+    let dir = status_repo();
+    let out = stdout(&[
+        "diff",
+        "-p",
+        dir.path().to_str().unwrap(),
+        "HEAD~1",
+        "--by-file",
+        "--output",
+        "csv",
+    ]);
+    let headers = csv_headers(&out);
+    assert!(
+        !headers.iter().any(|h| h == "change_type"),
+        "CSV grew a change_type column; headers: {headers:?}"
+    );
+    for expected in DIFF_CSV_HEADERS {
+        assert!(
+            headers.iter().any(|h| h == expected),
+            "missing required CSV column `{expected}`; headers: {headers:?}"
+        );
+    }
 }
 
 /// `--staged` is only meaningful without revs. The rule lives in `command`;

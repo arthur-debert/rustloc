@@ -61,16 +61,23 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::data::counter::{compute_module_name, CountResult};
-use crate::data::diff::{DiffResult, LocsDiff};
+use crate::data::diff::{DiffResult, FileChangeType, LocsDiff};
 use crate::data::stats::Locs;
 
 use super::options::{Aggregation, Field, LineTypes, OrderBy, OrderDirection, Ordering, Predicate};
 
 /// A single item in a query set (one row of data before string formatting).
+///
+/// [`Self::change_type`] is populated only for `--by-file` diff rows. Count
+/// items and crate/module/total aggregations leave it unset; it is omitted
+/// from serialization so count JSON does not grow a `change_type` field.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QueryItem<T> {
     /// Row label (file path, crate name, module name, etc.)
     pub label: String,
+    /// Git file status. Present only on file-level diff items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change_type: Option<FileChangeType>,
     /// Statistics for this item
     pub stats: T,
 }
@@ -420,7 +427,11 @@ fn build_count_items(
     // Map to QueryItems
     items
         .into_iter()
-        .map(|(label, stats)| QueryItem { label, stats })
+        .map(|(label, stats)| QueryItem {
+            label,
+            change_type: None,
+            stats,
+        })
         .collect()
 }
 
@@ -445,17 +456,21 @@ fn diff_sort_key(diff: &LocsDiff, order_by: &OrderBy) -> i64 {
 ///
 /// Stats are carried through complete — line-type selection is a view concern
 /// resolved at render time, so sorting here always sees real values.
+///
+/// File-level items keep the [`FileChangeType`] the library already computed.
+/// Crate, module, and total rows have no single-file status, so they leave
+/// [`QueryItem::change_type`] unset.
 fn build_diff_items(
     result: &DiffResult,
     aggregation: &Aggregation,
     ordering: &Ordering,
 ) -> Vec<QueryItem<LocsDiff>> {
-    let mut items: Vec<(String, LocsDiff)> = match aggregation {
+    let mut items: Vec<(String, LocsDiff, Option<FileChangeType>)> = match aggregation {
         Aggregation::Total => return vec![],
         Aggregation::ByCrate => result
             .crates
             .iter()
-            .map(|c| (c.name.clone(), c.diff))
+            .map(|c| (c.name.clone(), c.diff, None))
             .collect(),
         Aggregation::ByModule => {
             let mut module_map: HashMap<String, LocsDiff> = HashMap::new();
@@ -500,12 +515,21 @@ fn build_diff_items(
                     }
                 }
             }
-            module_map.into_iter().collect()
+            module_map
+                .into_iter()
+                .map(|(label, stats)| (label, stats, None))
+                .collect()
         }
         Aggregation::ByFile => result
             .files
             .iter()
-            .map(|f| (f.path.to_string_lossy().to_string(), f.diff))
+            .map(|f| {
+                (
+                    f.path.to_string_lossy().to_string(),
+                    f.diff,
+                    Some(f.change_type),
+                )
+            })
             .collect(),
     };
 
@@ -531,7 +555,11 @@ fn build_diff_items(
     // Map to QueryItems
     items
         .into_iter()
-        .map(|(label, stats)| QueryItem { label, stats })
+        .map(|(label, stats, change_type)| QueryItem {
+            label,
+            change_type,
+            stats,
+        })
         .collect()
 }
 
@@ -1102,5 +1130,95 @@ mod tests {
 
         assert_eq!(qs.items.len(), 1);
         assert_eq!(qs.total_items, 2); // pre-filter
+    }
+
+    fn sample_diff_result_mixed_change_types() -> crate::data::diff::DiffResult {
+        use crate::data::diff::{DiffResult, FileChangeType, FileDiffStats, LocsDiff};
+
+        let added = FileDiffStats {
+            path: PathBuf::from("added.rs"),
+            change_type: FileChangeType::Added,
+            diff: LocsDiff {
+                added: sample_locs(4, 0),
+                removed: Locs::default(),
+            },
+        };
+        let deleted = FileDiffStats {
+            path: PathBuf::from("gone.rs"),
+            change_type: FileChangeType::Deleted,
+            diff: LocsDiff {
+                added: Locs::default(),
+                removed: sample_locs(3, 0),
+            },
+        };
+        // Additions-only modified file: status must not be inferred from counts.
+        let modified = FileDiffStats {
+            path: PathBuf::from("kept.rs"),
+            change_type: FileChangeType::Modified,
+            diff: LocsDiff {
+                added: sample_locs(1, 0),
+                removed: Locs::default(),
+            },
+        };
+
+        DiffResult {
+            root: PathBuf::from("/workspace"),
+            from_commit: "HEAD~1".to_string(),
+            to_commit: "HEAD".to_string(),
+            total: added.diff + deleted.diff + modified.diff,
+            crates: vec![],
+            files: vec![added, deleted, modified],
+            non_rust_added: 0,
+            non_rust_removed: 0,
+        }
+    }
+
+    #[test]
+    fn test_diff_by_file_items_keep_change_type() {
+        let result = sample_diff_result_mixed_change_types();
+        let qs = DiffQuerySet::from_result(
+            &result,
+            Aggregation::ByFile,
+            LineTypes::everything(),
+            Ordering::default(),
+        );
+
+        let by_label: std::collections::HashMap<_, _> = qs
+            .items
+            .iter()
+            .map(|item| (item.label.as_str(), item.change_type))
+            .collect();
+        assert_eq!(by_label["added.rs"], Some(FileChangeType::Added));
+        assert_eq!(by_label["gone.rs"], Some(FileChangeType::Deleted));
+        assert_eq!(by_label["kept.rs"], Some(FileChangeType::Modified));
+    }
+
+    #[test]
+    fn test_diff_crate_and_module_items_have_no_change_type() {
+        let result = sample_diff_result_two_files();
+        for aggregation in [Aggregation::ByCrate, Aggregation::ByModule] {
+            let qs = DiffQuerySet::from_result(
+                &result,
+                aggregation,
+                LineTypes::everything(),
+                Ordering::default(),
+            );
+            assert!(
+                qs.items.iter().all(|item| item.change_type.is_none()),
+                "{aggregation:?} rows must not carry a file change type"
+            );
+        }
+    }
+
+    #[test]
+    fn test_count_items_have_no_change_type() {
+        let result = sample_count_result();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCrate,
+            LineTypes::everything(),
+            Ordering::default(),
+        );
+        assert!(qs.items.iter().all(|item| item.change_type.is_none()));
     }
 }

@@ -17,8 +17,10 @@
 //! writes no style tags. Every one of those is human rendering *policy*, and
 //! policy lives in MiniJinja. What crosses this boundary is typed numbers plus
 //! the handful of facts the wording depends on (how many rows were displayed of
-//! how many, and whether `--top` or a filter did the reducing) — never a
-//! sentence built from them.
+//! how many, whether `--top` or a filter did the reducing, and the optional
+//! file-level [`FileChangeType`] on `--by-file` diff rows) — never a sentence
+//! built from them. The template maps Added/Deleted onto semantic tags; this
+//! module names no style.
 //!
 //! That split is what makes the two readable in isolation: the templates are
 //! the whole answer to "what does a user see?", and this module is the whole
@@ -41,7 +43,8 @@
 //! Everything else a reader sees is in the templates.
 
 use rustloclib::{
-    sat_sub_u64, Aggregation, CountQuerySet, DiffQuerySet, LineTypes, Locs, LocsDiff,
+    sat_sub_u64, Aggregation, CountQuerySet, DiffQuerySet, FileChangeType, LineTypes, Locs,
+    LocsDiff,
 };
 use serde::Serialize;
 
@@ -49,12 +52,18 @@ use serde::Serialize;
 ///
 /// Generic over the cell type because count cells are a single number and diff
 /// cells are a [`DiffValue`] triple — the row shape itself is identical.
+///
+/// [`Self::change_type`] is a typed fact for `--by-file` diff rows. The
+/// template maps Added/Deleted onto semantic tags; this module names no style.
 #[derive(Debug, Clone, Serialize)]
 pub struct Row<V> {
     /// File path, crate name, module name — whatever the aggregation groups by.
     pub label: String,
     /// One value per enabled column, positionally matching `columns`.
     pub values: Vec<V>,
+    /// Git file status. Present only on file-level diff rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change_type: Option<FileChangeType>,
 }
 
 /// The facts the footer's wording is derived from.
@@ -123,6 +132,7 @@ impl CountView {
                 .map(|item| Row {
                     label: item.label.clone(),
                     values: columns.iter().map(|c| c.count(&item.stats)).collect(),
+                    change_type: None,
                 })
                 .collect(),
             total: columns.iter().map(|c| c.count(&qs.total)).collect(),
@@ -204,6 +214,7 @@ impl DiffView {
                 .map(|item| Row {
                     label: item.label.clone(),
                     values: columns.iter().map(|c| c.diff_value(&item.stats)).collect(),
+                    change_type: item.change_type,
                 })
                 .collect(),
             total: columns.iter().map(|c| c.diff_value(&qs.total)).collect(),
@@ -308,7 +319,7 @@ fn aggregation_key(aggregation: &Aggregation) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustloclib::{CountResult, CrateStats, Ordering};
+    use rustloclib::{CountResult, CrateStats, Ordering, QueryItem};
     use standout::tabular::{CellValue, Col, SubCol, SubColumns, TabularFormatter, TabularSpec};
     use std::path::PathBuf;
 
@@ -504,6 +515,44 @@ mod tests {
     }
 
     #[test]
+    fn diff_view_passes_file_change_type_as_a_typed_fact() {
+        let qs = DiffQuerySet {
+            aggregation: Aggregation::ByFile,
+            line_types: LineTypes::everything(),
+            items: vec![
+                QueryItem {
+                    label: "added.rs".to_string(),
+                    change_type: Some(FileChangeType::Added),
+                    stats: LocsDiff::default(),
+                },
+                QueryItem {
+                    label: "gone.rs".to_string(),
+                    change_type: Some(FileChangeType::Deleted),
+                    stats: LocsDiff::default(),
+                },
+                QueryItem {
+                    label: "kept.rs".to_string(),
+                    change_type: Some(FileChangeType::Modified),
+                    stats: LocsDiff::default(),
+                },
+            ],
+            total: LocsDiff::default(),
+            file_count: 3,
+            from_commit: "HEAD~1".to_string(),
+            to_commit: "HEAD".to_string(),
+            non_rust_added: 0,
+            non_rust_removed: 0,
+            total_items: 3,
+            top_applied: false,
+        };
+        let view = DiffView::from_queryset(&qs);
+
+        assert_eq!(view.rows[0].change_type, Some(FileChangeType::Added));
+        assert_eq!(view.rows[1].change_type, Some(FileChangeType::Deleted));
+        assert_eq!(view.rows[2].change_type, Some(FileChangeType::Modified));
+    }
+
+    #[test]
     fn native_tabular_count_prototype_matches_the_approved_row() {
         // Count needs no display strings in its typed presentation data. The
         // native formatter can consume the label and number directly and
@@ -512,6 +561,7 @@ mod tests {
             label: "src/this_is_a_deliberately_long_ascii_filename_for_the_parity_gate.rs"
                 .to_string(),
             values: vec![61_u64],
+            change_type: None,
         };
         let spec = TabularSpec::builder()
             .column(Col::fixed(40).truncate_start())

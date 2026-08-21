@@ -2,7 +2,8 @@ aggregation: ByFile
 file_count: 2
 from_commit: HEAD
 items:
-- label: src/this_is_a_deliberately_long_ascii_filename_for_the_parity_gate.rs
+- change_type: Modified
+  label: src/this_is_a_deliberately_long_ascii_filename_for_the_parity_gate.rs
   stats:
     added:
       blanks: 0
@@ -20,7 +21,8 @@ items:
       examples: 0
       tests: 0
       total: 0
-- label: src/数据处理模块.rs
+- change_type: Modified
+  label: src/数据处理模块.rs
   stats:
     added:
       blanks: 0
