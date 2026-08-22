@@ -4,7 +4,8 @@
   Context (from `crate::table::DiffView` — typed numbers only):
     aggregation  "total" | "crate" | "module" | "file"
     columns      enabled column keys, in display order
-    rows         [{label, values: [{added, removed, net}, ...]}]
+    rows         [{label, change_type?, values: [{added, removed, net}, ...]}]
+                 change_type is Added/Deleted/Modified on `--by-file` rows only
     total        [{added, removed, net}, ...]       the totals row's values
     footer       {displayed, total_items, file_count, top_applied}
     from_commit  / to_commit
@@ -57,7 +58,7 @@
   {%- for v in row.values -%}
     {%- set cells.list = (cells.list + [diff_cell(v, ns.subs[loop.index0])]) | list -%}
   {%- endfor -%}
-  {%- set body.rows = (body.rows + [{"label": row.label, "values": cells.list}]) | list -%}
+  {%- set body.rows = (body.rows + [{"label": row.label, "change_type": row.change_type, "values": cells.list}]) | list -%}
 {%- endfor -%}
 {%- for v in total -%}
   {%- set body.total = (body.total + [diff_cell(v, ns.subs[loop.index0])]) | list -%}
