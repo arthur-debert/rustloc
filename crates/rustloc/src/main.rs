@@ -16,6 +16,7 @@
 //! - **Glob filtering**: Include/exclude files with glob patterns
 //! - **Multiple output formats**: Table (default), JSON, YAML, XML, CSV
 //! - **Git diff analysis**: Compare LOC between commits
+//! - **Optional locale grouping**: Add digit separators to human-readable counts and diffs
 //!
 //! ## Usage
 //!
@@ -65,6 +66,7 @@ mod app;
 mod application;
 mod command;
 mod config;
+mod number_format;
 mod table;
 
 /// Language-aware lines of code counter with test/code separation
@@ -234,6 +236,14 @@ truncated slice. No-op when no `--by-*` aggregation is in effect.")]
     /// Show a percentage summary row below the count total
     #[arg(long = "shows-ratio")]
     shows_ratio: bool,
+
+    /// Group integer digits in human-readable output using the active locale
+    #[arg(long = "number-fmt")]
+    #[arg(long_help = "\
+Group integer digits in human-readable count output using the active system
+locale. If the locale is unavailable or unsupported, rustloc uses English-style
+grouping (1,234) instead of failing the count.")]
+    number_fmt: bool,
 }
 
 /// Arguments for diff command
@@ -348,6 +358,14 @@ applied after `--ordering`, so use the two together for things like
 The total row and file count still describe the full data set, not the
 truncated slice. No-op when no `--by-*` aggregation is in effect.")]
     top: Option<usize>,
+
+    /// Group integer digits in human-readable output using the active locale
+    #[arg(long = "number-fmt")]
+    #[arg(long_help = "\
+Group integer digits in human-readable diff output using the active system
+locale. If the locale is unavailable or unsupported, rustloc uses English-style
+grouping (1,234) instead of failing the diff.")]
+    number_fmt: bool,
 }
 
 /// Command handlers — the dispatch boundary.
@@ -417,10 +435,13 @@ mod handlers {
 ///   `diff_table` templates. `line_types` picks the columns here, at render
 ///   time. Count tables also resolve the `shows_ratios` app setting and the
 ///   `--shows-ratio` override here because that row is human presentation
-///   only. The view carries typed numbers, not display strings: the template
-///   owns every word, width, and style tag a reader sees (see [`crate::table`]).
+///   only. Both tables resolve `number_fmt` and `--number-fmt` here, once per
+///   render, so typed command data stays unformatted while human display values
+///   use the active locale. The template still owns every word, width, and
+///   style tag a reader sees (see [`crate::table`]).
 mod presentation {
     use crate::config::RustlocConfig;
+    use crate::number_format::NumberFormat;
     use crate::table::{CountView, DiffView};
     use clap::ArgMatches;
     use rustloclib::{CountQuerySet, DiffQuerySet, Locs, LocsDiff};
@@ -436,6 +457,12 @@ mod presentation {
         Csv,
         /// Narrow to a `CountView`/`DiffView` for the template.
         Table,
+    }
+
+    /// Human-table settings resolved at the render boundary.
+    struct TableOptions {
+        shows_ratios: bool,
+        number_format: NumberFormat,
     }
 
     /// Read the render target from standout's injected `_output_mode` arg.
@@ -462,6 +489,35 @@ mod presentation {
     fn encode<T: Serialize>(value: T) -> Result<Value, HookError> {
         serde_json::to_value(value)
             .map_err(|e| HookError::post_dispatch(format!("failed to encode presentation: {e}")))
+    }
+
+    fn load_config() -> Result<RustlocConfig, HookError> {
+        RustlocConfig::load().map_err(|e| {
+            HookError::post_dispatch(format!("failed to load rustloc configuration: {e}"))
+        })
+    }
+
+    fn count_table_options(matches: &ArgMatches) -> Result<TableOptions, HookError> {
+        let config = load_config()?;
+        let number_fmt = config.number_fmt || matches.get_flag("number_fmt");
+
+        Ok(TableOptions {
+            shows_ratios: config.shows_ratios || matches.get_flag("shows_ratio"),
+            number_format: if number_fmt {
+                NumberFormat::active()
+            } else {
+                NumberFormat::disabled()
+            },
+        })
+    }
+
+    fn diff_number_format(matches: &ArgMatches) -> Result<NumberFormat, HookError> {
+        let config = load_config()?;
+        Ok(if config.number_fmt || matches.get_flag("number_fmt") {
+            NumberFormat::active()
+        } else {
+            NumberFormat::disabled()
+        })
     }
 
     /// One CSV row of the count schema.
@@ -610,17 +666,11 @@ mod presentation {
             Target::Data => Ok(data),
             Target::Csv => encode(count_csv_rows(&decode::<CountQuerySet>(data)?)),
             Target::Table => {
-                let shows_ratios = RustlocConfig::load()
-                    .map_err(|e| {
-                        HookError::post_dispatch(format!(
-                            "failed to load rustloc configuration: {e}"
-                        ))
-                    })?
-                    .shows_ratios
-                    || matches.get_flag("shows_ratio");
+                let options = count_table_options(matches)?;
                 encode(CountView::from_queryset(
                     &decode::<CountQuerySet>(data)?,
-                    shows_ratios,
+                    options.shows_ratios,
+                    options.number_format,
                 ))
             }
         }
@@ -635,7 +685,10 @@ mod presentation {
         match target(matches) {
             Target::Data => Ok(data),
             Target::Csv => encode(diff_csv_rows(&decode::<DiffQuerySet>(data)?)),
-            Target::Table => encode(DiffView::from_queryset(&decode::<DiffQuerySet>(data)?)),
+            Target::Table => encode(DiffView::from_queryset(
+                &decode::<DiffQuerySet>(data)?,
+                diff_number_format(matches)?,
+            )),
         }
     }
 }

@@ -1,7 +1,7 @@
 {#-
   The diff table.
 
-  Context (from `crate::table::DiffView` — typed numbers only):
+  Context (from `crate::table::DiffView`):
     aggregation  "total" | "crate" | "module" | "file"
     columns      enabled column keys, in display order
     rows         [{label, change_type?, values: [{added, removed, net}, ...]}]
@@ -23,7 +23,7 @@
     The padding sits *outside* the style tags on purpose: colour belongs on the
     digits, not on the whitespace that positions them. -#}
 {%- macro diff_cell(v, sub) -%}
-{{ " " * (sub.added - (("+" ~ v.added) | length)) }}[additions]+{{ v.added }}[/additions]/{{ " " * (sub.removed - (("-" ~ v.removed) | length)) }}[deletions]-{{ v.removed }}[/deletions]/{{ " " * (sub.net - ((v.net | string) | length)) }}{{ v.net }}
+{{ " " * (sub.added - (("+" ~ v.added.display) | length)) }}[additions]+{{ v.added.display }}[/additions]/{{ " " * (sub.removed - (("-" ~ v.removed.display) | length)) }}[deletions]-{{ v.removed.display }}[/deletions]/{{ " " * (sub.net - (v.net.display | length)) }}{{ v.net.display }}
 {%- endmacro -%}
 
 {#- Per column: the header word, the three sub-widths, and the column width.
@@ -42,9 +42,9 @@
   {%- set s = namespace(added=0, removed=0, net=0) -%}
   {%- for row in (rows + [{"values": total}]) -%}
     {%- set v = row.values[i] -%}
-    {%- set s.added = [s.added, ("+" ~ v.added) | length] | max -%}
-    {%- set s.removed = [s.removed, ("-" ~ v.removed) | length] | max -%}
-    {%- set s.net = [s.net, (v.net | string) | length] | max -%}
+    {%- set s.added = [s.added, ("+" ~ v.added.display) | length] | max -%}
+    {%- set s.removed = [s.removed, ("-" ~ v.removed.display) | length] | max -%}
+    {%- set s.net = [s.net, v.net.display | length] | max -%}
   {%- endfor -%}
   {%- set ns.subs = (ns.subs + [{"added": s.added, "removed": s.removed, "net": s.net}]) | list -%}
   {%- set ns.headers = (ns.headers + [header]) | list -%}
@@ -56,12 +56,12 @@
 {%- for row in rows -%}
   {%- set cells = namespace(list=[]) -%}
   {%- for v in row.values -%}
-    {%- set cells.list = (cells.list + [diff_cell(v, ns.subs[loop.index0])]) | list -%}
+    {%- set cells.list = (cells.list + [{"display": diff_cell(v, ns.subs[loop.index0])}]) | list -%}
   {%- endfor -%}
   {%- set body.rows = (body.rows + [{"label": row.label, "change_type": row.change_type, "values": cells.list}]) | list -%}
 {%- endfor -%}
 {%- for v in total -%}
-  {%- set body.total = (body.total + [diff_cell(v, ns.subs[loop.index0])]) | list -%}
+  {%- set body.total = (body.total + [{"display": diff_cell(v, ns.subs[loop.index0])}]) | list -%}
 {%- endfor -%}
 {# Output starts below. Every tag above trims its own whitespace away, so the
    newline after this comment is the first thing emitted — it is the blank line
@@ -69,9 +69,9 @@
 Diff: {{ from_commit }} → {{ to_commit }}
 
 {{ t.table(aggregation, ns.headers, body.rows, body.total, footer, ns.widths) }}
-{% if non_rust.added > 0 or non_rust.removed > 0 %}
+{% if non_rust.added.raw > 0 or non_rust.removed.raw > 0 %}
 
-Skipped changes: [additions]+{{ non_rust.added }}[/additions] / [deletions]-{{ non_rust.removed }}[/deletions] / {{ non_rust.net }} net
+Skipped changes: [additions]+{{ non_rust.added.display }}[/additions] / [deletions]-{{ non_rust.removed.display }}[/deletions] / {{ non_rust.net.display }} net
 {% endif %}
 [muted](+added / -removed / net)[/muted]
 {# The legend must end in a newline, and MiniJinja strips a single trailing

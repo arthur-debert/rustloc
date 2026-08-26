@@ -24,6 +24,8 @@ serde_json.workspace = true
 standout.workspace = true
 console.workspace = true
 anyhow.workspace = true
+num-format.workspace = true
+sys-locale.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

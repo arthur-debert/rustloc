@@ -2209,6 +2209,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-format"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a652d9771a63711fd3c3deb670acfbe5c30a4072e664d7a3bf5a9e1056ac72c3"
+dependencies = [
+ "arrayvec",
+ "itoa",
+]
+
+[[package]]
 name = "num-integer"
 version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3014,6 +3024,7 @@ dependencies = [
  "clapfig",
  "console 0.15.11",
  "csv",
+ "num-format",
  "quick-xml",
  "rustloclib",
  "serde",
@@ -3022,6 +3033,7 @@ dependencies = [
  "serial_test",
  "standout",
  "standout-render",
+ "sys-locale",
  "tempfile",
 ]
 
@@ -3436,6 +3448,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "sys-locale"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

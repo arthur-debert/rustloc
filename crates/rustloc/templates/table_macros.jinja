@@ -5,8 +5,8 @@
   templates that import this file (`count_table`, `diff_table`): the header
   words, the footer wording, the label column's width and truncation, the
   alternating-row semantics, and the semantic style tags. Rust ships typed
-  numbers plus the facts below; it assembles no display strings and names no
-  style.
+  numbers, optional locale-formatted display strings, and the facts below; it
+  assembles no labels and names no style.
 
   What is shared lives here; what is genuinely count- or diff-specific (numeric
   cells vs `+added/-removed/net` notation, and the per-column widths each
@@ -83,13 +83,13 @@
     left for the reader to infer. -#}
 {%- macro footer_label(aggregation, footer) -%}
 {%- if aggregation == "total" -%}
-Total ({{ footer.file_count }} files)
+Total ({{ footer.file_count_display }} files)
 {%- elif footer.displayed == footer.total_items -%}
-Total ({{ footer.total_items }} {{ UNITS[aggregation] }})
+Total ({{ footer.total_items_display }} {{ UNITS[aggregation] }})
 {%- elif footer.top_applied -%}
-Total (top {{ footer.displayed }} of {{ footer.total_items }} {{ UNITS[aggregation] }})
+Total (top {{ footer.displayed_display }} of {{ footer.total_items_display }} {{ UNITS[aggregation] }})
 {%- else -%}
-Total ({{ footer.displayed }} of {{ footer.total_items }} {{ UNITS[aggregation] }})
+Total ({{ footer.displayed_display }} of {{ footer.total_items_display }} {{ UNITS[aggregation] }})
 {%- endif -%}
 {%- endmacro -%}
 
@@ -126,9 +126,9 @@ Total ({{ footer.displayed }} of {{ footer.total_items }} {{ UNITS[aggregation] 
     survives; values right-align so digits line up. -#}
 {%- macro count_value(value, width, reserve_suffix) -%}
 {%- if reserve_suffix -%}
-{{ (value | col(width - 1, align='right')) ~ " " }}
+{{ (value.display | col(width - 1, align='right')) ~ " " }}
 {%- else -%}
-{{ value | col(width, align='right') }}
+{{ value.display | col(width, align='right') }}
 {%- endif -%}
 {%- endmacro -%}
 

@@ -17,6 +17,7 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+use num_format::{Locale, ToFormattedString};
 use tempfile::TempDir;
 
 /// Invoke the already-built integration-test binary.
@@ -45,6 +46,24 @@ fn stdout(output: &Output) -> String {
 
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+fn active_format_u64(value: u64) -> String {
+    let locale = sys_locale::get_locale()
+        .and_then(|name| {
+            let normalized = name
+                .split(['.', '@'])
+                .next()
+                .unwrap_or(name.as_str())
+                .to_string();
+            Locale::from_name(&normalized)
+                .or_else(|_| {
+                    Locale::from_name(normalized.split(['-', '_']).next().unwrap_or(&normalized))
+                })
+                .ok()
+        })
+        .unwrap_or(Locale::en);
+    value.to_formatted_string(&locale)
 }
 
 /// Process-only contract: the built and linked executable reaches `main` and
@@ -123,6 +142,33 @@ fn rustloc_toml_enables_count_table_ratios() {
     assert!(
         rendered.contains("Ratio") && rendered.contains("100.0%"),
         "rustloc.toml should enable ratios:\n{rendered}"
+    );
+}
+
+/// Process-only contract: Clapfig's cwd-based config discovery can enable
+/// locale grouping without a CLI flag.
+#[test]
+fn rustloc_toml_enables_number_formatting() {
+    let dir = TempDir::new().expect("config fixture");
+    let mut source = String::new();
+    for i in 0..3805 {
+        source.push_str(&format!("pub fn f_{i}() {{}}\n"));
+    }
+    std::fs::write(dir.path().join("only.rs"), source).unwrap();
+    std::fs::write(dir.path().join("rustloc.toml"), "number_fmt = true\n").unwrap();
+
+    let output = rustloc(
+        &[".", "--by-file", "--type", "code", "--output", "text"],
+        dir.path(),
+        &[],
+    );
+    let rendered = stdout(&output);
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert!(output.stderr.is_empty());
+    assert!(
+        rendered.contains(&active_format_u64(3805)),
+        "rustloc.toml should enable number formatting:\n{rendered}"
     );
 }
 

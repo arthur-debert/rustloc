@@ -450,6 +450,12 @@ fn line_starting<'a>(out: &'a str, prefix: &str) -> &'a str {
         .unwrap_or_else(|| panic!("missing line starting {prefix:?} in:\n{out}"))
 }
 
+fn line_containing<'a>(out: &'a str, needle: &str) -> &'a str {
+    out.lines()
+        .find(|line| line.contains(needle))
+        .unwrap_or_else(|| panic!("missing line containing {needle:?} in:\n{out}"))
+}
+
 fn numeric_group_end_offsets(input: &str) -> Vec<usize> {
     let mut ends = Vec::new();
     let mut in_number = false;
@@ -609,6 +615,110 @@ fn ratio_numeric_parts_align_with_integer_counts() {
     );
 }
 
+fn repeated_rust_lines(prefix: &str, count: usize) -> String {
+    let mut source = String::new();
+    for i in 0..count {
+        source.push_str(&format!("pub fn {prefix}_{i}() {{}}\n"));
+    }
+    source
+}
+
+fn large_count_workspace() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("lib.rs"), repeated_rust_lines("f", 3805)).unwrap();
+    dir
+}
+
+/// Integer grouping is opt-in for human tables. The default path keeps plain
+/// digits even when values are large enough to group.
+#[test]
+fn number_fmt_is_hidden_by_default() {
+    let dir = large_count_workspace();
+    let out = stdout(&[
+        &path_of(&dir),
+        "--by-file",
+        "--type",
+        "code",
+        "--output",
+        "text",
+    ]);
+    let row = line_containing(&out, "lib.rs");
+    let total = line_starting(&out, "Total (");
+
+    assert_eq!(row.split_whitespace().last(), Some("3805"));
+    assert_eq!(total.split_whitespace().last(), Some("3805"));
+}
+
+/// Both count spellings accept `--number-fmt` and apply it to row and total
+/// cells. The exact separator comes from the active locale or the documented
+/// fallback, so the expectation uses the same one-shot resolver as production.
+#[test]
+fn number_fmt_flag_formats_count_rows_and_totals_on_bare_and_explicit_count() {
+    let dir = large_count_workspace();
+    let path = path_of(&dir);
+    let expected = crate::number_format::NumberFormat::active().u64(3805);
+
+    for args in [
+        vec![
+            path.as_str(),
+            "--by-file",
+            "--type",
+            "code",
+            "--number-fmt",
+            "--output",
+            "text",
+        ],
+        vec![
+            "count",
+            path.as_str(),
+            "--by-file",
+            "--type",
+            "code",
+            "--number-fmt",
+            "--output",
+            "text",
+        ],
+    ] {
+        let out = stdout(&args);
+        assert!(
+            line_containing(&out, "lib.rs").contains(&expected),
+            "{args:?} should format the row count as {expected:?}:\n{out}"
+        );
+        assert!(
+            line_starting(&out, "Total (").contains(&expected),
+            "{args:?} should format the total count as {expected:?}:\n{out}"
+        );
+    }
+}
+
+/// Percentage rendering stays independent from integer grouping: the percent
+/// row keeps its dot decimal and suffix behavior while grouped integer cells
+/// determine the same numeric alignment.
+#[test]
+fn number_fmt_and_ratios_keep_their_independent_formatting() {
+    let dir = large_count_workspace();
+    let out = stdout(&[
+        &path_of(&dir),
+        "--by-file",
+        "--type",
+        "code",
+        "--number-fmt",
+        "--shows-ratio",
+        "--output",
+        "text",
+    ]);
+    let expected = crate::number_format::NumberFormat::active().u64(3805);
+
+    assert!(
+        line_containing(&out, "lib.rs").contains(&expected),
+        "integer count should be grouped:\n{out}"
+    );
+    assert!(
+        line_starting(&out, "Ratio").contains("100.0%"),
+        "ratio should keep one decimal digit and a percent suffix:\n{out}"
+    );
+}
+
 /// Only the percent suffix is muted in terminal-debug output.
 #[test]
 fn ratio_row_mutes_only_the_percent_suffix_in_term_debug() {
@@ -639,6 +749,22 @@ fn shows_ratio_does_not_change_structured_output() {
         assert_eq!(
             with_ratio, plain,
             "--shows-ratio should not change {mode} output"
+        );
+    }
+}
+
+/// `--number-fmt` never reaches structured count output.
+#[test]
+fn number_fmt_does_not_change_count_structured_output() {
+    let dir = compatibility_tree();
+    let path = path_of(&dir);
+
+    for mode in ["json", "yaml", "xml", "csv"] {
+        let plain = stdout(&[&path, "--by-file", "--output", mode]);
+        let with_number_fmt = stdout(&[&path, "--by-file", "--number-fmt", "--output", mode]);
+        assert_eq!(
+            with_number_fmt, plain,
+            "--number-fmt should not change count {mode} output"
         );
     }
 }
@@ -1060,6 +1186,30 @@ fn repo() -> TempDir {
     dir
 }
 
+/// A workdir diff whose Rust and skipped-file changes are large enough to need
+/// digit grouping in each diff sub-field.
+fn large_diff_repo() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    git(p, &["init", "-q"]);
+    std::fs::write(
+        p.join("Cargo.toml"),
+        "[package]\nname = \"large-diff\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir(p.join("src")).unwrap();
+    std::fs::write(p.join("src/old.rs"), repeated_rust_lines("old_code", 1200)).unwrap();
+    std::fs::write(p.join("src/new.rs"), "").unwrap();
+    std::fs::write(p.join("README.md"), "").unwrap();
+    git(p, &["add", "-A"]);
+    git(p, &["commit", "-qm", "baseline"]);
+
+    std::fs::remove_file(p.join("src/old.rs")).unwrap();
+    std::fs::write(p.join("src/new.rs"), repeated_rust_lines("new_code", 3805)).unwrap();
+    std::fs::write(p.join("README.md"), "new\n".repeat(3805)).unwrap();
+    dir
+}
+
 /// A workdir diff renders added lines. Representative coverage that the diff
 /// command's own handler → post-dispatch → template chain is wired, without
 /// re-testing git's rev-parse (that is `rustloclib`'s job).
@@ -1095,6 +1245,81 @@ fn diff_csv_carries_net_columns() {
         assert!(
             headers.iter().any(|h| h == expected),
             "missing required CSV column `{expected}`; headers: {headers:?}"
+        );
+    }
+}
+
+/// Diff human tables format additions, removals, signed net values, and the
+/// skipped-change summary when requested.
+#[test]
+fn number_fmt_flag_formats_diff_rows_totals_and_skipped_summary() {
+    let dir = large_diff_repo();
+    let path = dir.path().to_str().unwrap();
+    let format = crate::number_format::NumberFormat::active();
+    let added = format.u64(3805);
+    let removed = format.u64(1200);
+    let total_net = format.i64(2605);
+    let removed_net = format.i64(-1200);
+
+    let out = stdout(&[
+        "diff",
+        "-p",
+        path,
+        "--by-file",
+        "--type",
+        "code",
+        "--number-fmt",
+        "--output",
+        "text",
+    ]);
+
+    let added_row = line_containing(&out, "src/new.rs");
+    assert!(
+        added_row.contains(&format!("+{added}")) && added_row.contains(&added),
+        "added row should format additions and net with locale grouping: {added_row:?}\n{out}"
+    );
+
+    let removed_row = line_containing(&out, "src/old.rs");
+    assert!(
+        removed_row.contains(&format!("-{removed}")) && removed_row.contains(&removed_net),
+        "removed row should format removals and net with locale grouping: {removed_row:?}\n{out}"
+    );
+
+    let total = line_starting(&out, "Total (");
+    assert!(
+        total.contains(&format!("+{added}"))
+            && total.contains(&format!("-{removed}"))
+            && total.contains(&total_net),
+        "total should format additions, removals, and net with locale grouping: {total:?}\n{out}"
+    );
+
+    let skipped = line_starting(&out, "Skipped changes:");
+    assert!(
+        skipped.contains(&format!("+{added}")) && skipped.contains(&format!("{added} net")),
+        "skipped summary should format counts with locale grouping: {skipped:?}\n{out}"
+    );
+}
+
+/// `--number-fmt` never reaches structured diff output.
+#[test]
+fn number_fmt_does_not_change_diff_structured_output() {
+    let dir = large_diff_repo();
+    let path = dir.path().to_str().unwrap();
+
+    for mode in ["json", "yaml", "xml", "csv"] {
+        let plain = stdout(&["diff", "-p", path, "--by-file", "--output", mode]);
+        let with_number_fmt = stdout(&[
+            "diff",
+            "-p",
+            path,
+            "--by-file",
+            "--number-fmt",
+            "--output",
+            mode,
+        ]);
+        assert_eq!(
+            with_number_fmt, plain,
+            "--number-fmt should not change diff {mode} output"
         );
     }
 }
