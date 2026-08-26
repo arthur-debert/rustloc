@@ -124,13 +124,9 @@ Total ({{ footer.displayed }} of {{ footer.total_items }} {{ UNITS[aggregation] 
 
     Labels truncate at the *start* so the distinctive tail of a long path
     survives; values right-align so digits line up. -#}
-{%- macro count_value(value, width, reserve_suffix, is_last) -%}
+{%- macro count_value(value, width, reserve_suffix) -%}
 {%- if reserve_suffix -%}
-{%- if is_last -%}
-{{ value | col(width, align='right') }}
-{%- else -%}
-{{ value | col(width - 1, align='right') }} 
-{%- endif -%}
+{{ (value | col(width - 1, align='right')) ~ " " }}
 {%- else -%}
 {{ value | col(width, align='right') }}
 {%- endif -%}
@@ -142,7 +138,7 @@ Total ({{ footer.displayed }} of {{ footer.total_items }} {{ UNITS[aggregation] 
 
 {%- macro data_row(row, value_widths, index, reserve_suffix) -%}
 {%- set line -%}
-{{ label_cell(row) }}{% for v in row.values %} {{ count_value(v, value_widths[loop.index0], reserve_suffix, loop.last) }}{% endfor %}
+{{ label_cell(row) }}{% for v in row.values %} {{ count_value(v, value_widths[loop.index0], reserve_suffix) }}{% endfor %}
 {%- endset -%}
 {%- if index is even -%}
 [table_row_odd]{{ line }}[/table_row_odd]
@@ -175,7 +171,7 @@ Total ({{ footer.displayed }} of {{ footer.total_items }} {{ UNITS[aggregation] 
 {%- if rows | length > 0 -%}
 {{ rule(value_widths) }}
 {% endif -%}
-{{ footer_label(aggregation, footer) | col(LABEL_WIDTH) }}{% for v in total %} {{ count_value(v, value_widths[loop.index0], reserve_suffix, loop.last) }}{% endfor %}
+{{ footer_label(aggregation, footer) | col(LABEL_WIDTH) }}{% for v in total %} {{ count_value(v, value_widths[loop.index0], reserve_suffix) }}{% endfor %}
 {%- if reserve_suffix %}
 {{ ratio_row(ratios, value_widths) }}
 {%- endif -%}

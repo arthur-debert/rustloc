@@ -584,6 +584,7 @@ fn ratio_numeric_parts_align_with_integer_counts() {
     let dir = workspace();
     let out = stdout(&[
         &path_of(&dir),
+        "--by-crate",
         "--shows-ratio",
         "--type",
         "code",
@@ -592,13 +593,19 @@ fn ratio_numeric_parts_align_with_integer_counts() {
         "--output",
         "text",
     ]);
+    let row = line_starting(&out, "demo");
     let total = line_starting(&out, "Total (");
     let ratio = line_starting(&out, "Ratio");
 
     assert_eq!(
+        numeric_group_end_offsets(&row[40..]),
+        numeric_group_end_offsets(&ratio[40..]),
+        "ratio numeric parts should align with body-row integer counts:\n{out}"
+    );
+    assert_eq!(
         numeric_group_end_offsets(&total[40..]),
         numeric_group_end_offsets(&ratio[40..]),
-        "ratio numeric parts should align with integer counts:\n{out}"
+        "ratio numeric parts should align with footer integer counts:\n{out}"
     );
 }
 
