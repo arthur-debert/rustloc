@@ -80,6 +80,7 @@ enum Token {
     EndOfStatement,
     DoubleBackSlash,
     DoubleQuote,
+    SingleQuote,
     EscapedDoubleQuote,
     StringBlockOpen,
     StringBlockClose,
@@ -243,6 +244,10 @@ impl<T: Read> Visitor<T> {
                     self.visit_string(context);
                     line_context.has_code = true;
                 }
+                Token::SingleQuote => {
+                    self.visit_character_or_lifetime();
+                    line_context.has_code = true;
+                }
                 Token::StringBlockOpen => {
                     self.visit_string_block(context, Token::StringBlockClose);
                     line_context.has_code = true;
@@ -293,6 +298,27 @@ impl<T: Read> Visitor<T> {
                 Token::DoubleQuote => return,
                 _ => line_context.has_code = true,
             }
+        }
+    }
+
+    fn visit_character_or_lifetime(&mut self) {
+        if matches!(self.lookahead, None | Some('\n')) {
+            return;
+        }
+        if self.next_char() == Some('\\') {
+            if self.lookahead == Some('\'') {
+                let _ = self.next_char();
+            } else {
+                while self
+                    .lookahead
+                    .is_some_and(|value| value != '\'' && value != '\n')
+                {
+                    let _ = self.next_char();
+                }
+            }
+        }
+        if self.lookahead == Some('\'') {
+            let _ = self.next_char();
         }
     }
 
@@ -418,6 +444,7 @@ impl<T: Read> Visitor<T> {
                 }
             }
             '"' => Token::DoubleQuote,
+            '\'' => Token::SingleQuote,
             'r' if self.lookahead == Some('#') => {
                 let mut string = 'r'.to_string();
                 self.collect_while(&mut string, |c| c == '#' || c == '"');
@@ -655,6 +682,42 @@ let a = 1;
 
         assert_eq!(stats.comments, 0);
         assert_eq!(stats.code, 2);
+    }
+
+    #[test]
+    fn character_literals_do_not_hide_comments_or_test_blocks() {
+        let file = r#"
+fn byte_is_json_syntax(byte: u8) -> bool {
+    matches!(byte, b'"' | b'\\')
+}
+// This remains a comment after byte character literals.
+
+fn borrow<'a>(value: &'a str) -> &'a str {
+    value
+}
+
+fn character_literals() {
+    let _ = '"';
+    let _ = '\'';
+    let _ = '\x22';
+    let _ = '\u{22}';
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parser_reaches_this_block() {
+        assert!(true);
+    }
+}
+"#;
+
+        let stats = stats(file);
+
+        assert_eq!(stats.code, 12);
+        assert_eq!(stats.tests, 7);
+        assert_eq!(stats.comments, 1);
+        assert_eq!(stats.blanks, 4);
     }
 
     #[test]
