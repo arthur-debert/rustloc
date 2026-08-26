@@ -8,9 +8,9 @@
     total        [number, ...]                      the totals row's values
     footer       {displayed, total_items, file_count, top_applied}
 
-  Count cells are plain numbers, so they need no notation of their own — the
-  shared `table` macro right-aligns them as-is. All this template owns is the
-  per-column width.
+  Count cells are plain numbers. When ratios are enabled, the `%` suffix takes
+  one display column, so the value columns reserve that suffix column on every
+  numeric row and the numeric part still aligns with the integer counts.
 -#}
 {%- import "table_macros" as t -%}
 
@@ -27,10 +27,14 @@
     {%- set w.max = [w.max, (row.values[i] | string) | length] | max -%}
   {%- endfor -%}
   {%- set w.max = [w.max, (total[i] | string) | length] | max -%}
+  {%- if ratios -%}
+    {%- set ratio = ratios[i] -%}
+    {%- set w.max = [w.max, ((ratio.whole | string) | length) + 3] | max -%}
+  {%- endif -%}
   {%- set ns.headers = (ns.headers + [header]) | list -%}
   {%- set ns.widths = (ns.widths + [w.max]) | list -%}
 {%- endfor -%}
-{{ t.table(aggregation, ns.headers, rows, total, footer, ns.widths) }}
+{{ t.table(aggregation, ns.headers, rows, total, footer, ns.widths, ratios) }}
 {# The table must end in a newline, and MiniJinja strips a single trailing
    newline at end of template — so this comment, not the table, is what sits at
    EOF and absorbs the strip. Deleting it silently un-terminates the last line. #}

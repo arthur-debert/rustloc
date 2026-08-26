@@ -444,6 +444,198 @@ fn type_flag_narrows_the_table_columns() {
     assert!(!out.contains("Docs"), "Docs should be hidden in:\n{out}");
 }
 
+fn line_starting<'a>(out: &'a str, prefix: &str) -> &'a str {
+    out.lines()
+        .find(|line| line.starts_with(prefix))
+        .unwrap_or_else(|| panic!("missing line starting {prefix:?} in:\n{out}"))
+}
+
+fn numeric_group_end_offsets(input: &str) -> Vec<usize> {
+    let mut ends = Vec::new();
+    let mut in_number = false;
+    let mut last_numeric = 0;
+
+    for (idx, ch) in input.char_indices() {
+        if ch.is_ascii_digit() || ch == '.' {
+            in_number = true;
+            last_numeric = idx;
+        } else if in_number {
+            ends.push(last_numeric);
+            in_number = false;
+        }
+    }
+    if in_number {
+        ends.push(last_numeric);
+    }
+
+    ends
+}
+
+/// Ratios are opt-in: the default table stays exactly a count table.
+#[test]
+fn ratios_are_hidden_by_default() {
+    let dir = workspace();
+    let out = stdout(&[&path_of(&dir), "--output", "text"]);
+
+    assert!(!out.contains("Ratio"), "default output grew ratios:\n{out}");
+}
+
+/// Both count spellings accept the count-only CLI override.
+#[test]
+fn shows_ratio_flag_enables_ratios_on_bare_and_explicit_count() {
+    let dir = workspace();
+    let path = path_of(&dir);
+
+    for args in [
+        vec![path.as_str(), "--shows-ratio", "--output", "text"],
+        vec!["count", path.as_str(), "--shows-ratio", "--output", "text"],
+    ] {
+        let out = stdout(&args);
+        assert!(
+            line_starting(&out, "Ratio").contains("100.0%"),
+            "{args:?} should render a ratio row:\n{out}"
+        );
+    }
+}
+
+/// `--shows-ratio` belongs to count; diff keeps its existing grammar.
+#[test]
+fn shows_ratio_flag_is_not_registered_on_diff() {
+    let msg = error(&["diff", "--shows-ratio"]);
+
+    assert!(
+        msg.contains("unexpected argument") || msg.contains("--shows-ratio"),
+        "diff should reject --shows-ratio, got: {msg}"
+    );
+}
+
+/// A narrowed count table gets ratios only for the enabled columns.
+#[test]
+fn ratio_row_respects_selected_columns() {
+    let dir = workspace();
+    let out = stdout(&[
+        &path_of(&dir),
+        "--shows-ratio",
+        "--type",
+        "code",
+        "--output",
+        "text",
+    ]);
+    let ratio = line_starting(&out, "Ratio");
+    let header = out.lines().next().unwrap_or_default();
+
+    assert!(
+        !header.contains("Total"),
+        "Total column should be hidden from the header:\n{out}"
+    );
+    assert_eq!(
+        ratio.matches('%').count(),
+        1,
+        "one selected value column should produce one ratio cell:\n{out}"
+    );
+}
+
+/// The denominator-zero case renders an explicit zero percentage for every
+/// enabled column rather than dividing or eliding the row.
+#[test]
+fn ratio_row_renders_zero_percentages_for_zero_totals() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = stdout(&[&path_of(&dir), "--shows-ratio", "--output", "text"]);
+    let ratio = line_starting(&out, "Ratio");
+    let cells: Vec<_> = ratio.split_whitespace().skip(1).collect();
+
+    assert!(!cells.is_empty(), "expected ratio cells in:\n{out}");
+    assert!(
+        cells.iter().all(|cell| *cell == "0.0%"),
+        "zero totals should render only 0.0% cells, got {cells:?} in:\n{out}"
+    );
+}
+
+/// Percentage formatting always uses one decimal digit and a dot, independent
+/// of any integer formatting that may be added later.
+#[test]
+fn ratio_row_renders_one_decimal_digit() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("lib.rs"),
+        "// comment\npub fn a() {}\npub fn b() {}\n",
+    )
+    .unwrap();
+
+    let out = stdout(&[
+        &path_of(&dir),
+        "--shows-ratio",
+        "--type",
+        "code",
+        "--output",
+        "text",
+    ]);
+
+    assert!(
+        line_starting(&out, "Ratio").contains("66.7%"),
+        "expected 2 of 3 lines to render as 66.7%:\n{out}"
+    );
+}
+
+/// The percent suffix occupies a real display column, but it does not pull the
+/// numeric part one column to the right of the integer counts.
+#[test]
+fn ratio_numeric_parts_align_with_integer_counts() {
+    let dir = workspace();
+    let out = stdout(&[
+        &path_of(&dir),
+        "--shows-ratio",
+        "--type",
+        "code",
+        "--type",
+        "total",
+        "--output",
+        "text",
+    ]);
+    let total = line_starting(&out, "Total (");
+    let ratio = line_starting(&out, "Ratio");
+
+    assert_eq!(
+        numeric_group_end_offsets(&total[40..]),
+        numeric_group_end_offsets(&ratio[40..]),
+        "ratio numeric parts should align with integer counts:\n{out}"
+    );
+}
+
+/// Only the percent suffix is muted in terminal-debug output.
+#[test]
+fn ratio_row_mutes_only_the_percent_suffix_in_term_debug() {
+    let dir = workspace();
+    let out = stdout(&[&path_of(&dir), "--shows-ratio", "--output", "term-debug"]);
+    let ratio = line_starting(&out, "Ratio");
+
+    assert!(
+        ratio.contains("100.0[muted]%[/muted]"),
+        "percent suffix should be muted after the numeric part:\n{out}"
+    );
+    assert!(
+        !ratio.contains("[muted]100.0"),
+        "numeric ratio text must not be muted:\n{out}"
+    );
+}
+
+/// Machine-readable modes serialize the canonical response or CSV projection,
+/// not the count table's optional ratio row.
+#[test]
+fn shows_ratio_does_not_change_structured_output() {
+    let dir = compatibility_tree();
+    let path = path_of(&dir);
+
+    for mode in ["json", "yaml", "xml", "csv"] {
+        let plain = stdout(&[&path, "--by-file", "--output", mode]);
+        let with_ratio = stdout(&[&path, "--by-file", "--shows-ratio", "--output", mode]);
+        assert_eq!(
+            with_ratio, plain,
+            "--shows-ratio should not change {mode} output"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The rendering modes, and the theme behind them
 // ---------------------------------------------------------------------------

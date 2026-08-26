@@ -64,6 +64,7 @@ use standout::cli::{Dispatch, RunResult};
 mod app;
 mod application;
 mod command;
+mod config;
 mod table;
 
 /// Language-aware lines of code counter with test/code separation
@@ -229,6 +230,10 @@ applied after `--ordering`, so use the two together for things like
 The total row and file count still describe the full data set, not the
 truncated slice. No-op when no `--by-*` aggregation is in effect.")]
     top: Option<usize>,
+
+    /// Show a percentage summary row below the count total
+    #[arg(long = "shows-ratio")]
+    shows_ratio: bool,
 }
 
 /// Arguments for diff command
@@ -410,9 +415,12 @@ mod handlers {
 /// - **Table** (everything else: `auto`/`term`/`text`/`term-debug`) — the
 ///   response becomes a [`CountView`] / [`DiffView`] for the `count_table` /
 ///   `diff_table` templates. `line_types` picks the columns here, at render
-///   time. The view carries typed numbers, not display strings: the template
+///   time. Count tables also resolve the `shows_ratios` app setting and the
+///   `--shows-ratio` override here because that row is human presentation
+///   only. The view carries typed numbers, not display strings: the template
 ///   owns every word, width, and style tag a reader sees (see [`crate::table`]).
 mod presentation {
+    use crate::config::RustlocConfig;
     use crate::table::{CountView, DiffView};
     use clap::ArgMatches;
     use rustloclib::{CountQuerySet, DiffQuerySet, Locs, LocsDiff};
@@ -601,7 +609,20 @@ mod presentation {
         match target(matches) {
             Target::Data => Ok(data),
             Target::Csv => encode(count_csv_rows(&decode::<CountQuerySet>(data)?)),
-            Target::Table => encode(CountView::from_queryset(&decode::<CountQuerySet>(data)?)),
+            Target::Table => {
+                let shows_ratios = RustlocConfig::load()
+                    .map_err(|e| {
+                        HookError::post_dispatch(format!(
+                            "failed to load rustloc configuration: {e}"
+                        ))
+                    })?
+                    .shows_ratios
+                    || matches.get_flag("shows_ratio");
+                encode(CountView::from_queryset(
+                    &decode::<CountQuerySet>(data)?,
+                    shows_ratios,
+                ))
+            }
         }
     }
 

@@ -42,6 +42,7 @@ rustloc --by-crate                   # breakdown by crate
 rustloc --by-module                  # breakdown by module
 rustloc --by-file                    # breakdown by file
 rustloc -t code,tests                # only show selected line types
+rustloc --shows-ratio                # add percentage ratios below the table total
 rustloc --lang typescript            # analyze TypeScript files only
 rustloc --lang rust,typescript       # analyze Rust and TypeScript files
 rustloc -c my-lib                    # restrict to a specific crate

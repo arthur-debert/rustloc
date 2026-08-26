@@ -18,6 +18,7 @@ cargo_metadata = "0.18"
 thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+clapfig = { version = "=0.22.1", default-features = false, features = ["derive"] }
 gix = { version = "0.80", default-features = false, features = ["basic", "blob-diff"] }
 imara-diff = "0.1.8"
 standout = "7.6.2"
