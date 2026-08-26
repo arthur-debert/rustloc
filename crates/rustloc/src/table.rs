@@ -7,7 +7,8 @@
 //!    canonical, output-mode-independent command response, and the end of
 //!    `rustloclib`'s reusable pipeline
 //! 3. [`CountView`] / [`DiffView`] — *this* module: the same numbers, narrowed
-//!    to the requested columns and paired with the facts a table needs
+//!    to the requested columns and paired with the facts a table needs. Count
+//!    tables may also carry ratio facts when the human table asks for them
 //! 4. The rendered table — `templates/count_table.jinja`,
 //!    `templates/diff_table.jinja`, and their shared `table_macros.jinja`
 //!
@@ -118,12 +119,22 @@ pub struct CountView {
     pub total: Vec<u64>,
     /// Facts behind the footer's wording.
     pub footer: Footer,
+    /// Optional percentage row values, positionally matching `columns`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ratios: Option<Vec<RatioValue>>,
 }
 
 impl CountView {
     /// Build the count table's payload from its canonical response.
-    pub fn from_queryset(qs: &CountQuerySet) -> Self {
+    pub fn from_queryset(qs: &CountQuerySet, shows_ratios: bool) -> Self {
         let columns = enabled_columns(&qs.line_types);
+        let total = columns.iter().map(|c| c.count(&qs.total)).collect();
+        let ratios = shows_ratios.then(|| {
+            columns
+                .iter()
+                .map(|column| RatioValue::new(column.count(&qs.total), qs.total.total))
+                .collect()
+        });
         CountView {
             aggregation: aggregation_key(&qs.aggregation),
             rows: qs
@@ -135,7 +146,7 @@ impl CountView {
                     change_type: None,
                 })
                 .collect(),
-            total: columns.iter().map(|c| c.count(&qs.total)).collect(),
+            total,
             footer: Footer::new(
                 qs.items.len(),
                 qs.total_items,
@@ -143,6 +154,34 @@ impl CountView {
                 qs.top_applied,
             ),
             columns: columns.iter().map(|c| c.key()).collect(),
+            ratios,
+        }
+    }
+}
+
+/// One ratio value, scaled to one decimal place.
+///
+/// The template owns the visible `%` suffix and style tag. This type carries
+/// only the rounded numeric parts it needs to render exactly one decimal digit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RatioValue {
+    /// Whole percentage points.
+    pub whole: u64,
+    /// The single fractional digit after the decimal point.
+    pub tenth: u8,
+}
+
+impl RatioValue {
+    fn new(value: u64, denominator: u64) -> Self {
+        let scaled = if denominator == 0 {
+            0
+        } else {
+            ((value as u128 * 1000) + (denominator as u128 / 2)) / denominator as u128
+        };
+
+        Self {
+            whole: (scaled / 10) as u64,
+            tenth: (scaled % 10) as u8,
         }
     }
 }
@@ -370,8 +409,10 @@ mod tests {
 
     #[test]
     fn columns_are_data_keys_not_display_words() {
-        let view =
-            CountView::from_queryset(&queryset(LineTypes::everything(), Ordering::default()));
+        let view = CountView::from_queryset(
+            &queryset(LineTypes::everything(), Ordering::default()),
+            false,
+        );
         // Keys, lowercase, matching the JSON/CSV field names. The header words
         // ("Code", "Tests", ...) belong to the template and must not appear.
         assert_eq!(
@@ -383,8 +424,10 @@ mod tests {
     #[test]
     fn line_types_narrow_the_columns() {
         // `with_code` keeps the Total column, which `LineTypes::new` enables.
-        let view =
-            CountView::from_queryset(&queryset(LineTypes::new().with_code(), Ordering::default()));
+        let view = CountView::from_queryset(
+            &queryset(LineTypes::new().with_code(), Ordering::default()),
+            false,
+        );
         assert_eq!(view.columns, vec!["code", "total"]);
         // ...and the cells narrow with them, positionally.
         assert_eq!(view.rows[0].values.len(), 2);
@@ -395,10 +438,13 @@ mod tests {
     fn line_types_can_drop_the_total_column_too() {
         // `--type code` (no `total`) is the shape that proves the narrowing is
         // driven by the descriptor rather than by a Total column special case.
-        let view = CountView::from_queryset(&queryset(
-            LineTypes::new().with_code().without_total(),
-            Ordering::default(),
-        ));
+        let view = CountView::from_queryset(
+            &queryset(
+                LineTypes::new().with_code().without_total(),
+                Ordering::default(),
+            ),
+            false,
+        );
         assert_eq!(view.columns, vec!["code"]);
         assert_eq!(view.rows[0].values, vec![50]);
         assert_eq!(view.total, vec![200]);
@@ -406,8 +452,10 @@ mod tests {
 
     #[test]
     fn values_are_typed_numbers_in_column_order() {
-        let view =
-            CountView::from_queryset(&queryset(LineTypes::everything(), Ordering::default()));
+        let view = CountView::from_queryset(
+            &queryset(LineTypes::everything(), Ordering::default()),
+            false,
+        );
         // Default ordering is by label ascending: alpha before beta.
         assert_eq!(view.rows[0].label, "alpha");
         assert_eq!(view.rows[0].values, vec![50, 25, 0, 0, 0, 0, 75]);
@@ -430,6 +478,7 @@ mod tests {
     fn footer_reports_reduction_facts_rather_than_wording() {
         let view = CountView::from_queryset(
             &queryset(LineTypes::everything(), Ordering::default()).top(1),
+            false,
         );
         assert_eq!(view.footer.displayed, 1);
         assert_eq!(view.footer.total_items, 2);
@@ -447,6 +496,7 @@ mod tests {
                 Op::Gte,
                 100,
             )]),
+            false,
         );
         // Rows were reduced, but not by --top: the template needs both facts to
         // pick "1 of 2" over "top 1 of 2".
@@ -462,10 +512,63 @@ mod tests {
         // "Total (0 crates)" above two visible rows.
         let mut qs = queryset(LineTypes::everything(), Ordering::default());
         qs.total_items = 0;
-        let view = CountView::from_queryset(&qs);
+        let view = CountView::from_queryset(&qs, false);
 
         assert_eq!(view.footer.displayed, 2);
         assert_eq!(view.footer.total_items, 2);
+    }
+
+    #[test]
+    fn count_view_omits_ratios_by_default() {
+        let view = CountView::from_queryset(
+            &queryset(LineTypes::new().with_code(), Ordering::default()),
+            false,
+        );
+
+        assert!(view.ratios.is_none());
+    }
+
+    #[test]
+    fn count_view_reports_one_decimal_ratio_parts() {
+        let view = CountView::from_queryset(
+            &queryset(LineTypes::new().with_code(), Ordering::default()),
+            true,
+        );
+        let ratios = view.ratios.unwrap();
+
+        assert_eq!(
+            ratios,
+            vec![
+                RatioValue {
+                    whole: 66,
+                    tenth: 7
+                },
+                RatioValue {
+                    whole: 100,
+                    tenth: 0
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn count_view_reports_zero_ratios_for_zero_totals() {
+        let qs = CountQuerySet {
+            aggregation: Aggregation::Total,
+            line_types: LineTypes::everything(),
+            items: vec![],
+            total: Locs::default(),
+            file_count: 0,
+            total_items: 0,
+            top_applied: false,
+        };
+        let view = CountView::from_queryset(&qs, true);
+
+        assert!(view
+            .ratios
+            .unwrap()
+            .iter()
+            .all(|ratio| *ratio == RatioValue { whole: 0, tenth: 0 }));
     }
 
     #[test]

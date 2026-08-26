@@ -124,15 +124,31 @@ Total ({{ footer.displayed }} of {{ footer.total_items }} {{ UNITS[aggregation] 
 
     Labels truncate at the *start* so the distinctive tail of a long path
     survives; values right-align so digits line up. -#}
-{%- macro data_row(row, value_widths, index) -%}
+{%- macro count_value(value, width, reserve_suffix) -%}
+{%- if reserve_suffix -%}
+{{ (value | col(width - 1, align='right')) ~ " " }}
+{%- else -%}
+{{ value | col(width, align='right') }}
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro ratio_value(ratio, width) -%}
+{{ (ratio.whole ~ "." ~ ratio.tenth) | col(width - 1, align='right') }}[muted]%[/muted]
+{%- endmacro -%}
+
+{%- macro data_row(row, value_widths, index, reserve_suffix) -%}
 {%- set line -%}
-{{ label_cell(row) }}{% for v in row.values %} {{ v | col(value_widths[loop.index0], align='right') }}{% endfor %}
+{{ label_cell(row) }}{% for v in row.values %} {{ count_value(v, value_widths[loop.index0], reserve_suffix) }}{% endfor %}
 {%- endset -%}
 {%- if index is even -%}
 [table_row_odd]{{ line }}[/table_row_odd]
 {%- else -%}
 {{ line }}
 {%- endif -%}
+{%- endmacro -%}
+
+{%- macro ratio_row(ratios, value_widths) -%}
+{{ "Ratio" | col(LABEL_WIDTH) }}{% for ratio in ratios %} {{ ratio_value(ratio, value_widths[loop.index0]) }}{% endfor %}
 {%- endmacro -%}
 
 {#- The table proper: header, rule, rows, rule, footer.
@@ -145,14 +161,18 @@ Total ({{ footer.displayed }} of {{ footer.total_items }} {{ UNITS[aggregation] 
     reads as one rule between header and total rather than two around nothing.
 
     Returns without a trailing newline; the caller places it. -#}
-{%- macro table(aggregation, headers, rows, total, footer, value_widths) -%}
+{%- macro table(aggregation, headers, rows, total, footer, value_widths, ratios=false) -%}
+{%- set reserve_suffix = ratios and (ratios | length > 0) -%}
 [header]{{ LABEL_HEADERS[aggregation] | col(LABEL_WIDTH, align='center') }}{% for h in headers %} {{ h | col(value_widths[loop.index0], align='right') }}{% endfor %}[/header]
 {{ rule(value_widths) }}
 {% for row in rows -%}
-{{ data_row(row, value_widths, loop.index) }}
+{{ data_row(row, value_widths, loop.index, reserve_suffix) }}
 {% endfor -%}
 {%- if rows | length > 0 -%}
 {{ rule(value_widths) }}
 {% endif -%}
-{{ footer_label(aggregation, footer) | col(LABEL_WIDTH) }}{% for v in total %} {{ v | col(value_widths[loop.index0], align='right') }}{% endfor %}
+{{ footer_label(aggregation, footer) | col(LABEL_WIDTH) }}{% for v in total %} {{ count_value(v, value_widths[loop.index0], reserve_suffix) }}{% endfor %}
+{%- if reserve_suffix %}
+{{ ratio_row(ratios, value_widths) }}
+{%- endif -%}
 {%- endmacro -%}

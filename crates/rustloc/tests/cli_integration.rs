@@ -106,6 +106,26 @@ fn output_file_path_writes_the_file_and_suppresses_stdout() {
     assert_eq!(response["file_count"], 1);
 }
 
+/// Process-only contract: Clapfig resolves `SearchPath::Cwd` from the child
+/// process's working directory, so a project-local `rustloc.toml` can enable
+/// the count table ratio row without a CLI flag.
+#[test]
+fn rustloc_toml_enables_count_table_ratios() {
+    let dir = TempDir::new().expect("config fixture");
+    std::fs::write(dir.path().join("only.rs"), "pub fn only() {}\n").unwrap();
+    std::fs::write(dir.path().join("rustloc.toml"), "shows_ratios = true\n").unwrap();
+
+    let output = rustloc(&[".", "--output", "text"], dir.path(), &[]);
+    let rendered = stdout(&output);
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert!(output.stderr.is_empty());
+    assert!(
+        rendered.contains("Ratio") && rendered.contains("100.0%"),
+        "rustloc.toml should enable ratios:\n{rendered}"
+    );
+}
+
 /// Process-only contract: `main` maps clap/Standout parse errors to exit 2,
 /// writes the diagnostic only to stderr, and leaves stdout safe for pipelines.
 /// Parsing details and every route are covered by the in-process pipeline.
