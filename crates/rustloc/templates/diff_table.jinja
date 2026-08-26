@@ -4,12 +4,18 @@
   Context (from `crate::table::DiffView`):
     aggregation  "total" | "crate" | "module" | "file"
     columns      enabled column keys, in display order
-    rows         [{label, change_type?, values: [{added, removed, net}, ...]}]
+    rows         [{label, change_type?, values:
+                  [{added: {raw, display}, removed: {raw, display},
+                    net: {raw, display}}, ...]}]
                  change_type is Added/Deleted/Modified on `--by-file` rows only
-    total        [{added, removed, net}, ...]       the totals row's values
-    footer       {displayed, total_items, file_count, top_applied}
+    total        [{added: {raw, display}, removed: {raw, display},
+                   net: {raw, display}}, ...]      the totals row's values
+    footer       {displayed, displayed_display, total_items,
+                  total_items_display, file_count, file_count_display,
+                  top_applied}
     from_commit  / to_commit
-    non_rust     {added, removed, net} for files the language selection skipped
+    non_rust     {added: {raw, display}, removed: {raw, display},
+                  net: {raw, display}} for files the language selection skipped
 
   Everything a diff shows beyond the shared table skeleton lives here: the
   title, the `+added/-removed/net` notation, the skipped-changes summary, and

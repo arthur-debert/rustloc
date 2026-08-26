@@ -6,7 +6,10 @@
     columns      enabled column keys, in display order
     rows         [{label, values: [{raw, display}, ...]}] values follow `columns`
     total        [{raw, display}, ...]              the totals row's values
-    footer       {displayed, total_items, file_count, top_applied}
+    footer       {displayed, displayed_display, total_items,
+                  total_items_display, file_count, file_count_display,
+                  top_applied}
+    ratios       optional [{whole, fraction, formatted}, ...]
 
   Count cell display strings may be plain or locale-grouped. When ratios are
   enabled, the `%` suffix takes one display column, so the value columns reserve
