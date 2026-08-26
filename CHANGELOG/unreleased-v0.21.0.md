@@ -1,0 +1,3 @@
+- Add opt-in human-table ratios with `shows_ratios = true` or `--shows-ratio`, showing one-decimal percentages in count tables.
+- Add opt-in locale-aware digit grouping with `number_fmt = true` or `--number-fmt` for human count and diff tables.
+- Allow ratios and digit grouping to be enabled independently or together.
