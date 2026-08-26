@@ -9,7 +9,7 @@
     footer       {displayed, displayed_display, total_items,
                   total_items_display, file_count, file_count_display,
                   top_applied}
-    ratios       optional [{whole, fraction, formatted}, ...]
+    ratios       optional [{whole, tenth}, ...]
 
   Count cell display strings may be plain or locale-grouped. When ratios are
   enabled, the `%` suffix takes one display column, so the value columns reserve
@@ -33,7 +33,11 @@
   {%- set w.max = [w.max, total[i].display | length] | max -%}
   {%- if ratios -%}
     {%- set ratio = ratios[i] -%}
-    {%- set w.max = [w.max, ((ratio.whole | string) | length) + 3] | max -%}
+    {#- Integer rows leave the final display column blank so the ratio's `%`
+        suffix occupies that same column. Include that reserved column when an
+        integer is the widest value; `count_value` renders the integer into
+        `width - 1` below. -#}
+    {%- set w.max = [w.max + 1, ((ratio.whole | string) | length) + 3] | max -%}
   {%- endif -%}
   {%- set ns.headers = (ns.headers + [header]) | list -%}
   {%- set ns.widths = (ns.widths + [w.max]) | list -%}

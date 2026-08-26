@@ -719,6 +719,46 @@ fn number_fmt_and_ratios_keep_their_independent_formatting() {
     );
 }
 
+/// Ratio columns reserve one character for `%`. Grouped totals must receive
+/// that extra character instead of being truncated to the ungrouped width.
+#[test]
+fn number_fmt_and_ratios_preserve_complete_grouped_totals() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut source = repeated_rust_lines("f", 5005);
+    source.push_str(&"// comment\n".repeat(9447));
+    std::fs::write(dir.path().join("lib.rs"), source).unwrap();
+
+    let out = stdout(&[
+        &path_of(&dir),
+        "--by-file",
+        "--type",
+        "code",
+        "--type",
+        "total",
+        "--number-fmt",
+        "--shows-ratio",
+        "--output",
+        "text",
+    ]);
+    let total = line_starting(&out, "Total (");
+    let format = crate::number_format::NumberFormat::active();
+    let expected_code = format.u64(5005);
+    let expected_total = format.u64(14452);
+
+    assert!(
+        total.split_whitespace().any(|cell| cell == expected_code),
+        "grouped code total should render completely:\n{out}"
+    );
+    assert!(
+        total.split_whitespace().any(|cell| cell == expected_total),
+        "grouped overall total should render completely:\n{out}"
+    );
+    assert!(
+        !total.contains('\u{2026}'),
+        "grouped totals must not be truncated:\n{out}"
+    );
+}
+
 /// Only the percent suffix is muted in terminal-debug output.
 #[test]
 fn ratio_row_mutes_only_the_percent_suffix_in_term_debug() {
