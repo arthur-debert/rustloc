@@ -1,16 +1,20 @@
 {#-
   The count table.
 
-  Context (from `crate::table::CountView` — typed numbers only):
+  Context (from `crate::table::CountView`):
     aggregation  "total" | "crate" | "module" | "file"
     columns      enabled column keys, in display order
-    rows         [{label, values: [number, ...]}]   values follow `columns`
-    total        [number, ...]                      the totals row's values
-    footer       {displayed, total_items, file_count, top_applied}
+    rows         [{label, values: [{raw, display}, ...]}] values follow `columns`
+    total        [{raw, display}, ...]              the totals row's values
+    footer       {displayed, displayed_display, total_items,
+                  total_items_display, file_count, file_count_display,
+                  top_applied}
+    ratios       optional [{whole, tenth}, ...]
 
-  Count cells are plain numbers. When ratios are enabled, the `%` suffix takes
-  one display column, so the value columns reserve that suffix column on every
-  numeric row and the numeric part still aligns with the integer counts.
+  Count cell display strings may be plain or locale-grouped. When ratios are
+  enabled, the `%` suffix takes one display column, so the value columns reserve
+  that suffix column on every numeric row and the numeric part still aligns with
+  the integer counts.
 -#}
 {%- import "table_macros" as t -%}
 
@@ -24,12 +28,16 @@
   {%- set header = t.COLUMN_HEADERS[key] -%}
   {%- set w = namespace(max = header | length) -%}
   {%- for row in rows -%}
-    {%- set w.max = [w.max, (row.values[i] | string) | length] | max -%}
+    {%- set w.max = [w.max, row.values[i].display | length] | max -%}
   {%- endfor -%}
-  {%- set w.max = [w.max, (total[i] | string) | length] | max -%}
+  {%- set w.max = [w.max, total[i].display | length] | max -%}
   {%- if ratios -%}
     {%- set ratio = ratios[i] -%}
-    {%- set w.max = [w.max, ((ratio.whole | string) | length) + 3] | max -%}
+    {#- Integer rows leave the final display column blank so the ratio's `%`
+        suffix occupies that same column. Include that reserved column when an
+        integer is the widest value; `count_value` renders the integer into
+        `width - 1` below. -#}
+    {%- set w.max = [w.max + 1, ((ratio.whole | string) | length) + 3] | max -%}
   {%- endif -%}
   {%- set ns.headers = (ns.headers + [header]) | list -%}
   {%- set ns.widths = (ns.widths + [w.max]) | list -%}

@@ -8,20 +8,22 @@
 //!    `rustloclib`'s reusable pipeline
 //! 3. [`CountView`] / [`DiffView`] — *this* module: the same numbers, narrowed
 //!    to the requested columns and paired with the facts a table needs. Count
-//!    tables may also carry ratio facts when the human table asks for them
+//!    tables may also carry ratio facts when the human table asks for them.
+//!    Human tables can also carry locale-formatted display strings beside the
+//!    raw numbers when `--number-fmt` or `number_fmt = true` asks for grouping.
 //! 4. The rendered table — `templates/count_table.jinja`,
 //!    `templates/diff_table.jinja`, and their shared `table_macros.jinja`
 //!
-//! ## This module is not a formatter
+//! ## This module is not a layout engine
 //!
-//! It builds no display strings, computes no widths, picks no wording, and
-//! writes no style tags. Every one of those is human rendering *policy*, and
-//! policy lives in MiniJinja. What crosses this boundary is typed numbers plus
-//! the handful of facts the wording depends on (how many rows were displayed of
-//! how many, whether `--top` or a filter did the reducing, and the optional
-//! file-level [`FileChangeType`] on `--by-file` diff rows) — never a sentence
-//! built from them. The template maps Added/Deleted onto semantic tags; this
-//! module names no style.
+//! It computes no widths, picks no wording, and writes no style tags. Every one
+//! of those is human rendering *policy*, and policy lives in MiniJinja. What
+//! crosses this boundary is typed numbers, optional display text for those
+//! numbers, and the handful of facts the wording depends on (how many rows were
+//! displayed of how many, whether `--top` or a filter did the reducing, and the
+//! optional file-level [`FileChangeType`] on `--by-file` diff rows) — never a
+//! sentence built from them. The template maps Added/Deleted onto semantic tags;
+//! this module names no style.
 //!
 //! That split is what makes the two readable in isolation: the templates are
 //! the whole answer to "what does a user see?", and this module is the whole
@@ -49,6 +51,38 @@ use rustloclib::{
 };
 use serde::Serialize;
 
+use crate::number_format::NumberFormat;
+
+/// One integer and the text a human table should display for it.
+///
+/// The raw number remains available for conditionals and tests; the template
+/// reads `display` so locale punctuation never reaches structured output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DisplayNumber<T> {
+    /// The typed value.
+    pub raw: T,
+    /// The human table's visible text.
+    pub display: String,
+}
+
+impl DisplayNumber<u64> {
+    fn u64(raw: u64, format: NumberFormat) -> Self {
+        Self {
+            raw,
+            display: format.u64(raw),
+        }
+    }
+}
+
+impl DisplayNumber<i64> {
+    fn i64(raw: i64, format: NumberFormat) -> Self {
+        Self {
+            raw,
+            display: format.i64(raw),
+        }
+    }
+}
+
 /// A data row: its label, plus one value per enabled column in column order.
 ///
 /// Generic over the cell type because count cells are a single number and diff
@@ -72,14 +106,20 @@ pub struct Row<V> {
 /// Facts, not a sentence: whether the footer reads "Total (2 crates)",
 /// "Total (top 1 of 2 crates)" or "Total (1 of 2 crates)" is wording, and the
 /// template decides it. This struct only reports what happened.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Footer {
     /// Rows actually shown, after any user-driven reduction.
     pub displayed: usize,
+    /// Formatted `displayed` value for human table labels.
+    pub displayed_display: String,
     /// Rows before that reduction. Equals `displayed` when nothing reduced them.
     pub total_items: usize,
+    /// Formatted `total_items` value for human table labels.
+    pub total_items_display: String,
     /// Files analyzed — what total aggregation counts, having no rows to count.
     pub file_count: usize,
+    /// Formatted `file_count` value for human table labels.
+    pub file_count_display: String,
     /// True iff `--top` did the reducing (a sorted slice) rather than a filter
     /// (predicate-eliminated rows). The two mean different things to a reader,
     /// so the template needs to tell them apart.
@@ -87,9 +127,17 @@ pub struct Footer {
 }
 
 impl Footer {
-    fn new(displayed: usize, total_items: usize, file_count: usize, top_applied: bool) -> Self {
+    fn new(
+        displayed: usize,
+        total_items: usize,
+        file_count: usize,
+        top_applied: bool,
+        number_format: NumberFormat,
+    ) -> Self {
+        let total_items = total_items.max(displayed);
         Footer {
             displayed,
+            displayed_display: number_format.u64(displayed as u64),
             // `total_items < displayed` is logically impossible — reductions
             // only ever shrink the row set — but a query set deserialized from
             // a payload predating the `total_items` field arrives with 0.
@@ -99,8 +147,10 @@ impl Footer {
             // is trustworthy?", which is a question about the payload. Without
             // it the template would faithfully render "Total (0 crates)" above
             // two visible rows.
-            total_items: total_items.max(displayed),
+            total_items,
+            total_items_display: number_format.u64(total_items as u64),
             file_count,
+            file_count_display: number_format.u64(file_count as u64),
             top_applied,
         }
     }
@@ -114,9 +164,9 @@ pub struct CountView {
     /// Enabled column keys, in display order.
     pub columns: Vec<&'static str>,
     /// Data rows.
-    pub rows: Vec<Row<u64>>,
+    pub rows: Vec<Row<DisplayNumber<u64>>>,
     /// The totals row's values, positionally matching `columns`.
-    pub total: Vec<u64>,
+    pub total: Vec<DisplayNumber<u64>>,
     /// Facts behind the footer's wording.
     pub footer: Footer,
     /// Optional percentage row values, positionally matching `columns`.
@@ -126,9 +176,16 @@ pub struct CountView {
 
 impl CountView {
     /// Build the count table's payload from its canonical response.
-    pub fn from_queryset(qs: &CountQuerySet, shows_ratios: bool) -> Self {
+    pub fn from_queryset(
+        qs: &CountQuerySet,
+        shows_ratios: bool,
+        number_format: NumberFormat,
+    ) -> Self {
         let columns = enabled_columns(&qs.line_types);
-        let total = columns.iter().map(|c| c.count(&qs.total)).collect();
+        let total = columns
+            .iter()
+            .map(|c| DisplayNumber::u64(c.count(&qs.total), number_format))
+            .collect();
         let ratios = shows_ratios.then(|| {
             columns
                 .iter()
@@ -142,7 +199,10 @@ impl CountView {
                 .iter()
                 .map(|item| Row {
                     label: item.label.clone(),
-                    values: columns.iter().map(|c| c.count(&item.stats)).collect(),
+                    values: columns
+                        .iter()
+                        .map(|c| DisplayNumber::u64(c.count(&item.stats), number_format))
+                        .collect(),
                     change_type: None,
                 })
                 .collect(),
@@ -152,6 +212,7 @@ impl CountView {
                 qs.total_items,
                 qs.file_count,
                 qs.top_applied,
+                number_format,
             ),
             columns: columns.iter().map(|c| c.key()).collect(),
             ratios,
@@ -190,14 +251,14 @@ impl RatioValue {
 ///
 /// `net` is `i64` so a net removal stays negative rather than underflowing into
 /// a very large positive number.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DiffValue {
     /// Lines added.
-    pub added: u64,
+    pub added: DisplayNumber<u64>,
     /// Lines removed.
-    pub removed: u64,
+    pub removed: DisplayNumber<u64>,
     /// `added - removed`, saturating — see [`sat_sub_u64`].
-    pub net: i64,
+    pub net: DisplayNumber<i64>,
 }
 
 impl DiffValue {
@@ -208,11 +269,11 @@ impl DiffValue {
     /// as an addition where a removal happened. [`sat_sub_u64`] is the same
     /// rule `LocsDiff`'s `net_*` accessors use, so a net renders identically
     /// whether it reaches the reader through this view or through the library.
-    fn new(added: u64, removed: u64) -> Self {
+    fn new(added: u64, removed: u64, number_format: NumberFormat) -> Self {
         DiffValue {
-            added,
-            removed,
-            net: sat_sub_u64(added, removed),
+            added: DisplayNumber::u64(added, number_format),
+            removed: DisplayNumber::u64(removed, number_format),
+            net: DisplayNumber::i64(sat_sub_u64(added, removed), number_format),
         }
     }
 }
@@ -243,7 +304,7 @@ pub struct DiffView {
 
 impl DiffView {
     /// Build the diff table's payload from its canonical response.
-    pub fn from_queryset(qs: &DiffQuerySet) -> Self {
+    pub fn from_queryset(qs: &DiffQuerySet, number_format: NumberFormat) -> Self {
         let columns = enabled_columns(&qs.line_types);
         DiffView {
             aggregation: aggregation_key(&qs.aggregation),
@@ -252,20 +313,27 @@ impl DiffView {
                 .iter()
                 .map(|item| Row {
                     label: item.label.clone(),
-                    values: columns.iter().map(|c| c.diff_value(&item.stats)).collect(),
+                    values: columns
+                        .iter()
+                        .map(|c| c.diff_value(&item.stats, number_format))
+                        .collect(),
                     change_type: item.change_type,
                 })
                 .collect(),
-            total: columns.iter().map(|c| c.diff_value(&qs.total)).collect(),
+            total: columns
+                .iter()
+                .map(|c| c.diff_value(&qs.total, number_format))
+                .collect(),
             footer: Footer::new(
                 qs.items.len(),
                 qs.total_items,
                 qs.file_count,
                 qs.top_applied,
+                number_format,
             ),
             from_commit: qs.from_commit.clone(),
             to_commit: qs.to_commit.clone(),
-            non_rust: DiffValue::new(qs.non_rust_added, qs.non_rust_removed),
+            non_rust: DiffValue::new(qs.non_rust_added, qs.non_rust_removed, number_format),
             columns: columns.iter().map(|c| c.key()).collect(),
         }
     }
@@ -321,8 +389,12 @@ impl Column {
     }
 
     /// This column's cell out of a `LocsDiff`.
-    fn diff_value(self, diff: &LocsDiff) -> DiffValue {
-        DiffValue::new(self.count(&diff.added), self.count(&diff.removed))
+    fn diff_value(self, diff: &LocsDiff, number_format: NumberFormat) -> DiffValue {
+        DiffValue::new(
+            self.count(&diff.added),
+            self.count(&diff.removed),
+            number_format,
+        )
     }
 }
 
@@ -407,11 +479,20 @@ mod tests {
         )
     }
 
+    fn raw_u64(values: &[DisplayNumber<u64>]) -> Vec<u64> {
+        values.iter().map(|value| value.raw).collect()
+    }
+
+    fn disabled_format() -> NumberFormat {
+        NumberFormat::disabled()
+    }
+
     #[test]
     fn columns_are_data_keys_not_display_words() {
         let view = CountView::from_queryset(
             &queryset(LineTypes::everything(), Ordering::default()),
             false,
+            disabled_format(),
         );
         // Keys, lowercase, matching the JSON/CSV field names. The header words
         // ("Code", "Tests", ...) belong to the template and must not appear.
@@ -427,6 +508,7 @@ mod tests {
         let view = CountView::from_queryset(
             &queryset(LineTypes::new().with_code(), Ordering::default()),
             false,
+            disabled_format(),
         );
         assert_eq!(view.columns, vec!["code", "total"]);
         // ...and the cells narrow with them, positionally.
@@ -444,10 +526,11 @@ mod tests {
                 Ordering::default(),
             ),
             false,
+            disabled_format(),
         );
         assert_eq!(view.columns, vec!["code"]);
-        assert_eq!(view.rows[0].values, vec![50]);
-        assert_eq!(view.total, vec![200]);
+        assert_eq!(raw_u64(&view.rows[0].values), vec![50]);
+        assert_eq!(raw_u64(&view.total), vec![200]);
     }
 
     #[test]
@@ -455,11 +538,54 @@ mod tests {
         let view = CountView::from_queryset(
             &queryset(LineTypes::everything(), Ordering::default()),
             false,
+            disabled_format(),
         );
         // Default ordering is by label ascending: alpha before beta.
         assert_eq!(view.rows[0].label, "alpha");
-        assert_eq!(view.rows[0].values, vec![50, 25, 0, 0, 0, 0, 75]);
-        assert_eq!(view.total, vec![200, 100, 0, 0, 0, 0, 300]);
+        assert_eq!(raw_u64(&view.rows[0].values), vec![50, 25, 0, 0, 0, 0, 75]);
+        assert_eq!(raw_u64(&view.total), vec![200, 100, 0, 0, 0, 0, 300]);
+    }
+
+    #[test]
+    fn count_view_carries_locale_formatted_display_values() {
+        let qs = CountQuerySet {
+            aggregation: Aggregation::Total,
+            line_types: LineTypes::new().with_code(),
+            items: vec![],
+            total: sample_locs(3805, 1200),
+            file_count: 1200,
+            total_items: 0,
+            top_applied: false,
+        };
+        let view = CountView::from_queryset(
+            &qs,
+            false,
+            NumberFormat::from_locale_name(Some("en-US")).unwrap(),
+        );
+
+        assert_eq!(view.total[0].raw, 3805);
+        assert_eq!(view.total[0].display, "3,805");
+        assert_eq!(view.total[1].raw, 5005);
+        assert_eq!(view.total[1].display, "5,005");
+        assert_eq!(view.footer.file_count_display, "1,200");
+    }
+
+    #[test]
+    fn footer_carries_locale_formatted_summary_numbers() {
+        let footer = Footer::new(
+            1200,
+            3805,
+            5005,
+            true,
+            NumberFormat::from_locale_name(Some("de-DE")).unwrap(),
+        );
+
+        assert_eq!(footer.displayed, 1200);
+        assert_eq!(footer.displayed_display, "1.200");
+        assert_eq!(footer.total_items, 3805);
+        assert_eq!(footer.total_items_display, "3.805");
+        assert_eq!(footer.file_count, 5005);
+        assert_eq!(footer.file_count_display, "5.005");
     }
 
     #[test]
@@ -479,6 +605,7 @@ mod tests {
         let view = CountView::from_queryset(
             &queryset(LineTypes::everything(), Ordering::default()).top(1),
             false,
+            disabled_format(),
         );
         assert_eq!(view.footer.displayed, 1);
         assert_eq!(view.footer.total_items, 2);
@@ -497,6 +624,7 @@ mod tests {
                 100,
             )]),
             false,
+            disabled_format(),
         );
         // Rows were reduced, but not by --top: the template needs both facts to
         // pick "1 of 2" over "top 1 of 2".
@@ -512,7 +640,7 @@ mod tests {
         // "Total (0 crates)" above two visible rows.
         let mut qs = queryset(LineTypes::everything(), Ordering::default());
         qs.total_items = 0;
-        let view = CountView::from_queryset(&qs, false);
+        let view = CountView::from_queryset(&qs, false, disabled_format());
 
         assert_eq!(view.footer.displayed, 2);
         assert_eq!(view.footer.total_items, 2);
@@ -523,6 +651,7 @@ mod tests {
         let view = CountView::from_queryset(
             &queryset(LineTypes::new().with_code(), Ordering::default()),
             false,
+            disabled_format(),
         );
 
         assert!(view.ratios.is_none());
@@ -533,6 +662,7 @@ mod tests {
         let view = CountView::from_queryset(
             &queryset(LineTypes::new().with_code(), Ordering::default()),
             true,
+            disabled_format(),
         );
         let ratios = view.ratios.unwrap();
 
@@ -562,7 +692,7 @@ mod tests {
             total_items: 0,
             top_applied: false,
         };
-        let view = CountView::from_queryset(&qs, true);
+        let view = CountView::from_queryset(&qs, true, disabled_format());
 
         assert!(view
             .ratios
@@ -573,10 +703,10 @@ mod tests {
 
     #[test]
     fn diff_values_carry_added_removed_and_a_signed_net() {
-        assert_eq!(DiffValue::new(10, 5).net, 5);
+        assert_eq!(DiffValue::new(10, 5, disabled_format()).net.raw, 5);
         // A net removal stays negative rather than underflowing.
-        assert_eq!(DiffValue::new(5, 10).net, -5);
-        assert_eq!(DiffValue::new(0, 0).net, 0);
+        assert_eq!(DiffValue::new(5, 10, disabled_format()).net.raw, -5);
+        assert_eq!(DiffValue::new(0, 0, disabled_format()).net.raw, 0);
     }
 
     #[test]
@@ -587,11 +717,30 @@ mod tests {
         // pathological payload clamped and correctly signed.
         let huge = u64::MAX;
 
-        assert_eq!(DiffValue::new(huge, 0).net, i64::MAX);
-        assert_eq!(DiffValue::new(0, huge).net, i64::MIN + 1);
+        assert_eq!(DiffValue::new(huge, 0, disabled_format()).net.raw, i64::MAX);
+        assert_eq!(
+            DiffValue::new(0, huge, disabled_format()).net.raw,
+            i64::MIN + 1
+        );
         // Both sides clamp to i64::MAX, so an all-huge cell nets to zero
         // rather than to the -1 an unchecked cast would produce.
-        assert_eq!(DiffValue::new(huge, huge).net, 0);
+        assert_eq!(DiffValue::new(huge, huge, disabled_format()).net.raw, 0);
+    }
+
+    #[test]
+    fn diff_value_carries_locale_formatted_display_values() {
+        let value = DiffValue::new(
+            3805,
+            1200,
+            NumberFormat::from_locale_name(Some("de-DE")).unwrap(),
+        );
+
+        assert_eq!(value.added.raw, 3805);
+        assert_eq!(value.added.display, "3.805");
+        assert_eq!(value.removed.raw, 1200);
+        assert_eq!(value.removed.display, "1.200");
+        assert_eq!(value.net.raw, 2605);
+        assert_eq!(value.net.display, "2.605");
     }
 
     #[test]
@@ -610,11 +759,11 @@ mod tests {
             total_items: 0,
             top_applied: false,
         };
-        let view = DiffView::from_queryset(&qs);
+        let view = DiffView::from_queryset(&qs, disabled_format());
 
-        assert_eq!(view.non_rust.added, 0);
-        assert_eq!(view.non_rust.removed, 0);
-        assert_eq!(view.non_rust.net, 0);
+        assert_eq!(view.non_rust.added.raw, 0);
+        assert_eq!(view.non_rust.removed.raw, 0);
+        assert_eq!(view.non_rust.net.raw, 0);
     }
 
     #[test]
@@ -648,7 +797,7 @@ mod tests {
             total_items: 3,
             top_applied: false,
         };
-        let view = DiffView::from_queryset(&qs);
+        let view = DiffView::from_queryset(&qs, disabled_format());
 
         assert_eq!(view.rows[0].change_type, Some(FileChangeType::Added));
         assert_eq!(view.rows[1].change_type, Some(FileChangeType::Deleted));
@@ -663,7 +812,7 @@ mod tests {
         let row = Row {
             label: "src/this_is_a_deliberately_long_ascii_filename_for_the_parity_gate.rs"
                 .to_string(),
-            values: vec![61_u64],
+            values: vec![DisplayNumber::u64(61_u64, disabled_format())],
             change_type: None,
         };
         let spec = TabularSpec::builder()
@@ -672,10 +821,10 @@ mod tests {
             .separator(" ")
             .build();
         let formatter = TabularFormatter::new(&spec, 45);
-        let value = row.values[0].to_string();
+        let value = row.values[0].display.as_str();
 
         assert_eq!(
-            formatter.format_row(&[row.label.as_str(), value.as_str()]),
+            formatter.format_row(&[row.label.as_str(), value]),
             "…g_ascii_filename_for_the_parity_gate.rs   61"
         );
     }
@@ -686,7 +835,7 @@ mod tests {
         // typed value is split into native subcolumns; the spec, not the data,
         // owns alignment and semantic styles. A wider peer in the same logical
         // column makes this row need one leading space in +added and -removed.
-        let value = DiffValue::new(1, 0);
+        let value = DiffValue::new(1, 0, disabled_format());
         let subcolumns = SubColumns::new(
             vec![
                 SubCol::fixed(3).right().style("additions"),
@@ -700,14 +849,14 @@ mod tests {
             .column(Col::fixed(10).sub_columns(subcolumns))
             .build();
         let formatter = TabularFormatter::new(&spec, 10);
-        let added = format!("+{}", value.added);
-        let removed = format!("-{}", value.removed);
-        let net = value.net.to_string();
+        let added = format!("+{}", value.added.display);
+        let removed = format!("-{}", value.removed.display);
+        let net = value.net.display.as_str();
 
         let native = formatter.format_row_cells(&[CellValue::Sub(vec![
             added.as_str(),
             removed.as_str(),
-            net.as_str(),
+            net,
         ])]);
         let approved = " [additions]+1[/additions]/ [deletions]-0[/deletions]/ 1";
 

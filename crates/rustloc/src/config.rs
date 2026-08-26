@@ -15,6 +15,9 @@ pub struct RustlocConfig {
     /// Show a percentage row below count table totals.
     #[clapfig(default = false)]
     pub shows_ratios: bool,
+    /// Group integer digits in human-readable count and diff tables.
+    #[clapfig(default = false)]
+    pub number_fmt: bool,
 }
 
 impl RustlocConfig {
@@ -52,6 +55,7 @@ mod tests {
         let config = RustlocConfig::load_from_dirs([dir.path().to_path_buf()]).unwrap();
 
         assert!(!config.shows_ratios);
+        assert!(!config.number_fmt);
     }
 
     #[test]
@@ -61,5 +65,14 @@ mod tests {
         let config = RustlocConfig::load_from_dirs([dir.path().to_path_buf()]).unwrap();
 
         assert!(config.shows_ratios);
+    }
+
+    #[test]
+    fn reads_number_fmt_from_rustloc_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rustloc.toml"), "number_fmt = true\n").unwrap();
+        let config = RustlocConfig::load_from_dirs([dir.path().to_path_buf()]).unwrap();
+
+        assert!(config.number_fmt);
     }
 }
