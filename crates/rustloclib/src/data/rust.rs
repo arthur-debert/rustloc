@@ -48,14 +48,24 @@ fn parse_best_effort(source: &str) -> ra_ap_syntax::Parse<SourceFile> {
         Edition::Edition2015,
     ];
 
-    editions
-        .into_iter()
-        .map(|edition| {
-            let parse = SourceFile::parse(source, edition);
-            let error_count = parse.errors().len();
-            (parse, error_count)
-        })
-        .min_by_key(|(_parse, error_count)| *error_count)
+    let mut best_parse = None;
+    for edition in editions {
+        let parse = SourceFile::parse(source, edition);
+        let error_count = parse.errors().len();
+        if error_count == 0 {
+            return parse;
+        }
+
+        let should_replace = match &best_parse {
+            Some((_parse, best_error_count)) => error_count < *best_error_count,
+            None => true,
+        };
+        if should_replace {
+            best_parse = Some((parse, error_count));
+        }
+    }
+
+    best_parse
         .map(|(parse, _error_count)| parse)
         .expect("at least one Rust edition is available")
 }
@@ -137,7 +147,8 @@ impl RustLineClassifier<'_> {
         let start = u32::from(range.start()) as usize;
         let end = u32::from(range.end()) as usize;
 
-        for (index, line_range) in self.line_ranges.iter().enumerate() {
+        for index in self.intersecting_line_indices(start, end) {
+            let line_range = &self.line_ranges[index];
             let Some(slice) = intersect(line_range, start..end) else {
                 continue;
             };
@@ -157,7 +168,8 @@ impl RustLineClassifier<'_> {
         let start = u32::from(range.start()) as usize;
         let end = u32::from(range.end()) as usize;
 
-        for (index, line_range) in self.line_ranges.iter().enumerate() {
+        for index in self.intersecting_line_indices(start, end) {
+            let line_range = &self.line_ranges[index];
             let Some(slice) = intersect(line_range, start..end) else {
                 continue;
             };
@@ -170,6 +182,12 @@ impl RustLineClassifier<'_> {
                 self.line_classes[index] = class;
             }
         }
+    }
+
+    fn intersecting_line_indices(&self, start: usize, end: usize) -> Range<usize> {
+        let first = self.line_ranges.partition_point(|line| line.end <= start);
+        let last = self.line_ranges.partition_point(|line| line.start < end);
+        first..last
     }
 }
 
@@ -216,11 +234,35 @@ fn cfg_requires_test(predicate: &ast::CfgPredicate) -> bool {
                     cfg_requires_test(&first)
                         && predicates.all(|predicate| cfg_requires_test(&predicate))
                 }
-                "not" => false,
+                "not" => {
+                    let mut predicates = composite.cfg_predicates();
+                    let Some(predicate) = predicates.next() else {
+                        return false;
+                    };
+                    predicates.next().is_none() && cfg_not_requires_test(&predicate)
+                }
                 _ => false,
             }
         }
     }
+}
+
+fn cfg_not_requires_test(predicate: &ast::CfgPredicate) -> bool {
+    let ast::CfgPredicate::CfgComposite(composite) = predicate else {
+        return false;
+    };
+    let Some(keyword) = composite.keyword() else {
+        return false;
+    };
+    if keyword.text() != "not" {
+        return false;
+    }
+
+    let mut predicates = composite.cfg_predicates();
+    let Some(predicate) = predicates.next() else {
+        return false;
+    };
+    predicates.next().is_none() && cfg_requires_test(&predicate)
 }
 
 #[cfg(test)]
@@ -374,6 +416,25 @@ fn cfg_not_test() {}
 
         assert_eq!(stats.tests, 8);
         assert_eq!(stats.code, 4);
+    }
+
+    #[test]
+    fn cfg_double_negated_test_marks_item_as_tests() {
+        let source = r#"
+#[cfg(not(not(test)))]
+fn double_negated() {}
+
+#[cfg(not(not(all(test, unix))))]
+fn double_negated_compound() {}
+
+#[cfg(not(not(any(test, unix))))]
+fn double_negated_any() {}
+"#;
+
+        let stats = stats(source);
+
+        assert_eq!(stats.tests, 4);
+        assert_eq!(stats.code, 2);
     }
 
     #[test]

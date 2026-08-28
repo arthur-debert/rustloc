@@ -22,7 +22,9 @@ pub type VisitorContext = LogicContext;
 ///
 /// The wrapper reads the source and delegates classification to Rustloc's
 /// parser-backed Rust analyzer. Logic lines are counted in the supplied
-/// context unless Rust item attributes classify the item as test-only.
+/// context unless Rust item attributes classify the item as test-only. Read
+/// failures return empty statistics and no per-line classes because this legacy
+/// API cannot report I/O errors.
 pub struct Visitor<T: Read> {
     reader: T,
     context: VisitorContext,
@@ -56,14 +58,21 @@ impl<T: Read> Visitor<T> {
     }
 
     /// Visit the file and return LOC statistics.
+    ///
+    /// Returns empty statistics if the underlying reader fails.
     pub fn visit_file(self) -> Locs {
         self.visit_file_analysis().0
     }
 
     /// Visit the file and return LOC statistics plus per-line classes.
+    ///
+    /// Returns empty statistics and no line classes if the underlying reader
+    /// fails.
     pub fn visit_file_analysis(mut self) -> (Locs, Vec<LineClass>) {
         let mut source = String::new();
-        let _ = self.reader.read_to_string(&mut source);
+        if self.reader.read_to_string(&mut source).is_err() {
+            return (Locs::default(), Vec::new());
+        }
         let analysis = analyze_rust_source(&source, self.context);
         (analysis.stats, analysis.line_classes)
     }
@@ -146,6 +155,7 @@ pub use gather_stats_for_path as parse_file;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{self, Read};
 
     fn stats(file: &str) -> Locs {
         gather_stats(file, VisitorContext::Code)
@@ -158,6 +168,34 @@ mod tests {
 
         assert_eq!(stats.blanks, 1);
         assert_eq!(stats.total(), 1);
+    }
+
+    struct PartialThenError {
+        emitted: bool,
+    }
+
+    impl Read for PartialThenError {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.emitted {
+                return Err(io::Error::other("read failed"));
+            }
+
+            self.emitted = true;
+            let source = b"fn partial() {}\n";
+            buffer[..source.len()].copy_from_slice(source);
+            Ok(source.len())
+        }
+    }
+
+    #[test]
+    fn visitor_read_failure_returns_empty_analysis() {
+        let visitor =
+            Visitor::from_reader(PartialThenError { emitted: false }, VisitorContext::Code);
+
+        let (stats, line_classes) = visitor.visit_file_analysis();
+
+        assert_eq!(stats, Locs::default());
+        assert!(line_classes.is_empty());
     }
 
     #[test]
