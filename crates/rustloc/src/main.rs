@@ -51,11 +51,6 @@
 //! rustloc diff --staged
 //! ```
 //!
-//! ## Origins
-//!
-//! The parsing logic is adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc)
-//! by Maxim Gritsenko. This CLI wraps rustloclib to provide a user-friendly interface.
-
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};

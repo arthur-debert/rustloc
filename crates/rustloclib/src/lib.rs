@@ -133,12 +133,6 @@
 //! support the same `.filter()` / `.top()` chain. Diff filters operate
 //! on the net change (added − removed) per row.
 //!
-//! ## Origins
-//!
-//! The parsing logic is adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc)
-//! by Maxim Gritsenko. We thank the original author for the excellent parsing implementation.
-//! cargo-warloc is MIT licensed.
-
 // Pipeline modules (in order)
 pub mod data;
 pub mod query;

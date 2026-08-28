@@ -3,7 +3,7 @@
 //! This module handles the second stage of the pipeline - routing source files
 //! through language backends and collecting LOC statistics. It provides:
 //!
-//! - **Parsing**: AST-aware visitor that categorizes lines
+//! - **Parsing**: language backends that categorize lines
 //! - **Statistics**: Core data structures (`Locs`, `FileStats`, etc.)
 //! - **Counting**: High-level API (`count_workspace`, `count_file`)
 //! - **Diffing**: Git diff analysis (`diff_revspec`, `diff_workdir`)
@@ -21,6 +21,7 @@ pub mod backend;
 pub mod counter;
 pub mod diff;
 mod python;
+mod rust;
 pub mod stats;
 mod typescript;
 pub mod visitor;
