@@ -21,12 +21,17 @@ serde.workspace = true
 gix.workspace = true
 imara-diff.workspace = true
 ra_ap_syntax = "=0.0.349"
+tempfile = "3.10"
 ruff_python_ast = "0.0.3"
 ruff_python_parser = "0.0.3"
 ruff_text_size = "0.0.3"
 oxc_allocator.workspace = true
 oxc_parser.workspace = true
 oxc_span.workspace = true
+ra_ap_load-cargo = { version = "=0.0.349", default-features = false }
+ra_ap_project_model = { version = "=0.0.349", default-features = false }
+ra_ap_hir = { version = "=0.0.349", default-features = false }
+ra_ap_ide_db = { version = "=0.0.349", default-features = false }
+ra_ap_vfs = { version = "=0.0.349", default-features = false }
+ra_ap_paths = { version = "=0.0.349", default-features = false }
 
-[dev-dependencies]
-tempfile = "3.10"

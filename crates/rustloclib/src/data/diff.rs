@@ -37,6 +37,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::RustlocError;
 use crate::query::options::{Aggregation, LineTypes};
 use crate::source::filter::FilterConfig;
+use crate::source::project::ProjectClassification;
 use crate::source::workspace::WorkspaceInfo;
 use crate::Result;
 
@@ -310,6 +311,12 @@ impl DiffOptions {
 }
 
 /// Mode for working directory diff.
+///
+/// Each mode names the snapshot the new side of the diff is read from, and
+/// Rust files are classified against the Cargo project that same snapshot
+/// forms — so a `mod` declaration staged but not written to disk, or written
+/// to disk but not staged, moves lines between code and tests in exactly one
+/// of the two modes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WorkdirDiffMode {
     /// Compare HEAD with working directory (all uncommitted changes).
@@ -322,6 +329,11 @@ pub enum WorkdirDiffMode {
 }
 
 /// Compute LOC diff for working directory changes.
+///
+/// The old side is read from HEAD and the new side from the snapshot `mode`
+/// names. Both sides classify their Rust files against the Cargo project of
+/// the snapshot they came from, so a file whose test-only status changes with
+/// the diff is counted as code on one side and as tests on the other.
 pub fn diff_workdir(
     repo_path: impl AsRef<Path>,
     mode: WorkdirDiffMode,
@@ -364,6 +376,18 @@ pub fn diff_workdir(
 
     // Try to discover workspace info for crate grouping
     let workspace = WorkspaceInfo::discover(&repo_root).ok();
+
+    // Module reachability differs between the two sides, so each side is
+    // classified against the snapshot its content came from: the old side
+    // from HEAD's exported tree, and the new side from the working tree in
+    // `All` mode or from the exported index in `Staged` mode. Loading the new
+    // side from disk under `Staged` would read unstaged `mod` declarations,
+    // `#[cfg]` attributes and manifests that the staged content does not have.
+    let committed_project = classify_tree(&repo, &head_tree);
+    let new_project = match mode {
+        WorkdirDiffMode::All => ProjectClassification::load(&repo_root),
+        WorkdirDiffMode::Staged => classify_index(&repo, &index),
+    };
 
     // Apply crate filter if specified
     let filtered_workspace = workspace.as_ref().map(|ws| {
@@ -409,7 +433,8 @@ pub fn diff_workdir(
         }
 
         // Compute file diff
-        let file_diff = compute_workdir_file_diff(&change, &path)?;
+        let file_diff =
+            compute_workdir_file_diff(&change, &path, &committed_project, &new_project)?;
 
         // Aggregate into total
         total += file_diff.diff;
@@ -704,21 +729,113 @@ fn collect_tree_entries(
     Ok(())
 }
 
-/// Compute the LOC diff for a working directory file change
-fn compute_workdir_file_diff(change: &WorkdirFileChange, path: &Path) -> Result<FileDiffStats> {
+/// Classify the Cargo project a git tree holds.
+fn classify_tree(repo: &gix::Repository, tree: &gix::Tree<'_>) -> ProjectClassification {
+    let mut entries: HashMap<PathBuf, gix::ObjectId> = HashMap::new();
+    if collect_tree_entries(repo, tree, PathBuf::new(), &mut entries).is_err() {
+        return ProjectClassification::empty();
+    }
+    classify_blobs(repo, &entries)
+}
+
+/// Classify the Cargo project the index holds.
+///
+/// The index names a blob for every tracked path, so it is a complete
+/// snapshot of what a commit made now would contain — which is the project
+/// `Staged` mode's new-side content belongs to. Paths staged for deletion are
+/// absent from the index and so from the export, exactly as they would be
+/// absent from that commit.
+fn classify_index(repo: &gix::Repository, index: &gix::worktree::Index) -> ProjectClassification {
+    let entries: HashMap<PathBuf, gix::ObjectId> = index
+        .entries()
+        .iter()
+        .map(|entry| {
+            (
+                PathBuf::from(gix::path::from_bstr(entry.path(index))),
+                entry.id,
+            )
+        })
+        .collect();
+    classify_blobs(repo, &entries)
+}
+
+/// Write `entries` to a temporary directory and load the project it forms.
+///
+/// Module reachability is a property of the whole project — a `mod`
+/// declaration in one file decides whether another file exists at all — so a
+/// snapshot cannot be classified from the changed blobs alone. It is written
+/// out complete, loaded once, and thrown away.
+///
+/// Any failure, and any snapshot without a root `Cargo.toml`, yields an empty
+/// classification, which leaves the diff with its file-local numbers.
+fn classify_blobs(
+    repo: &gix::Repository,
+    entries: &HashMap<PathBuf, gix::ObjectId>,
+) -> ProjectClassification {
+    if !entries.contains_key(Path::new("Cargo.toml")) {
+        return ProjectClassification::empty();
+    }
+    let Ok(export) = tempfile::tempdir() else {
+        return ProjectClassification::empty();
+    };
+    if export_blobs(repo, entries, export.path()).is_err() {
+        return ProjectClassification::empty();
+    }
+    ProjectClassification::load(export.path())
+}
+
+/// Write each blob of `entries` under `dest`, preserving its path.
+fn export_blobs(
+    repo: &gix::Repository,
+    entries: &HashMap<PathBuf, gix::ObjectId>,
+    dest: &Path,
+) -> Result<()> {
+    for (path, oid) in entries {
+        let object = repo
+            .find_object(*oid)
+            .map_err(|e| RustlocError::GitError(format!("Failed to find object {}: {}", oid, e)))?;
+        let blob = object
+            .try_into_blob()
+            .map_err(|_| RustlocError::GitError(format!("Object {} is not a blob", oid)))?;
+
+        let target = dest.join(path);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&target, &blob.data)?;
+    }
+
+    Ok(())
+}
+
+/// Compute the LOC diff for a working directory file change.
+///
+/// Each side is classified against the project it belongs to: an added file
+/// only exists in the working project, a deleted one only in the committed
+/// project, and a modified one is read once per side.
+fn compute_workdir_file_diff(
+    change: &WorkdirFileChange,
+    path: &Path,
+    old_project: &ProjectClassification,
+    new_project: &ProjectClassification,
+) -> Result<FileDiffStats> {
     let diff = match change.change_type {
         FileChangeType::Added => {
-            let stats = analyze_content_stats(path, change.new_content.as_ref().unwrap())?;
+            let stats =
+                analyze_content_stats(path, change.new_content.as_ref().unwrap(), new_project)?;
             compute_locs_diff(&Locs::new(), &stats)
         }
         FileChangeType::Deleted => {
-            let stats = analyze_content_stats(path, change.old_content.as_ref().unwrap())?;
+            let stats =
+                analyze_content_stats(path, change.old_content.as_ref().unwrap(), old_project)?;
             compute_locs_diff(&stats, &Locs::new())
         }
         FileChangeType::Modified => compute_modified_locs_diff(
             path,
             change.old_content.as_ref().unwrap(),
             change.new_content.as_ref().unwrap(),
+            old_project,
+            new_project,
         )?,
     };
 
@@ -779,6 +896,12 @@ pub fn diff_revspec(
     // Compute the diff between trees
     let changes = compute_tree_diff(&from_tree, &to_tree)?;
 
+    // A `mod` declaration can move between revisions, so each endpoint is
+    // classified against its own complete tree rather than against the
+    // checkout the command happens to run in.
+    let from_project = classify_tree(&repo, &from_tree);
+    let to_project = classify_tree(&repo, &to_tree);
+
     // Try to discover workspace info
     let workspace = WorkspaceInfo::discover(&repo_root).ok();
 
@@ -838,7 +961,7 @@ pub fn diff_revspec(
             continue;
         }
 
-        let file_diff = compute_file_diff(&repo, &change, &path)?;
+        let file_diff = compute_file_diff(&repo, &change, &path, &from_project, &to_project)?;
 
         total += file_diff.diff;
 
@@ -1177,27 +1300,33 @@ fn compute_tree_diff(
     Ok(changes)
 }
 
-/// Compute the LOC diff for a single file
+/// Compute the LOC diff for a single file.
+///
+/// `old_project` and `new_project` classify the `from` and `to` revisions:
+/// an added file is only reachable in `new_project`, a deleted file only in
+/// `old_project`, and a modified file is classified once against each.
 fn compute_file_diff(
     repo: &gix::Repository,
     change: &FileChange,
     path: &Path,
+    old_project: &ProjectClassification,
+    new_project: &ProjectClassification,
 ) -> Result<FileDiffStats> {
     let diff = match change.change_type {
         FileChangeType::Added => {
             let content = read_blob(repo, change.new_oid.unwrap())?;
-            let stats = analyze_content_stats(path, &content)?;
+            let stats = analyze_content_stats(path, &content, new_project)?;
             compute_locs_diff(&Locs::new(), &stats)
         }
         FileChangeType::Deleted => {
             let content = read_blob(repo, change.old_oid.unwrap())?;
-            let stats = analyze_content_stats(path, &content)?;
+            let stats = analyze_content_stats(path, &content, old_project)?;
             compute_locs_diff(&stats, &Locs::new())
         }
         FileChangeType::Modified => {
             let old_content = read_blob(repo, change.old_oid.unwrap())?;
             let new_content = read_blob(repo, change.new_oid.unwrap())?;
-            compute_modified_locs_diff(path, &old_content, &new_content)?
+            compute_modified_locs_diff(path, &old_content, &new_content, old_project, new_project)?
         }
     };
 
@@ -1212,23 +1341,42 @@ fn is_analyzed_source_path(path: &Path, filter: &FilterConfig) -> bool {
     BackendRegistry::new().supports_path_with_languages(path, &filter.languages)
 }
 
-fn analyze_content_stats(path: &Path, source: &str) -> Result<Locs> {
-    Ok(analyze_content(path, source)?.stats)
+fn analyze_content_stats(
+    path: &Path,
+    source: &str,
+    project: &ProjectClassification,
+) -> Result<Locs> {
+    Ok(analyze_content(path, source, project)?.stats)
 }
 
-fn analyze_content(path: &Path, source: &str) -> Result<FileAnalysis> {
-    Ok(BackendRegistry::new()
+/// Classify one version of a file, then apply that revision's project context.
+fn analyze_content(
+    path: &Path,
+    source: &str,
+    project: &ProjectClassification,
+) -> Result<FileAnalysis> {
+    let mut analysis = BackendRegistry::new()
         .analyze_source(path, source)?
         .unwrap_or_else(|| FileAnalysis {
             language: super::backend::LanguageId::Unknown,
             stats: Locs::new(),
             line_classes: Vec::new(),
-        }))
+        });
+    if project.is_test_only(path) {
+        analysis.reclassify_code_as_tests();
+    }
+    Ok(analysis)
 }
 
-fn compute_modified_locs_diff(path: &Path, old: &str, new: &str) -> Result<LocsDiff> {
-    let old_analysis = analyze_content(path, old)?;
-    let new_analysis = analyze_content(path, new)?;
+fn compute_modified_locs_diff(
+    path: &Path,
+    old: &str,
+    new: &str,
+    old_project: &ProjectClassification,
+    new_project: &ProjectClassification,
+) -> Result<LocsDiff> {
+    let old_analysis = analyze_content(path, old, old_project)?;
+    let new_analysis = analyze_content(path, new, new_project)?;
     let mut line_diff = LocsDiff::new();
 
     let input = InternedInput::new(old, new);
@@ -1327,6 +1475,12 @@ mod tests {
     use std::process::Command;
     use std::sync::OnceLock;
     use tempfile::TempDir;
+
+    /// The classification a caller with no Cargo project supplies: line
+    /// classes come from the file's own syntax and nothing corrects them.
+    fn file_local() -> ProjectClassification {
+        ProjectClassification::empty()
+    }
 
     /// Hermetic two-commit git fixture for diff_revspec round-trip tests.
     ///
@@ -1575,8 +1729,14 @@ mod tests {
 
     #[test]
     fn test_compute_modified_locs_diff_counts_replaced_lines() {
-        let diff = compute_modified_locs_diff(Path::new("a.rs"), "fn old() {}\n", "fn new() {}\n")
-            .unwrap();
+        let diff = compute_modified_locs_diff(
+            Path::new("a.rs"),
+            "fn old() {}\n",
+            "fn new() {}\n",
+            &file_local(),
+            &file_local(),
+        )
+        .unwrap();
 
         assert_eq!(diff.added.code, 1);
         assert_eq!(diff.removed.code, 1);
@@ -1590,6 +1750,8 @@ mod tests {
             Path::new("a.rs"),
             "/// docs\nfn a() {}\n",
             "/// docs\nfn a() {}\nfn b() {}\n",
+            &file_local(),
+            &file_local(),
         )
         .unwrap();
 
@@ -1605,6 +1767,8 @@ mod tests {
             Path::new("tests/test_app.py"),
             "# old comment\ndef test_old():\n    assert False\n",
             "\"\"\"Module docs.\"\"\"\n# new comment\ndef test_new():\n    assert True\n",
+            &file_local(),
+            &file_local(),
         )
         .unwrap();
 
@@ -1622,6 +1786,8 @@ mod tests {
             Path::new("src/app.test.ts"),
             "// old comment\nconst oldValue = 1;\n",
             "/** public docs */\n// new comment\nconst newValue = 2;\n",
+            &file_local(),
+            &file_local(),
         )
         .unwrap();
 

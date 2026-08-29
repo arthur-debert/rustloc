@@ -11,7 +11,7 @@ A Rust-aware lines-of-code counter library. Unlike generic LOC tools, rustloclib
 Every line is classified into one of six types:
 
 - **code** — production logic lines
-- **tests** — test logic lines (`#[test]`, `#[cfg(test)]`, `tests/`)
+- **tests** — test logic lines (`#[test]`, `#[cfg(test)]`, `tests/`, and whole files a parent module declares only under `cfg(test)`)
 - **examples** — example logic lines (`examples/`)
 - **docs** — doc comments (`///`, `//!`, `/** */`, `/*! */`)
 - **comments** — regular comments (`//`, `/* */`)
@@ -32,6 +32,17 @@ use rustloclib::{count_workspace, CountOptions};
 let result = count_workspace(".", CountOptions::new())?;
 println!("Code: {}, Tests: {}, Docs: {}", result.total.code, result.total.tests, result.total.docs);
 ```
+
+Counting a workspace also reads its Cargo module graph, because a Rust file's
+own contents do not say whether it is production code. When `archive.rs`
+declares `#[cfg(all(test, unix))] #[path = "archive_tests.rs"] mod tests;`,
+every line of `archive_tests.rs` belongs to the test build, and rustloclib
+counts them as tests. Cargo test targets and the modules only they reach are
+test code for the same reason.
+
+`count_directory` and `count_file` stay file-local: given a directory or one
+path, rustloclib does not search parent directories for a manifest, so those
+entry points classify each file on its own syntax.
 
 ### Count a single file
 
