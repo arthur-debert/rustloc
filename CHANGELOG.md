@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- Valid Rust literals could confuse the old hand-written scanner, so later `#[test]` items could be reported as production code; the parser-backed classifier now recognizes test items, `cfg` predicates, comments, and documentation from Rust syntax. In a 993-line Proiectio file, Rustloc now reports 264 code / 510 tests instead of 877 code / 0 tests. Cross-file whole-test-module inference is unchanged.
+
 ## 0.21.0 - 2026-08-26
 
 - Add opt-in human-table ratios with `shows_ratios = true` or `--shows-ratio`, showing one-decimal percentages in count tables.
