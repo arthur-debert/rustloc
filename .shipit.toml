@@ -58,6 +58,18 @@ run = "test"
 required = true
 local = true
 
+# The unlocked-install lane (issue #154): `cargo install rustloc` resolves the
+# dependency graph from scratch, so the checked-in Cargo.lock — which the lint
+# and test lanes both build against — cannot witness a resolution that picks
+# incompatible versions. This lane runs the resolution the way a user's install
+# does and fails on the version pair that broke 0.22.0. Not `local`: it costs a
+# full unlocked build, too slow for a commit hook, and
+# `bin/check-unlocked-install.sh` is there to run by hand.
+[lanes.unlocked-install]
+run = "unlocked-install"
+required = true
+local = false
+
 [toolchains]
 "." = "rust"
 

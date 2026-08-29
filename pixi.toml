@@ -13,6 +13,8 @@ test = "./bin/shipit test"
 changelog = "./bin/shipit changelog"
 logs = "./bin/shipit logs"
 # <<< shipit-managed tasks <<<
+# Consumer-owned task for the unlocked-install CI lane (issue #154).
+unlocked-install = "./bin/check-unlocked-install.sh"
 
 [feature.lint.dependencies]
 # >>> shipit-managed rust lint toolchain (do not edit; regenerate via `shipit install`) >>>
