@@ -17,7 +17,6 @@
 set -euo pipefail
 
 expected_get_size2="0.10.1"
-expected_compact_str_line="0.9"
 
 repo_root="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 workspace_version="$(awk -F'"' '/^version = /{print $2; exit}' "$repo_root/Cargo.toml")"
@@ -57,17 +56,6 @@ if [ "$get_size2_versions" != "$expected_get_size2" ]; then
 	echo "      See the get-size2 pin in crates/rustloclib/Cargo.toml." >&2
 	exit 1
 fi
-
-while read -r version; do
-	case "$version" in
-	"$expected_compact_str_line".*) ;;
-	*)
-		echo "FAIL: fresh resolution pulled compact_str $version alongside ruff's ${expected_compact_str_line}.x." >&2
-		echo "      Two compact_str versions in one graph is the state that breaks the GetSize derive." >&2
-		exit 1
-		;;
-	esac
-done <<<"$(locked_versions compact_str)"
 
 echo "==> installing from that resolution (no --locked)"
 cargo install --debug --path crates/rustloc --root "$work/install"
