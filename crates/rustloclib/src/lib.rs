@@ -40,6 +40,8 @@
 //! Find what files to analyze:
 //! - [`WorkspaceInfo`]: Discover Cargo workspace structure
 //! - [`FilterConfig`]: Include/exclude files with glob patterns
+//! - [`ProjectClassification`]: Ask the Cargo module graph which Rust files
+//!   only a `cfg(test)` build reaches
 //!
 //! ### Stage 2: Data Collection ([`data`])
 //!
@@ -154,7 +156,7 @@ pub use query::{
     Aggregation, CountQuerySet, DiffQuerySet, Field, LineTypes, Op, OrderBy, OrderDirection,
     Ordering, Predicate, QueryItem,
 };
-pub use source::{CrateInfo, FilterConfig, WorkspaceInfo};
+pub use source::{CrateInfo, FilterConfig, ProjectClassification, WorkspaceInfo};
 
 /// Result type for rustloclib operations
 pub type Result<T> = std::result::Result<T, RustlocError>;

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::error::RustlocError;
 use crate::query::options::{Aggregation, LineTypes};
 use crate::source::filter::{discover_files, discover_files_in_dirs, FilterConfig};
+use crate::source::project::ProjectClassification;
 use crate::source::workspace::{CrateInfo, WorkspaceInfo};
 use crate::Result;
 
@@ -158,6 +159,11 @@ pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<
     let mut result = CountResult::new();
     result.root = workspace.root.clone();
 
+    // One project classification serves every member: loading the Cargo
+    // module graph is the expensive part of the count, and the graph is a
+    // property of the workspace, not of any one crate.
+    let project = ProjectClassification::load(&workspace.root);
+
     // Determine what to include based on aggregation level
     let include_files = matches!(options.aggregation, Aggregation::ByFile);
     let include_modules = matches!(options.aggregation, Aggregation::ByModule);
@@ -167,7 +173,7 @@ pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<
     );
 
     for crate_info in &crates {
-        let crate_stats = count_crate(crate_info, &options)?;
+        let crate_stats = count_crate(crate_info, &options, &project)?;
         result.total += crate_stats.stats;
         result.file_count += crate_stats.files.len();
 
@@ -307,7 +313,11 @@ fn aggregate_directory_modules(files: &[FileStats], root: &Path) -> Vec<ModuleSt
 }
 
 /// Count LOC in a single crate.
-fn count_crate(crate_info: &CrateInfo, options: &CountOptions) -> Result<CrateStats> {
+fn count_crate(
+    crate_info: &CrateInfo,
+    options: &CountOptions,
+    project: &ProjectClassification,
+) -> Result<CrateStats> {
     let dirs: Vec<&Path> = crate_info.all_dirs();
     let files = discover_files_in_dirs(&dirs, &options.file_filter)?;
     let registry = BackendRegistry::new();
@@ -315,7 +325,7 @@ fn count_crate(crate_info: &CrateInfo, options: &CountOptions) -> Result<CrateSt
     let mut crate_stats = CrateStats::new(crate_info.name.clone(), crate_info.root.clone());
 
     for file_path in files {
-        if let Some(stats) = analyze_file_stats(&registry, &file_path)? {
+        if let Some(stats) = analyze_file_stats(&registry, &file_path, project)? {
             let file_stats = FileStats::new(file_path, stats);
             crate_stats.add_file(file_stats);
         }
@@ -377,8 +387,12 @@ pub fn count_directory_with_options(
         Aggregation::ByFile | Aggregation::ByModule
     );
 
+    // Directory counting stays file-local by design: it never searches parent
+    // directories for a Cargo manifest, so it has no module graph to consult.
+    let project = ProjectClassification::empty();
+
     for file_path in files {
-        if let Some(stats) = analyze_file_stats(&registry, &file_path)? {
+        if let Some(stats) = analyze_file_stats(&registry, &file_path, &project)? {
             result.total += stats;
             result.file_count += 1;
             if include_files {
@@ -422,14 +436,29 @@ pub fn count_file_with_filter(path: impl AsRef<Path>, filter: &FilterConfig) -> 
     if !filter.matches(path) {
         return Err(RustlocError::UnsupportedSourceFile(path.to_path_buf()));
     }
-    analyze_file_stats(&registry, path)?
+    // Single-file counting is file-local for the same reason directory
+    // counting is: one path names no Cargo project to load.
+    analyze_file_stats(&registry, path, &ProjectClassification::empty())?
         .ok_or_else(|| RustlocError::UnsupportedSourceFile(path.to_path_buf()))
 }
 
-fn analyze_file_stats(registry: &BackendRegistry, path: &Path) -> Result<Option<Locs>> {
-    registry
-        .analyze_path(path)
-        .map(|analysis| analysis.map(|analysis| analysis.stats))
+/// Analyze one file, then let project context correct its logic classification.
+///
+/// The backend classifies the file's own syntax; `project` supplies the part
+/// the file cannot know — whether a parent module declaration puts the whole
+/// file behind `cfg(test)`, or whether Cargo builds it as a test target.
+fn analyze_file_stats(
+    registry: &BackendRegistry,
+    path: &Path,
+    project: &ProjectClassification,
+) -> Result<Option<Locs>> {
+    let Some(mut analysis) = registry.analyze_path(path)? else {
+        return Ok(None);
+    };
+    if project.is_test_only(path) {
+        analysis.reclassify_code_as_tests();
+    }
+    Ok(Some(analysis.stats))
 }
 
 #[cfg(test)]

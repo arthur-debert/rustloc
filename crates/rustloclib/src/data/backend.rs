@@ -190,6 +190,27 @@ pub struct FileAnalysis {
     pub line_classes: Vec<LineClass>,
 }
 
+impl FileAnalysis {
+    /// Recount the production logic lines of this file as test logic.
+    ///
+    /// Callers apply this after file-local analysis when project context says
+    /// the whole file belongs to a test build — a module only `cfg(test)`
+    /// reaches, or a Cargo test target. Only [`LogicContext::Code`] moves:
+    /// documentation, comments, blanks, examples, and logic the file itself
+    /// already marks as tests keep the classification the backend gave them.
+    pub fn reclassify_code_as_tests(&mut self) {
+        let mut moved = 0;
+        for class in &mut self.line_classes {
+            if *class == LineClass::Logic(LogicContext::Code) {
+                *class = LineClass::Logic(LogicContext::Tests);
+                moved += 1;
+            }
+        }
+        self.stats.code -= moved;
+        self.stats.tests += moved;
+    }
+}
+
 /// Backend interface for language-specific source analysis.
 pub trait LanguageBackend: Sync {
     fn supports_path(&self, path: &Path) -> bool;

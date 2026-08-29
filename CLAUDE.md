@@ -20,6 +20,17 @@ The library owns source discovery, language backends, counting, Git diffing,
 filtering and ordering primitives, aggregation, and the canonical typed
 responses `CountQuerySet` and `DiffQuerySet`. It returns numbers and metadata.
 
+`source::project` is the only place Cargo and rust-analyzer types appear. It
+loads a project's module graph twice — `cfg(test)` off, then on — and exposes
+one predicate, `ProjectClassification::is_test_only`. Counting and diffing
+apply that predicate *after* file-local analysis:
+`LanguageBackend::analyze_source(path, source)` and `FileAnalysis` stay
+file-local, and `FileAnalysis::reclassify_code_as_tests` moves only
+`LineClass::Logic(Code)` to `LineClass::Logic(Tests)`. A failed load yields an
+empty classification, so a command that worked without project context still
+works. Do not push Cargo semantics into the syntax parser, and do not give
+`count_directory` or `count_file` upward manifest discovery.
+
 The library does **not** own tables, headers, display widths, footer wording,
 semantic style tags, colours, output modes, stdout/stderr, or file output. It
 ends at canonical typed querysets; callers decide how to present them.
@@ -96,7 +107,7 @@ fixture does not by itself require a subprocess.
 
 | Level | Covers | Location |
 | --- | --- | --- |
-| Direct | Typed request parsing and validation; orchestration; counting/diffing; filtering, ordering, aggregation; canonical responses | `src/command.rs`, `src/application.rs`, and `rustloclib` unit tests |
+| Direct | Typed request parsing and validation; orchestration; counting/diffing; filtering, ordering, aggregation; canonical responses; project classification through the public count and diff API | `src/command.rs`, `src/application.rs`, `rustloclib` unit tests, and `crates/rustloclib/tests/project_classification.rs` |
 | In-process pipeline | Clap routing, handlers, post-dispatch adapters, templates, themes, and structured serializers through the real Standout app | `src/pipeline_tests.rs` |
 | Process | Binary startup/linking, OS exit codes, stdout/stderr ownership, final output-file writes, and ambient child seams such as cwd or forced colour | `tests/cli_integration.rs` |
 
@@ -144,6 +155,18 @@ a child rather than changing the test runner's global detector.
   against the theme; `term-debug` preserves both known and unknown tags.
 - `table_row_odd` comes from `Theme::default()` and is adaptive. The app merges
   `styles/default.css` over that default; do not replace it with a flat rule.
+
+## Project classification cost
+
+Counting a workspace loads its Cargo module graph twice, so it is worth
+re-measuring after changes to `source::project`:
+
+```bash
+cargo run --release -p rustloclib --example project_classification_perf
+```
+
+It reports wall-clock runtime and peak resident memory for a small temporary
+fixture and for the workspace you point it at.
 
 ## Verification
 
