@@ -131,10 +131,6 @@ for item in &queryset.items {
 
 All data types implement `serde::Serialize` and `serde::Deserialize`.
 
-## Acknowledgments
-
-The parsing logic is adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc) by Maxim Gritsenko (MIT licensed).
-
 ## License
 
 MIT License

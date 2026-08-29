@@ -206,17 +206,17 @@ Rust and Python use semantic backends that can classify tests inside production 
 
 rustloc routes files through language backends. Rust is enabled by default; Python, TypeScript, and generic source counting can be selected with `--lang`.
 
-The Rust backend uses a token-based parser with single-character lookahead. It recognizes:
+The Rust backend parses source with `ra_ap_syntax` and uses the resulting token and item ranges to classify:
 
-- Test blocks via `#[test]` and `#[cfg(test)]` attributes
+- Test items via `#[test]` and `cfg` attributes that require `test`, including `cfg(all(test, ...))`
 - File context from paths (`tests/`, `examples/` directories)
 - All Rust comment styles including doc comments
-- Raw string literals that may contain comment-like syntax
+- Rust string, byte string, C string, raw string, character, byte character, lifetime, and label tokens that may contain comment-like text
 - Nested block comments
 
-The Python backend uses Ruff's parser and syntax ranges to classify pytest functions, unittest classes, docstrings, comments, blanks, and path-level test/example files. The TypeScript backend uses Oxc parser comment spans for JSDoc and regular comments, with path-level test/example classification. The generic backend provides file-level classification for common source extensions when selected.
+The Rust backend classifies source-written items only; it does not expand macros or report parser diagnostics in the current result types.
 
-The parsing logic is adapted from [cargo-warloc](https://github.com/Maximkaaa/cargo-warloc) by Maxim Gritsenko.
+The Python backend uses Ruff's parser and syntax ranges to classify pytest functions, unittest classes, docstrings, comments, blanks, and path-level test/example files. The TypeScript backend uses Oxc parser comment spans for JSDoc and regular comments, with path-level test/example classification. The generic backend provides file-level classification for common source extensions when selected.
 
 ## License
 

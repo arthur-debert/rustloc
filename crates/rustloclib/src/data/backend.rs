@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 use crate::{Result, RustlocError};
 
 use super::python::PythonBackend;
+use super::rust::analyze_rust_source;
 use super::stats::Locs;
 use super::typescript::TypeScriptBackend;
-use super::visitor::{gather_analysis, gather_analysis_for_path};
 
 /// Language identified by a backend.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,12 +215,16 @@ impl LanguageBackend for RustBackend {
     }
 
     fn analyze_path(&self, path: &Path) -> Result<FileAnalysis> {
-        gather_analysis_for_path(path)
+        let source = std::fs::read_to_string(path).map_err(|e| RustlocError::FileRead {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+        self.analyze_source(path, &source)
     }
 
     fn analyze_source(&self, path: &Path, source: &str) -> Result<FileAnalysis> {
         let context = LogicContext::from_file_path(path);
-        Ok(gather_analysis(source, context))
+        Ok(analyze_rust_source(source, context))
     }
 }
 
