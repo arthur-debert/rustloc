@@ -13,6 +13,10 @@ test = "./bin/shipit test"
 changelog = "./bin/shipit changelog"
 logs = "./bin/shipit logs"
 # <<< shipit-managed tasks <<<
+# The unlocked-install lane's run (issue #154). Lives in the DEFAULT env, which
+# is where the rust toolchain the script shells out to is provisioned; the lint
+# env carries no cargo. Consumer-owned, outside the managed blocks above.
+unlocked-install = "./bin/check-unlocked-install.sh"
 
 [feature.lint.dependencies]
 # >>> shipit-managed rust lint toolchain (do not edit; regenerate via `shipit install`) >>>

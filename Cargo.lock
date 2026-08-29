@@ -4147,6 +4147,7 @@ name = "rustloclib"
 version = "0.22.0"
 dependencies = [
  "cargo_metadata 0.18.1",
+ "get-size2",
  "gix",
  "glob",
  "imara-diff",

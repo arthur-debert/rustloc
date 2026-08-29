@@ -25,6 +25,20 @@ tempfile = "3.10"
 ruff_python_ast = "0.0.3"
 ruff_python_parser = "0.0.3"
 ruff_text_size = "0.0.3"
+# rustloclib never calls get-size2; this line exists only to keep it at 0.10.1.
+# `ruff_python_ast` derives `get_size2::GetSize` on syntax nodes that hold a
+# `compact_str 0.9::CompactString`, and it asks for `compact_str = "0.9.0"`
+# plus `get-size2 = "0.10.0"`. get-size2 0.10.2 moved its optional
+# `compact_str` dependency to 0.10, so any resolution free to pick 0.10.2 or
+# later puts two `compact_str` versions in the graph: get-size2 implements
+# `GetSize` for the 0.10 `CompactString`, ruff stores the 0.9 one, and the
+# derive fails to compile with "the trait bound `CompactString: GetSize` is
+# not satisfied". Cargo is happy — the two requirements are both satisfiable —
+# so only an exact version keeps a fresh, unlocked `cargo install rustloc`
+# building (issue #154). Drop the pin once ruff and get-size2 publish
+# requirements that agree on one `compact_str`; `bin/check-unlocked-install.sh`
+# fails if it is dropped early.
+get-size2 = "=0.10.1"
 oxc_allocator.workspace = true
 oxc_parser.workspace = true
 oxc_span.workspace = true
