@@ -6,11 +6,14 @@
 //! observable classification a caller gets, not how the module graph is
 //! loaded.
 //!
-//! The behaviour under test is that a Rust file's parent module declaration
-//! decides whether the file is production code. `archive_tests.rs` is
-//! ordinary-looking Rust; only `archive.rs`'s `#[cfg(all(test, unix))]
-//! #[path = "archive_tests.rs"] mod tests;` says it belongs to the test
-//! build.
+//! Two project facts decide whether a Rust file is production code, and both
+//! are covered here. The first is the parent module declaration:
+//! `archive_tests.rs` is ordinary-looking Rust, and only `archive.rs`'s
+//! `#[cfg(all(test, unix))] #[path = "archive_tests.rs"] mod tests;` says it
+//! belongs to the test build. The second is the Cargo target a file is
+//! reached through: the root of a `[[test]]` target, and everything it
+//! declares, is test-only wherever the manifest points, with no `cfg(test)`
+//! declaration anywhere.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -483,6 +486,37 @@ fn a_working_tree_diff_classifies_the_committed_and_working_sides_separately() {
     write(root, "src/util.rs", "pub fn util() -> u32 {\n    2\n}\n");
 
     let result = diff_workdir(root, WorkdirDiffMode::All, diff_by_file()).unwrap();
+    let modified = result
+        .files
+        .iter()
+        .find(|file| file.path.ends_with("util.rs"))
+        .expect("util.rs should appear in the diff");
+
+    assert_eq!(modified.diff.removed.code, 1);
+    assert_eq!(modified.diff.added.tests, 1);
+    assert_eq!(modified.diff.added.code, 0);
+}
+
+#[test]
+fn a_staged_diff_classifies_the_new_side_against_the_index_not_the_working_tree() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    init_repo(root);
+    write(root, "Cargo.toml", &manifest("staged"));
+    write(root, "src/lib.rs", "pub mod util;\n");
+    write(root, "src/util.rs", "pub fn util() -> u32 {\n    1\n}\n");
+    commit(root, "util is production");
+
+    // Staged: util.rs moves into the test build and its body changes.
+    write(root, "src/lib.rs", "#[cfg(test)]\nmod util;\n");
+    write(root, "src/util.rs", "pub fn util() -> u32 {\n    2\n}\n");
+    git(root, &["add", "src/lib.rs", "src/util.rs"]);
+
+    // Unstaged on top: lib.rs declares util as production again. A staged
+    // diff must not see this, or util.rs's new line reads as code.
+    write(root, "src/lib.rs", "pub mod util;\n");
+
+    let result = diff_workdir(root, WorkdirDiffMode::Staged, diff_by_file()).unwrap();
     let modified = result
         .files
         .iter()

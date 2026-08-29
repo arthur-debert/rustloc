@@ -311,6 +311,12 @@ impl DiffOptions {
 }
 
 /// Mode for working directory diff.
+///
+/// Each mode names the snapshot the new side of the diff is read from, and
+/// Rust files are classified against the Cargo project that same snapshot
+/// forms — so a `mod` declaration staged but not written to disk, or written
+/// to disk but not staged, moves lines between code and tests in exactly one
+/// of the two modes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WorkdirDiffMode {
     /// Compare HEAD with working directory (all uncommitted changes).
@@ -323,6 +329,11 @@ pub enum WorkdirDiffMode {
 }
 
 /// Compute LOC diff for working directory changes.
+///
+/// The old side is read from HEAD and the new side from the snapshot `mode`
+/// names. Both sides classify their Rust files against the Cargo project of
+/// the snapshot they came from, so a file whose test-only status changes with
+/// the diff is counted as code on one side and as tests on the other.
 pub fn diff_workdir(
     repo_path: impl AsRef<Path>,
     mode: WorkdirDiffMode,
@@ -366,14 +377,17 @@ pub fn diff_workdir(
     // Try to discover workspace info for crate grouping
     let workspace = WorkspaceInfo::discover(&repo_root).ok();
 
-    // Module reachability differs between the two sides, so each side gets
-    // its own project: the committed side from HEAD's exported tree, the
-    // working side from the files on disk right now. In `Staged` mode the new
-    // content comes from the index while the project still comes from the
-    // working tree — the index is not a tree a Cargo project can be loaded
-    // from, and the two agree for every path the user has staged.
+    // Module reachability differs between the two sides, so each side is
+    // classified against the snapshot its content came from: the old side
+    // from HEAD's exported tree, and the new side from the working tree in
+    // `All` mode or from the exported index in `Staged` mode. Loading the new
+    // side from disk under `Staged` would read unstaged `mod` declarations,
+    // `#[cfg]` attributes and manifests that the staged content does not have.
     let committed_project = classify_tree(&repo, &head_tree);
-    let working_project = ProjectClassification::load(&repo_root);
+    let new_project = match mode {
+        WorkdirDiffMode::All => ProjectClassification::load(&repo_root),
+        WorkdirDiffMode::Staged => classify_index(&repo, &index),
+    };
 
     // Apply crate filter if specified
     let filtered_workspace = workspace.as_ref().map(|ws| {
@@ -420,7 +434,7 @@ pub fn diff_workdir(
 
         // Compute file diff
         let file_diff =
-            compute_workdir_file_diff(&change, &path, &committed_project, &working_project)?;
+            compute_workdir_file_diff(&change, &path, &committed_project, &new_project)?;
 
         // Aggregate into total
         total += file_diff.diff;
@@ -716,45 +730,75 @@ fn collect_tree_entries(
 }
 
 /// Classify the Cargo project a git tree holds.
+fn classify_tree(repo: &gix::Repository, tree: &gix::Tree<'_>) -> ProjectClassification {
+    let mut entries: HashMap<PathBuf, gix::ObjectId> = HashMap::new();
+    if collect_tree_entries(repo, tree, PathBuf::new(), &mut entries).is_err() {
+        return ProjectClassification::empty();
+    }
+    classify_blobs(repo, &entries)
+}
+
+/// Classify the Cargo project the index holds.
+///
+/// The index names a blob for every tracked path, so it is a complete
+/// snapshot of what a commit made now would contain — which is the project
+/// `Staged` mode's new-side content belongs to. Paths staged for deletion are
+/// absent from the index and so from the export, exactly as they would be
+/// absent from that commit.
+fn classify_index(repo: &gix::Repository, index: &gix::worktree::Index) -> ProjectClassification {
+    let entries: HashMap<PathBuf, gix::ObjectId> = index
+        .entries()
+        .iter()
+        .map(|entry| {
+            (
+                PathBuf::from(gix::path::from_bstr(entry.path(index))),
+                entry.id,
+            )
+        })
+        .collect();
+    classify_blobs(repo, &entries)
+}
+
+/// Write `entries` to a temporary directory and load the project it forms.
 ///
 /// Module reachability is a property of the whole project — a `mod`
 /// declaration in one file decides whether another file exists at all — so a
-/// revision cannot be classified from the changed blobs alone. The tree is
-/// written out complete, loaded once, and thrown away.
+/// snapshot cannot be classified from the changed blobs alone. It is written
+/// out complete, loaded once, and thrown away.
 ///
-/// Any failure yields an empty classification, which leaves the diff with its
-/// file-local numbers.
-fn classify_tree(repo: &gix::Repository, tree: &gix::Tree<'_>) -> ProjectClassification {
+/// Any failure, and any snapshot without a root `Cargo.toml`, yields an empty
+/// classification, which leaves the diff with its file-local numbers.
+fn classify_blobs(
+    repo: &gix::Repository,
+    entries: &HashMap<PathBuf, gix::ObjectId>,
+) -> ProjectClassification {
+    if !entries.contains_key(Path::new("Cargo.toml")) {
+        return ProjectClassification::empty();
+    }
     let Ok(export) = tempfile::tempdir() else {
         return ProjectClassification::empty();
     };
-    if export_tree(repo, tree, export.path()).is_err() {
+    if export_blobs(repo, entries, export.path()).is_err() {
         return ProjectClassification::empty();
     }
     ProjectClassification::load(export.path())
 }
 
-/// Write every blob of `tree` under `dest`, preserving its paths.
-///
-/// Returns without writing anything when the tree has no root `Cargo.toml`:
-/// there is no project to load, and copying the tree would be wasted work.
-fn export_tree(repo: &gix::Repository, tree: &gix::Tree<'_>, dest: &Path) -> Result<()> {
-    let mut entries: HashMap<PathBuf, gix::ObjectId> = HashMap::new();
-    collect_tree_entries(repo, tree, PathBuf::new(), &mut entries)?;
-
-    if !entries.contains_key(Path::new("Cargo.toml")) {
-        return Ok(());
-    }
-
+/// Write each blob of `entries` under `dest`, preserving its path.
+fn export_blobs(
+    repo: &gix::Repository,
+    entries: &HashMap<PathBuf, gix::ObjectId>,
+    dest: &Path,
+) -> Result<()> {
     for (path, oid) in entries {
         let object = repo
-            .find_object(oid)
+            .find_object(*oid)
             .map_err(|e| RustlocError::GitError(format!("Failed to find object {}: {}", oid, e)))?;
         let blob = object
             .try_into_blob()
             .map_err(|_| RustlocError::GitError(format!("Object {} is not a blob", oid)))?;
 
-        let target = dest.join(&path);
+        let target = dest.join(path);
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
