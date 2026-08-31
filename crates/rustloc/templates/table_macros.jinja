@@ -115,8 +115,9 @@ Total ({{ footer.displayed_display }} of {{ footer.total_items_display }} {{ UNI
     Added → `[file_added]`, Deleted → `[file_removed]`, Modified / any other
     row (count, crate, module, totals) → no extra tag.
 
-    Commit rows are the one label the user does not author, so they get their
-    own treatment: escaped as plain data (see `escape_markup`) and truncated
+    Commit-row labels carry commit subjects — untrusted input authored by
+    arbitrary repository contributors — so they get their own treatment:
+    escaped as plain data (see `escape_markup`) and truncated
     at the END, which keeps the leading `hash ` intact and spends the rest of
     the column on the start of the subject. The escape runs twice around the
     truncation on purpose — `truncate_at` measures and cuts the *stripped*
