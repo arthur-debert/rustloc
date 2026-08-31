@@ -15,7 +15,7 @@ pub struct RustlocConfig {
     /// Show a percentage row below count table totals.
     #[clapfig(default = false)]
     pub shows_ratios: bool,
-    /// Group integer digits in human-readable count and diff tables.
+    /// Group integer digits in count, diff, and commit tables.
     #[clapfig(default = false)]
     pub number_fmt: bool,
 }

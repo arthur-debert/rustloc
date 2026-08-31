@@ -16,7 +16,7 @@
 //! - **Glob filtering**: Include/exclude files with glob patterns
 //! - **Multiple output formats**: Table (default), JSON, YAML, XML, CSV
 //! - **Git diff analysis**: Compare LOC between commits
-//! - **Optional locale grouping**: Add digit separators to human-readable counts and diffs
+//! - **Optional locale grouping**: Add digit separators to count, diff, and commit tables
 //!
 //! ## Usage
 //!
@@ -56,6 +56,7 @@
 //!
 use std::process::ExitCode;
 
+use clap::parser::ValueSource;
 use clap::{Args, Parser, Subcommand};
 use rustloclib::Ordering;
 use standout::cli::{Dispatch, RunResult};
@@ -71,6 +72,9 @@ mod table;
 #[derive(Parser)]
 #[command(name = "rustloc")]
 #[command(version, author = "Arthur Debert")]
+#[command(override_usage = "\
+rustloc [OPTIONS] [PATH]
+       rustloc [OPTIONS] <COMMAND> [COMMAND_OPTIONS]")]
 #[command(long_about = "\
 Language-aware lines of code counter with test/code separation.
 
@@ -102,6 +106,9 @@ struct Cli {
 
     #[command(flatten)]
     count_args: CountArgs,
+
+    #[command(flatten)]
+    query_args: QueryArgs,
 }
 
 /// Commands enum with Dispatch derive for automatic handler routing
@@ -155,21 +162,38 @@ Examples:
     Commit(CommitArgs),
 }
 
-/// Shared arguments for count command and top-level
+/// Count-only arguments used by the default route and explicit `count`.
 #[derive(Args, Clone, Default)]
 struct CountArgs {
     /// Path to analyze
     #[arg(default_value = ".")]
     path: String,
 
+    /// Show a percentage summary row below the count total
+    #[arg(long = "shows-ratio")]
+    shows_ratio: bool,
+}
+
+/// Query and human-display arguments shared by `count`, `diff`, and `commit`.
+///
+/// These are top-level global args so each flag has one parser declaration and
+/// Clap makes the same value visible to whichever subcommand Standout selects.
+#[derive(Args, Clone, Default)]
+struct QueryArgs {
     /// Only count specific crate(s) [-c my-lib -c my-cli]
-    #[arg(short = 'c', long = "crate", action = clap::ArgAction::Append)]
+    #[arg(short = 'c', long = "crate", action = clap::ArgAction::Append, global = true)]
     crates: Vec<String>,
 
     /// Language backend(s) to analyze [-l rust,typescript]
     ///
     /// Example: -l rust,python or -l rust,typescript
-    #[arg(short = 'l', long = "lang", value_delimiter = ',', action = clap::ArgAction::Append)]
+    #[arg(
+        short = 'l',
+        long = "lang",
+        value_delimiter = ',',
+        action = clap::ArgAction::Append,
+        global = true
+    )]
     #[arg(long_help = "\
 Language backend groups to analyze.
 
@@ -184,15 +208,15 @@ Available: rust, python, typescript, generic
     languages: Vec<String>,
 
     /// Only include files matching a glob [-i "src/**/*.rs"]
-    #[arg(short = 'i', long = "include", action = clap::ArgAction::Append)]
+    #[arg(short = 'i', long = "include", action = clap::ArgAction::Append, global = true)]
     include: Vec<String>,
 
     /// Exclude files matching a glob [-e "**/generated/**"]
-    #[arg(short = 'e', long = "exclude", action = clap::ArgAction::Append)]
+    #[arg(short = 'e', long = "exclude", action = clap::ArgAction::Append, global = true)]
     exclude: Vec<String>,
 
     /// Line types to show (comma-separated)
-    #[arg(short = 't', long = "type", value_delimiter = ',')]
+    #[arg(short = 't', long = "type", value_delimiter = ',', global = true)]
     #[arg(value_parser = ["code", "tests", "examples", "docs", "comments", "blanks", "total"])]
     #[arg(long_help = "\
 Line types to show (comma-separated).
@@ -205,15 +229,29 @@ Values: code, tests, examples, docs, comments, blanks, total
     line_types: Vec<String>,
 
     /// Group results by crate
-    #[arg(long = "by-crate", conflicts_with_all = ["by_file", "by_module"])]
+    #[arg(
+        long = "by-crate",
+        conflicts_with_all = ["by_file", "by_module"],
+        global = true
+    )]
     by_crate: bool,
 
     /// Group results by file
-    #[arg(short = 'f', long = "by-file", conflicts_with_all = ["by_crate", "by_module"])]
+    #[arg(
+        short = 'f',
+        long = "by-file",
+        conflicts_with_all = ["by_crate", "by_module"],
+        global = true
+    )]
     by_file: bool,
 
     /// Group results by module
-    #[arg(short = 'm', long = "by-module", conflicts_with_all = ["by_crate", "by_file"])]
+    #[arg(
+        short = 'm',
+        long = "by-module",
+        conflicts_with_all = ["by_crate", "by_file"],
+        global = true
+    )]
     by_module: bool,
 
     /// Sort by field [-o FIELD, prefix - for desc: -o -code]
@@ -225,7 +263,8 @@ Values: code, tests, examples, docs, comments, blanks, total
         long = "ordering",
         value_name = "FIELD",
         allow_hyphen_values = true,
-        value_parser = command::parse_ordering
+        value_parser = command::parse_ordering,
+        global = true
     )]
     #[arg(long_help = "\
 Sort by field. Prefix with - for descending, + for ascending.
@@ -240,7 +279,7 @@ Default direction: descending for numeric fields, ascending for label.
     ordering: Option<Ordering>,
 
     /// Show only the top N rows after sorting [requires --by-* aggregation]
-    #[arg(long = "top", value_name = "N")]
+    #[arg(long = "top", value_name = "N", global = true)]
     #[arg(long_help = "\
 Truncate the result to the top N rows after sorting. The truncation is
 applied after `--ordering`, so use the two together for things like
@@ -250,16 +289,12 @@ The total row and file count still describe the full data set, not the
 truncated slice. No-op when no `--by-*` aggregation is in effect.")]
     top: Option<usize>,
 
-    /// Show a percentage summary row below the count total
-    #[arg(long = "shows-ratio")]
-    shows_ratio: bool,
-
-    /// Group integer digits in human-readable output using the active locale
-    #[arg(long = "number-fmt")]
+    /// Group integer digits in count, diff, and commit tables using the active locale
+    #[arg(long = "number-fmt", global = true)]
     #[arg(long_help = "\
-Group integer digits in human-readable count output using the active system
+Group integer digits in count, diff, and commit tables using the active system
 locale. If the locale is unavailable or unsupported, rustloc uses English-style
-grouping (1,234) instead of failing the count.")]
+grouping (1,234) instead of failing the command.")]
     number_fmt: bool,
 }
 
@@ -302,115 +337,19 @@ parent, exactly as `rustloc diff <revision>~1..<revision>`.")]
     common: DiffCommonArgs,
 }
 
-/// Repository and view controls shared by `diff` and `commit`.
+/// Repository selection shared by `diff` and `commit`.
 ///
 /// Flattened into both because `commit <revision>` is defined as
 /// `diff <revision>~1..<revision>`: the two commands must accept the same
-/// repository, query, and presentation flags with identical semantics, and
-/// one declaration keeps them from drifting apart. What differs — diff's
-/// endpoints (`from`/`to`/`--staged`) vs commit's single required revision —
-/// stays in the per-command structs.
+/// repository flag with identical semantics. The shared query and
+/// human-display flags live in [`QueryArgs`] as global top-level args, so a
+/// prefix form such as `rustloc --type code diff ...` reaches the same
+/// selected-command matches as the suffix form.
 #[derive(Args, Clone)]
 struct DiffCommonArgs {
     /// Path to the repository
     #[arg(short = 'p', long = "path", default_value = ".")]
     path: String,
-
-    /// Only count specific crate(s)
-    #[arg(short = 'c', long = "crate", action = clap::ArgAction::Append)]
-    crates: Vec<String>,
-
-    /// Language backend(s) to analyze [-l rust,typescript]
-    ///
-    /// Example: -l rust,python or -l rust,typescript
-    #[arg(short = 'l', long = "lang", value_delimiter = ',', action = clap::ArgAction::Append)]
-    #[arg(long_help = "\
-Language backend groups to analyze.
-
-Default: rust
-Available: rust, python, typescript, generic
-
-  -l python            Analyze Python file changes only
-  -l rust,python       Analyze Rust and Python file changes
-  -l typescript        Analyze TypeScript file changes only
-  -l rust,typescript   Analyze Rust and TypeScript file changes
-  -l all               Analyze all available backend groups")]
-    languages: Vec<String>,
-
-    /// Only include files matching a glob
-    #[arg(short = 'i', long = "include", action = clap::ArgAction::Append)]
-    include: Vec<String>,
-
-    /// Exclude files matching a glob
-    #[arg(short = 'e', long = "exclude", action = clap::ArgAction::Append)]
-    exclude: Vec<String>,
-
-    /// Line types to show (comma-separated)
-    #[arg(short = 't', long = "type", value_delimiter = ',')]
-    #[arg(value_parser = ["code", "tests", "examples", "docs", "comments", "blanks", "total"])]
-    #[arg(long_help = "\
-Line types to show (comma-separated).
-
-By default all types are shown. Use this to filter to specific types.
-Values: code, tests, examples, docs, comments, blanks, total
-
-  -t code,tests       Show only code and test lines
-  -t code             Show only code lines")]
-    line_types: Vec<String>,
-
-    /// Group results by crate
-    #[arg(long = "by-crate", conflicts_with_all = ["by_file", "by_module"])]
-    by_crate: bool,
-
-    /// Group results by file
-    #[arg(short = 'f', long = "by-file", conflicts_with_all = ["by_crate", "by_module"])]
-    by_file: bool,
-
-    /// Group results by module
-    #[arg(short = 'm', long = "by-module", conflicts_with_all = ["by_crate", "by_file"])]
-    by_module: bool,
-
-    /// Sort by field [-o FIELD, prefix - for desc: -o -code]
-    // `allow_hyphen_values` keeps `-o -code` from being read as a flag;
-    // `value_parser` makes an unknown field a clap usage error at parse time
-    // rather than a silent fall back to the default ordering.
-    #[arg(
-        short = 'o',
-        long = "ordering",
-        value_name = "FIELD",
-        allow_hyphen_values = true,
-        value_parser = command::parse_ordering
-    )]
-    #[arg(long_help = "\
-Sort by field. Prefix with - for descending, + for ascending.
-
-Fields: label, code, tests, examples, docs, comments, blanks, total
-Default direction: descending for numeric fields, ascending for label.
-
-  -o code         Sort by code lines (descending)
-  -o -code        Sort by code lines (descending, explicit)
-  -o +code        Sort by code lines (ascending)
-  -o label        Sort by name (ascending)")]
-    ordering: Option<Ordering>,
-
-    /// Show only the top N rows after sorting [requires --by-* aggregation]
-    #[arg(long = "top", value_name = "N")]
-    #[arg(long_help = "\
-Truncate the result to the top N rows after sorting. The truncation is
-applied after `--ordering`, so use the two together for things like
-`--by-file -o -code --top 10` (the 10 files with the most code change).
-
-The total row and file count still describe the full data set, not the
-truncated slice. No-op when no `--by-*` aggregation is in effect.")]
-    top: Option<usize>,
-
-    /// Group integer digits in human-readable output using the active locale
-    #[arg(long = "number-fmt")]
-    #[arg(long_help = "\
-Group integer digits in human-readable diff output using the active system
-locale. If the locale is unavailable or unsupported, rustloc uses English-style
-grouping (1,234) instead of failing the diff.")]
-    number_fmt: bool,
 }
 
 /// Command handlers — the dispatch boundary.
@@ -429,10 +368,10 @@ grouping (1,234) instead of failing the diff.")]
 /// [`super::presentation`], which runs at the render boundary.
 ///
 /// Standout's `#[handler]` macro would normally generate this bridge from typed
-/// parameters, but it maps one parameter per named clap arg, and the count/diff
-/// grammar includes the 42 dynamically registered `--<field>-<op>` filter flags
-/// (see [`super::filter_args`]) that no fixed parameter list can express. Its
-/// `#[matches]` escape hatch would hand the raw matches back to the handler
+/// parameters, but it maps one parameter per named clap arg, and the shared
+/// query grammar includes the 42 dynamically registered `--<field>-<op>` filter
+/// flags (see [`super::filter_args`]) that no fixed parameter list can express.
+/// Its `#[matches]` escape hatch would hand the raw matches back to the handler
 /// anyway, so we keep the plain dispatch signature and put the typed seam in
 /// `command` + `application` instead — the same separation, minus a macro that
 /// cannot cover the grammar.
@@ -769,8 +708,8 @@ mod filter_args {
     /// `&'static str` because clap's `Arg::new` / `Arg::long` want
     /// `IntoResettable<Str>` which is implemented for `&'static str` but
     /// not for `String`. Caching avoids re-leaking on repeated calls
-    /// (`make_args` is invoked once per injection point: top-level + count
-    /// + diff + commit = four calls), keeping the leak count to exactly 42.
+    /// (`make_args` is invoked once for the top-level command), keeping the
+    /// leak count to exactly 42.
     fn flag_table() -> &'static [(Field, Op, &'static str)] {
         static TABLE: OnceLock<Vec<(Field, Op, &'static str)>> = OnceLock::new();
         TABLE.get_or_init(|| {
@@ -796,6 +735,7 @@ mod filter_args {
                     .value_name("N")
                     .value_parser(value_parser!(u64))
                     .action(ArgAction::Append)
+                    .global(true)
                     .hide(true)
             })
             .collect()
@@ -828,24 +768,14 @@ mod filter_args {
         cmd.after_long_help(combined)
     }
 
-    /// Inject the filter args + synthetic doc onto the top-level Cli and the
-    /// `count`, `diff`, and `commit` subcommands.
+    /// Inject the global filter args onto the top-level Cli and append the
+    /// synthetic doc to every route that accepts them.
     ///
-    /// All four are required:
-    /// - top-level: for the bare-call form (`rustloc --code-gte 100 .`)
-    ///   where clap routes through the default subcommand machinery via
-    ///   the flattened `CountArgs`.
-    /// - count subcommand: for the explicit form (`rustloc count ...`).
-    /// - diff subcommand: for the diff path.
-    /// - commit subcommand: for the one-commit diff path.
-    ///
-    /// Adding to fewer than all four breaks one or more of the call shapes.
+    /// The args themselves have one parser owner: the root command. Clap's
+    /// global-arg propagation makes them available inside the selected
+    /// subcommand matches, which is what Standout passes to the handler.
     pub fn inject(cmd: Command) -> Command {
         fn augment(sub: Command) -> Command {
-            let mut sub = sub;
-            for a in make_args() {
-                sub = sub.arg(a);
-            }
             append_long_help(sub, SYNTHETIC_DOC)
         }
 
@@ -874,12 +804,65 @@ mod filter_args {
     }
 }
 
+/// Run the app over an argv vector.
+///
+/// The parser-level default command still needs count's `path` and
+/// `--shows-ratio` on the root command so bare `rustloc [PATH]` keeps working.
+/// When a user selects `diff` or `commit`, this function rejects those
+/// count-only root arguments before Standout dispatches the selected command;
+/// otherwise Clap would parse them at the root and Standout would hand only the
+/// subcommand matches to the handler.
+fn run_args<I, S>(args: I) -> Result<RunResult, anyhow::Error>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let argv: Vec<String> = args.into_iter().map(Into::into).collect();
+    if let Some(message) = count_root_argument_error(&argv) {
+        return Ok(RunResult::Error(run_error_payload(message)));
+    }
+
+    Ok(app::app()?.run_to_string(app::cli_command(), argv))
+}
+
+fn run_error_payload<T: From<String>>(message: String) -> T {
+    T::from(message)
+}
+
+fn count_root_argument_error(argv: &[String]) -> Option<String> {
+    let matches = match app::cli_command().try_get_matches_from(argv) {
+        Ok(matches) => matches,
+        Err(_) => return None,
+    };
+    let (command, _sub_matches) = matches.subcommand()?;
+    if !matches!(command, "diff" | "commit") {
+        return None;
+    }
+
+    let path_from_root = matches.value_source("path") == Some(ValueSource::CommandLine);
+    if path_from_root {
+        return Some(format!(
+            "error: count path cannot appear before `{command}`\n\n\
+             Use `rustloc {command} -p <PATH> ...` for a repository path, \
+             or `rustloc <PATH>` for a count.\n"
+        ));
+    }
+
+    if matches.get_flag("shows_ratio") {
+        return Some(format!(
+            "error: --shows-ratio can only be used with count, not `{command}`\n"
+        ));
+    }
+
+    None
+}
+
 /// Read the process environment and run the app built by [`crate::app`].
 ///
 /// The construction itself lives in `app` so tests can build the same app;
 /// what stays here is the one thing a test must not inherit — `std::env::args`.
 fn run() -> Result<RunResult, anyhow::Error> {
-    Ok(app::app()?.run_to_string(app::cli_command(), std::env::args()))
+    run_args(std::env::args())
 }
 
 fn main() -> ExitCode {

@@ -180,16 +180,16 @@ impl DiffEndpoints {
     }
 }
 
-/// The view controls count and diff share: what to read, how to group it, how
-/// to sort and narrow it.
+/// The view controls count, diff, and commit share: what to read, how to group
+/// it, how to sort and narrow it.
 ///
 /// Shared because the semantics are genuinely identical on both sides — the
 /// flags parse the same, mean the same, and feed the same query stage. What
-/// differs between the commands (a count *path* vs a diff's *endpoints*) stays
-/// out of here, in [`CountRequest`] / [`DiffRequest`].
+/// differs between the commands (a count *path*, a diff's *endpoints*, or a
+/// commit revision) stays out of here, in [`CountRequest`] / [`DiffRequest`].
 #[derive(Debug, Clone)]
 pub struct QueryRequest {
-    /// Restrict a workspace count/diff to these crates. Empty means all.
+    /// Restrict a workspace count, diff, or commit query to these crates. Empty means all.
     pub crates: Vec<String>,
     /// Language selection plus include/exclude globs.
     pub filter: FilterConfig,
@@ -208,7 +208,7 @@ pub struct QueryRequest {
 }
 
 impl QueryRequest {
-    /// Convert the shared count/diff flags out of `matches`.
+    /// Convert the shared count, diff, and commit flags out of `matches`.
     pub fn from_matches(matches: &ArgMatches) -> Result<Self, anyhow::Error> {
         Ok(Self {
             crates: matches
