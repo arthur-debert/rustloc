@@ -174,7 +174,7 @@ impl<T, M> ReportQuerySet<T, M> {
     }
 }
 
-impl CountQuerySet {
+impl ReportQuerySet<Locs, CountReportMetadata> {
     /// Create a QuerySet from a CountResult.
     ///
     /// Applies aggregation level and ordering. `line_types` is recorded as the
@@ -199,7 +199,7 @@ impl CountQuerySet {
         let total = result.total;
         let total_items = items.len();
 
-        CountQuerySet {
+        Self {
             aggregation,
             line_types,
             items,
@@ -289,7 +289,7 @@ fn relative_path_label(path: &std::path::Path, root: &std::path::Path) -> String
         .unwrap_or_else(|_| path.to_string_lossy().to_string())
 }
 
-impl DiffQuerySet {
+impl ReportQuerySet<LocsDiff, DiffReportMetadata> {
     /// Create a QuerySet from a DiffResult.
     ///
     /// Applies aggregation level and ordering. `line_types` is recorded as the
@@ -313,7 +313,7 @@ impl DiffQuerySet {
         let total = result.total;
         let total_items = items.len();
 
-        DiffQuerySet {
+        Self {
             aggregation,
             line_types,
             items,
