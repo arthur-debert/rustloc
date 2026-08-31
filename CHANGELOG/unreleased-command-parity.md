@@ -1,0 +1,1 @@
+- Make shared query options behave consistently across count, diff, and commit. Count and diff now share a report structure, and diff totals report correct changed-file counts for every grouping mode.

@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- Make shared query options behave consistently across count, diff, and commit. Count and diff now share a report structure, and diff totals report correct changed-file counts for every grouping mode.
+
 ## 0.24.0 - 2026-08-31
 
 - Add `rustloc commit <revision>` for inspecting the line-count changes one commit introduces. It compares the commit against its first parent and produces exactly the output of `rustloc diff <revision>~1..<revision>`, accepting the diff command's repository, language, include/exclude, line-type, aggregation, ordering, filtering, top, number-format, and output controls.
