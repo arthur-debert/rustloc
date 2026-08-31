@@ -129,6 +129,16 @@ pub enum DiffEndpoints {
 }
 
 impl DiffEndpoints {
+    /// The one-commit comparison: `<revision>~1..<revision>`.
+    ///
+    /// This range is what defines `rustloc commit R` as `rustloc diff R~1..R` —
+    /// the commit against its first parent. Like every revspec, it goes to the
+    /// library verbatim, so a root commit (no parent) fails with git's own
+    /// resolution error rather than a special case here.
+    pub fn for_commit(revision: &str) -> Self {
+        Self::Revspec(format!("{revision}~1..{revision}"))
+    }
+
     /// Resolve the positional revs and `--staged` into one endpoint pair.
     ///
     /// Two positional args (`diff main feature`) are joined into `main..feature`
@@ -245,6 +255,10 @@ impl CountRequest {
 }
 
 /// A fully typed `diff` invocation.
+///
+/// Also the typed form of a `commit` invocation
+/// ([`DiffRequest::from_commit_matches`]): `commit` has no request type of its
+/// own because its meaning *is* a diff over a derived range.
 #[derive(Debug, Clone)]
 pub struct DiffRequest {
     /// Repository to diff in.
@@ -270,6 +284,32 @@ impl DiffRequest {
                 matches.get_one::<String>("to"),
                 matches.get_flag("staged"),
             )?,
+            query: QueryRequest::from_matches(matches)?,
+        })
+    }
+
+    /// Convert `commit` matches into a typed diff request.
+    ///
+    /// The one place the commit grammar differs from diff's: instead of
+    /// optional endpoints, a single required `revision` becomes the
+    /// [`DiffEndpoints::for_commit`] range. Everything else — repository,
+    /// query controls, predicates — reads identically, which is what makes
+    /// `commit R` and `diff R~1..R` the same request.
+    pub fn from_commit_matches(matches: &ArgMatches) -> Result<Self, anyhow::Error> {
+        let repo = matches
+            .get_one::<String>("path")
+            .map(|s| s.as_str())
+            .unwrap_or(".");
+
+        // clap enforces the positional, so absence is a wiring bug, not user
+        // input — surface it as an error rather than defaulting.
+        let revision = matches
+            .get_one::<String>("revision")
+            .ok_or_else(|| anyhow::anyhow!("commit requires a revision"))?;
+
+        Ok(Self {
+            repo: PathBuf::from(repo),
+            endpoints: DiffEndpoints::for_commit(revision),
             query: QueryRequest::from_matches(matches)?,
         })
     }
@@ -469,6 +509,18 @@ mod tests {
             DiffEndpoints::resolve(Some(&from), Some(&to), false).unwrap(),
             DiffEndpoints::Revspec("main..feature".to_string())
         );
+    }
+
+    #[test]
+    fn commit_endpoints_compare_the_revision_against_its_first_parent() {
+        // The defining range of `rustloc commit R`: `R~1..R`, verbatim, for
+        // any revision form git can resolve.
+        for rev in ["HEAD", "abc1234", "v1.0.0", "HEAD~3"] {
+            assert_eq!(
+                DiffEndpoints::for_commit(rev),
+                DiffEndpoints::Revspec(format!("{rev}~1..{rev}"))
+            );
+        }
     }
 
     #[test]

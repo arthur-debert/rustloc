@@ -2089,3 +2089,137 @@ fn diff_invalid_revspec_is_a_dispatch_error() {
         "unexpected message: {msg}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Commit, through the real pipeline
+// ---------------------------------------------------------------------------
+
+/// A repo with two commits, where the second — HEAD — touches enough to make
+/// every equivalence run below nontrivial: it edits `src/lib.rs` (adding code,
+/// a test, and a doc line), adds `src/extra.rs`, deletes `src/gone.rs`, and
+/// changes a non-Rust file (the skipped-changes path). A third, uncommitted
+/// edit exists on purpose: `commit HEAD` must read the committed range and
+/// ignore the working tree, and an equivalence test over a clean tree could
+/// not tell.
+fn commit_repo() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    git(p, &["init", "-q"]);
+    std::fs::write(
+        p.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir(p.join("src")).unwrap();
+    std::fs::write(p.join("src/lib.rs"), "pub fn a() {}\n").unwrap();
+    std::fs::write(p.join("src/gone.rs"), "pub fn g() {}\n").unwrap();
+    std::fs::write(p.join("notes.txt"), "one\n").unwrap();
+    git(p, &["add", "-A"]);
+    git(p, &["commit", "-qm", "one"]);
+
+    std::fs::write(
+        p.join("src/lib.rs"),
+        "/// Doc for a.\npub fn a() {}\npub fn b() {}\n\n#[test]\nfn t() { a() }\n",
+    )
+    .unwrap();
+    std::fs::write(p.join("src/extra.rs"), "pub fn e() {}\npub fn f() {}\n").unwrap();
+    std::fs::remove_file(p.join("src/gone.rs")).unwrap();
+    std::fs::write(p.join("notes.txt"), "one\ntwo\n").unwrap();
+    git(p, &["add", "-A"]);
+    git(p, &["commit", "-qm", "two"]);
+
+    std::fs::write(p.join("src/lib.rs"), "pub fn uncommitted() {}\n").unwrap();
+    dir
+}
+
+/// The defining contract of #156: for the same repository and options,
+/// `commit R` and `diff R~1..R` are byte-for-byte identical — human table,
+/// structured modes, and every shared control alike. The option sets cover
+/// aggregation + ordering + top, line-type narrowing, the filter grid, glob
+/// filtering, and the json/csv serializers, so a divergence anywhere on the
+/// shared path fails loudly.
+#[test]
+fn commit_matches_the_equivalent_diff_range_under_representative_options() {
+    let dir = commit_repo();
+    let path = path_of(&dir);
+
+    let option_sets: &[&[&str]] = &[
+        &[],
+        &["--by-file", "-o", "-code", "--top", "2"],
+        &["-t", "code,tests"],
+        &["--by-file", "--code-gte", "1"],
+        &["--include", "src/**", "--by-module"],
+        &["--output", "json", "--by-file"],
+        &["--output", "csv", "--by-file"],
+    ];
+
+    for options in option_sets {
+        let mut commit_args = vec!["commit", "-p", &path, "HEAD"];
+        commit_args.extend_from_slice(options);
+        let mut diff_args = vec!["diff", "-p", &path, "HEAD~1..HEAD"];
+        diff_args.extend_from_slice(options);
+
+        assert_eq!(
+            stdout(&commit_args),
+            stdout(&diff_args),
+            "commit/diff outputs diverged for options {options:?}"
+        );
+    }
+}
+
+/// The equivalence must hold for any resolvable revision, not just HEAD —
+/// `commit HEAD~1` reads the *first* commit's range, which pins that the
+/// revision really parameterizes the range instead of being ignored.
+#[test]
+fn commit_accepts_a_non_head_revision() {
+    let dir = commit_repo();
+    let path = path_of(&dir);
+
+    let commit_out = stdout(&["commit", "-p", &path, "HEAD", "--output", "json"]);
+    let parsed: DiffQuerySet = serde_json::from_str(&commit_out).unwrap();
+    assert!(
+        parsed.total.added.code > 0,
+        "HEAD's committed range must show the added code"
+    );
+
+    // HEAD~1 is the root commit: it has no parent, so its range cannot
+    // resolve. Git owns that verdict, and it must surface as a dispatch
+    // error rather than an invented "first commit" special case.
+    let msg = error(&["commit", "-p", &path, "HEAD~1"]);
+    assert!(
+        msg.contains("Could not resolve revision") && msg.contains("fatal:"),
+        "unexpected message: {msg}"
+    );
+}
+
+/// The revision is required: a bare `rustloc commit` is a clap usage error at
+/// the parsing boundary, never an implicit HEAD.
+#[test]
+fn commit_without_a_revision_is_a_usage_error() {
+    let msg = error(&["commit"]);
+    assert!(
+        msg.contains("<REVISION>"),
+        "expected the missing positional to be named, got: {msg}"
+    );
+}
+
+/// `commit --help` must describe the required revision and the one-commit
+/// comparison — the two facts a reader needs to predict what it runs.
+#[test]
+fn commit_help_documents_the_revision_and_the_one_commit_comparison() {
+    let help = stdout(&["commit", "--help"]);
+    assert!(
+        help.contains("<REVISION>"),
+        "required revision missing from:\n{help}"
+    );
+    assert!(
+        help.contains("first parent") && help.contains("diff R~1..R"),
+        "one-commit comparison missing from:\n{help}"
+    );
+    // The filter grid is injected on commit like every other route, so its
+    // synthetic doc block must be discoverable here too.
+    assert!(
+        help.contains("--<category>-<op>"),
+        "synthetic filter doc missing from:\n{help}"
+    );
+}
