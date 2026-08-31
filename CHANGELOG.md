@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## 0.26.0 - 2026-08-31
+
 - Add `rustloc diff --by-commit` to report one row for every commit selected by a Git revision range. Each row compares the commit with its first parent and shows its short hash, subject, and line-count changes. Commit rows follow Git traversal order unless explicitly sorted and support the existing language, path, line-type, predicate, `--top`, and structured-output controls.
 
 ## 0.25.0 - 2026-08-31
