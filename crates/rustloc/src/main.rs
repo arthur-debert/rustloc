@@ -634,14 +634,14 @@ mod presentation {
         // files, so only the *_total fields carry data; everything else
         // is left at zero. Skip the row entirely when there's nothing to
         // show, so a fully analyzed diff stays clean.
-        if qs.non_rust_added > 0 || qs.non_rust_removed > 0 {
+        if qs.metadata.non_rust_added > 0 || qs.metadata.non_rust_removed > 0 {
             let non_rust = LocsDiff {
                 added: Locs {
-                    total: qs.non_rust_added,
+                    total: qs.metadata.non_rust_added,
                     ..Locs::default()
                 },
                 removed: Locs {
-                    total: qs.non_rust_removed,
+                    total: qs.metadata.non_rust_removed,
                     ..Locs::default()
                 },
             };

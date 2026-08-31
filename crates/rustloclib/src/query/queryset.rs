@@ -1,10 +1,11 @@
 //! Query set: the canonical command response.
 //!
-//! [`CountQuerySet`] and [`DiffQuerySet`] are the single, typed, serializable
-//! value each command produces. They are **independent of output mode**: the
-//! same query set backs the human table, JSON/YAML/XML serialization, and CSV.
-//! Adapting a query set to a particular presentation is the render layer's job,
-//! never the handler's.
+//! [`ReportQuerySet`] is the single, typed, serializable value each command
+//! produces. [`CountQuerySet`] and [`DiffQuerySet`] are aliases that specialize
+//! it with either snapshot counts or diff counts plus diff metadata. They are
+//! **independent of output mode**: the same query set backs the human table,
+//! JSON/YAML/XML serialization, and CSV. Adapting a query set to a particular
+//! presentation is the render layer's job, never the handler's.
 //!
 //! A QuerySet is where this library's pipeline ends: it sits between raw
 //! counting/diff results and whatever presentation the caller builds.
@@ -82,25 +83,30 @@ pub struct QueryItem<T> {
     pub stats: T,
 }
 
-/// Query set for count results — the canonical `count` response.
+/// Shared query/report envelope for count and diff results.
 ///
-/// The same value is rendered as a table, serialized to JSON/YAML/XML, and
-/// adapted to CSV rows. Construction never depends on the output mode.
+/// `T` is the measurement held in each row and in `total`: [`Locs`] for a count
+/// snapshot, [`LocsDiff`] for a diff. `M` carries command-specific metadata;
+/// diff metadata is flattened during serialization so the public machine-output
+/// schema keeps the same top-level fields.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CountQuerySet {
+pub struct ReportQuerySet<T, M = CountReportMetadata> {
     /// Aggregation level used
     pub aggregation: Aggregation,
     /// Line types the caller asked to see. A *view descriptor* for the render
     /// layer — it never narrows `items`/`total` here. Whether those counts are
-    /// complete depends on the [`CountResult`] they were built from; see the
-    /// module docs.
+    /// complete depends on the data result they were built from; see the module
+    /// docs.
     pub line_types: LineTypes,
     /// Data rows (filtered and sorted; possibly truncated by `top`)
-    pub items: Vec<QueryItem<Locs>>,
+    pub items: Vec<QueryItem<T>>,
     /// Total across all items in the underlying data set (not affected by `top` or `filter`)
-    pub total: Locs,
-    /// Number of files analyzed
+    pub total: T,
+    /// Number of source files analyzed or changed in the underlying data set.
     pub file_count: usize,
+    /// Command-specific report metadata.
+    #[serde(flatten)]
+    pub metadata: M,
     /// Count of rows before any user-driven reduction (`top` or `filter`).
     /// Equals `items.len()` unless one of those was applied.
     #[serde(default)]
@@ -112,25 +118,13 @@ pub struct CountQuerySet {
     pub top_applied: bool,
 }
 
-/// Query set for diff results — the canonical `diff` response.
-///
-/// The same value is rendered as a table, serialized to JSON/YAML/XML, and
-/// adapted to CSV rows. Construction never depends on the output mode.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DiffQuerySet {
-    /// Aggregation level used
-    pub aggregation: Aggregation,
-    /// Line types the caller asked to see. A *view descriptor* for the render
-    /// layer — it never narrows `items`/`total` here. Whether those counts are
-    /// complete depends on the [`DiffResult`] they were built from; see the
-    /// module docs.
-    pub line_types: LineTypes,
-    /// Data rows (filtered and sorted; possibly truncated by `top`)
-    pub items: Vec<QueryItem<LocsDiff>>,
-    /// Total diff across all items in the underlying data set (not affected by `top` or `filter`)
-    pub total: LocsDiff,
-    /// Number of files changed
-    pub file_count: usize,
+/// No extra metadata is needed for count query sets.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CountReportMetadata {}
+
+/// Extra metadata carried by diff query sets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiffReportMetadata {
     /// Source commit
     pub from_commit: String,
     /// Target commit
@@ -141,16 +135,46 @@ pub struct DiffQuerySet {
     /// Lines removed in files skipped by the active language selection.
     #[serde(default)]
     pub non_rust_removed: u64,
-    /// Count of rows before any user-driven reduction (`top` or `filter`).
-    /// Equals `items.len()` unless one of those was applied.
-    #[serde(default)]
-    pub total_items: usize,
-    /// True iff `top` was applied. See [`CountQuerySet::top_applied`].
-    #[serde(default)]
-    pub top_applied: bool,
 }
 
-impl CountQuerySet {
+/// Query set for count results — the canonical `count` response.
+///
+/// The same value is rendered as a table, serialized to JSON/YAML/XML, and
+/// adapted to CSV rows. Construction never depends on the output mode.
+pub type CountQuerySet = ReportQuerySet<Locs, CountReportMetadata>;
+
+/// Query set for diff results — the canonical `diff` response.
+///
+/// The same value is rendered as a table, serialized to JSON/YAML/XML, and
+/// adapted to CSV rows. Construction never depends on the output mode.
+pub type DiffQuerySet = ReportQuerySet<LocsDiff, DiffReportMetadata>;
+
+impl<T, M> ReportQuerySet<T, M> {
+    /// Keep only the first `n` items after ordering.
+    ///
+    /// Applied after `from_result` so the truncation runs on already-sorted
+    /// rows. With `n` larger than the current row count this is a no-op.
+    /// `total` and `file_count` are intentionally not changed — the displayed
+    /// rows are a slice, but the underlying counts still describe the full
+    /// data set.
+    #[must_use]
+    pub fn top(mut self, n: usize) -> Self {
+        self.items.truncate(n);
+        self.top_applied = true;
+        self
+    }
+
+    fn filter_by(mut self, preds: &[Predicate], matches: impl Fn(&Predicate, &T) -> bool) -> Self {
+        if preds.is_empty() {
+            return self;
+        }
+        self.items
+            .retain(|item| preds.iter().all(|p| matches(p, &item.stats)));
+        self
+    }
+}
+
+impl ReportQuerySet<Locs, CountReportMetadata> {
     /// Create a QuerySet from a CountResult.
     ///
     /// Applies aggregation level and ordering. `line_types` is recorded as the
@@ -175,29 +199,16 @@ impl CountQuerySet {
         let total = result.total;
         let total_items = items.len();
 
-        CountQuerySet {
+        Self {
             aggregation,
             line_types,
             items,
             total,
             file_count: result.file_count,
+            metadata: CountReportMetadata::default(),
             total_items,
             top_applied: false,
         }
-    }
-
-    /// Keep only the first `n` items after ordering.
-    ///
-    /// Applied after `from_result` so the truncation runs on already-sorted
-    /// rows. With `n` larger than the current row count this is a no-op.
-    /// `total` and `file_count` are intentionally not changed — the displayed
-    /// rows are a slice, but the underlying counts still describe the full
-    /// data set.
-    #[must_use]
-    pub fn top(mut self, n: usize) -> Self {
-        self.items.truncate(n);
-        self.top_applied = true;
-        self
     }
 
     /// Keep only items satisfying every predicate (AND-combined).
@@ -212,13 +223,8 @@ impl CountQuerySet {
     /// footer can render "top X of Y" honestly even when the visible slice
     /// is filtered down. The full data set is still summarized in `total`.
     #[must_use]
-    pub fn filter(mut self, preds: &[Predicate]) -> Self {
-        if preds.is_empty() {
-            return self;
-        }
-        self.items
-            .retain(|item| preds.iter().all(|p| matches_locs(p, &item.stats)));
-        self
+    pub fn filter(self, preds: &[Predicate]) -> Self {
+        self.filter_by(preds, matches_locs)
     }
 }
 
@@ -283,7 +289,7 @@ fn relative_path_label(path: &std::path::Path, root: &std::path::Path) -> String
         .unwrap_or_else(|_| path.to_string_lossy().to_string())
 }
 
-impl DiffQuerySet {
+impl ReportQuerySet<LocsDiff, DiffReportMetadata> {
     /// Create a QuerySet from a DiffResult.
     ///
     /// Applies aggregation level and ordering. `line_types` is recorded as the
@@ -307,30 +313,21 @@ impl DiffQuerySet {
         let total = result.total;
         let total_items = items.len();
 
-        DiffQuerySet {
+        Self {
             aggregation,
             line_types,
             items,
             total,
-            file_count: result.files.len(),
-            from_commit: result.from_commit.clone(),
-            to_commit: result.to_commit.clone(),
-            non_rust_added: result.non_rust_added,
-            non_rust_removed: result.non_rust_removed,
+            file_count: result.file_count,
+            metadata: DiffReportMetadata {
+                from_commit: result.from_commit.clone(),
+                to_commit: result.to_commit.clone(),
+                non_rust_added: result.non_rust_added,
+                non_rust_removed: result.non_rust_removed,
+            },
             total_items,
             top_applied: false,
         }
-    }
-
-    /// Keep only the first `n` items after ordering.
-    ///
-    /// See [`CountQuerySet::top`] for semantics — `total` and `file_count`
-    /// describe the full data set, not the truncated slice.
-    #[must_use]
-    pub fn top(mut self, n: usize) -> Self {
-        self.items.truncate(n);
-        self.top_applied = true;
-        self
     }
 
     /// Keep only items satisfying every predicate (AND-combined).
@@ -342,13 +339,8 @@ impl DiffQuerySet {
     /// display-filtered view. See [`CountQuerySet::filter`] for the rationale
     /// on why `total_items` isn't updated.
     #[must_use]
-    pub fn filter(mut self, preds: &[Predicate]) -> Self {
-        if preds.is_empty() {
-            return self;
-        }
-        self.items
-            .retain(|item| preds.iter().all(|p| matches_diff(p, &item.stats)));
-        self
+    pub fn filter(self, preds: &[Predicate]) -> Self {
+        self.filter_by(preds, matches_diff)
     }
 }
 
@@ -1064,6 +1056,7 @@ mod tests {
             from_commit: "HEAD~1".to_string(),
             to_commit: "HEAD".to_string(),
             total: big + small,
+            file_count: 2,
             crates: vec![CrateDiffStats {
                 name: "x".to_string(),
                 path: PathBuf::from("/workspace"),
@@ -1166,6 +1159,7 @@ mod tests {
             from_commit: "HEAD~1".to_string(),
             to_commit: "HEAD".to_string(),
             total: added.diff + deleted.diff + modified.diff,
+            file_count: 3,
             crates: vec![],
             files: vec![added, deleted, modified],
             non_rust_added: 0,
@@ -1207,6 +1201,24 @@ mod tests {
                 qs.items.iter().all(|item| item.change_type.is_none()),
                 "{aggregation:?} rows must not carry a file change type"
             );
+        }
+    }
+
+    #[test]
+    fn test_diff_file_count_comes_from_result_not_selected_rows() {
+        let mut result = sample_diff_result_two_files();
+        result.files.clear();
+        result.crates[0].files.clear();
+
+        for aggregation in [Aggregation::Total, Aggregation::ByCrate] {
+            let qs = DiffQuerySet::from_result(
+                &result,
+                aggregation,
+                LineTypes::everything(),
+                Ordering::default(),
+            );
+
+            assert_eq!(qs.file_count, 2, "{aggregation:?}");
         }
     }
 
