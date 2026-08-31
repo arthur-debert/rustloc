@@ -71,8 +71,13 @@ path filters.
 Each commit is compared with its first parent. Merge commits use the same
 comparison. A selected root commit is compared with an empty tree.
 
-Rows appear newest-first when the user does not provide `--ordering`. Explicit
-ordering uses the existing diff rules: label ordering compares complete row
+When the user does not provide `--ordering`, rows appear in the order
+`git rev-list <range>` emits: every commit precedes its parents, and commits
+the parent constraint does not relate are ordered by descending commit
+timestamp with Git's own tie-break. Delegating to that traversal makes the
+default deterministic for a given repository, including around merges and
+equal timestamps. `--ordering` remains the opt-in override and uses the
+existing diff rules: label ordering compares complete row
 labels, while numeric ordering compares net changes. Predicates filter commit
 rows by their net values, and `--top` runs after filtering and ordering.
 
@@ -89,9 +94,11 @@ whitespace normalized to spaces. A missing subject appears as `(no subject)`.
 Structured formats retain the complete label. Human tables preserve the hash
 and following space, then use the remaining label-column width for the start of
 the subject. Long subjects truncate at the end with an ellipsis. Truncation
-uses terminal display width and does not split a UTF-8 character. Rustloc
-renders commit text as plain data, so markup-like text in a subject cannot
-introduce table styling.
+uses terminal display width and does not split a UTF-8 character. Human
+rendering treats commit text as plain data: rustloc escapes subjects before
+they reach the semantic-markup renderer, so every `[` and `]` sequence —
+including a valid semantic tag name such as `[bold]` — appears literally in
+the table and cannot introduce styling.
 
 The total row sums all selected commit rows before predicates or `--top` are
 applied. It therefore measures commit churn, not only the difference between
@@ -112,8 +119,8 @@ item per commit. CSV contains one row per commit followed by the existing
 
 1. As a developer, I want one row per commit in a revision range so that I can
    see when line-count changes entered the history.
-2. As a reviewer, I want commit rows ordered like `git log` so that I can read
-   recent changes first without requesting an explicit sort.
+2. As a reviewer, I want commit rows in Git's default traversal order so that
+   I can read recent changes first without requesting an explicit sort.
 3. As a script author, I want complete labels and numeric values in structured
    output so that terminal truncation does not discard data.
 4. As a user who supplied incompatible options, I want a usage error before
@@ -131,8 +138,9 @@ item per commit. CSV contains one row per commit followed by the existing
 - Long histories can repeat expensive repository-state analysis. The
   implementation should reuse analysis for repository trees that occur in
   adjacent comparisons.
-- Commit subjects are untrusted text and must not be interpreted as formatting
-  markup.
+- Commit subjects are untrusted text. The human renderer resolves semantic
+  `[tag]` markup, and labels are not escaped today, so the implementation must
+  add the escaping step rather than assume subjects pass through inertly.
 
 ## Cross-Cutting Concerns
 
@@ -151,14 +159,16 @@ single-revision, and two-positional-revision selection. They cover diverged
 histories, merge commits, roots, empty commits, missing shallow-history parents,
 and commits whose selected statistics are zero.
 
-Query tests verify newest-first default order, explicit label and numeric
+Query tests verify the default traversal order — including a merge history and
+commits with equal timestamps — explicit label and numeric
 ordering, predicates followed by `--top`, churn totals, distinct file counts,
 and accumulated skipped changes.
 
 Pipeline tests verify option conflicts, the required revision, human
 `Commit`/`commits` wording, all structured formats, and labels containing long
-ASCII text, CJK characters, emoji, and markup-like text. Existing approved
-fixtures must remain unchanged.
+ASCII text, CJK characters, emoji, and bracketed text. A subject containing a
+valid semantic tag name must render its brackets literally with no styling
+applied. Existing approved fixtures must remain unchanged.
 
 The completed implementation passes:
 
