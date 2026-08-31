@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## 0.25.0 - 2026-08-31
+
 - Make shared query options behave consistently across count, diff, and commit. Count and diff now share a report structure, and diff totals report correct changed-file counts for every grouping mode.
 
 ## 0.24.0 - 2026-08-31
