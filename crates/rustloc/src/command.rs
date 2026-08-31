@@ -199,8 +199,11 @@ pub struct QueryRequest {
     /// canonical response always carries complete counts, so ordering and
     /// predicates always see real numbers.
     pub line_types: LineTypes,
-    /// Sort field and direction.
-    pub ordering: Ordering,
+    /// Sort field and direction. `None` means the user supplied no
+    /// `--ordering`; orchestration decides what an absent ordering means —
+    /// label-ascending everywhere except `--by-commit`, whose rows default to
+    /// git's traversal order.
+    pub ordering: Option<Ordering>,
     /// Truncate to N rows after sorting.
     pub top: Option<usize>,
     /// Threshold filters from the `--<field>-<op> N` grid, AND-combined.
@@ -220,10 +223,9 @@ impl QueryRequest {
             line_types: line_types_from_matches(matches),
             // clap already validated this via `parse_ordering`, so an absent
             // value means "not supplied", never "supplied but unparseable".
-            ordering: matches
-                .get_one::<Ordering>("ordering")
-                .copied()
-                .unwrap_or_default(),
+            // The absence is preserved: `--by-commit` gives it a different
+            // default than every other aggregation.
+            ordering: matches.get_one::<Ordering>("ordering").copied(),
             top: matches.get_one::<usize>("top").copied(),
             predicates: crate::filter_args::extract(matches),
         })
@@ -271,20 +273,40 @@ pub struct DiffRequest {
 
 impl DiffRequest {
     /// Convert `matches` into a typed diff request.
+    ///
+    /// `--by-commit` is a diff-only aggregation, so it is read here rather
+    /// than in the shared [`QueryRequest`] conversion. Clap already enforces
+    /// its conflicts with the other `--by-*` flags and `--staged`; what clap
+    /// cannot express — a working tree contains no commits to enumerate, so
+    /// the flag needs a revision — fails here as a usage error before any
+    /// repository work.
     pub fn from_matches(matches: &ArgMatches) -> Result<Self, anyhow::Error> {
         let repo = matches
             .get_one::<String>("path")
             .map(|s| s.as_str())
             .unwrap_or(".");
 
+        let endpoints = DiffEndpoints::resolve(
+            matches.get_one::<String>("from"),
+            matches.get_one::<String>("to"),
+            matches.get_flag("staged"),
+        )?;
+
+        let mut query = QueryRequest::from_matches(matches)?;
+        if matches.get_flag("by_commit") {
+            if !matches!(endpoints, DiffEndpoints::Revspec(_)) {
+                return Err(anyhow::anyhow!(
+                    "--by-commit requires a revision (e.g. `rustloc diff HEAD~5..HEAD --by-commit`): \
+                     a working tree contains no commits to enumerate"
+                ));
+            }
+            query.aggregation = Aggregation::ByCommit;
+        }
+
         Ok(Self {
             repo: PathBuf::from(repo),
-            endpoints: DiffEndpoints::resolve(
-                matches.get_one::<String>("from"),
-                matches.get_one::<String>("to"),
-                matches.get_flag("staged"),
-            )?,
-            query: QueryRequest::from_matches(matches)?,
+            endpoints,
+            query,
         })
     }
 
@@ -317,6 +339,10 @@ impl DiffRequest {
 
 /// The `--by-*` flags are mutually exclusive (clap enforces it), so the first
 /// set flag wins and no flag means totals only.
+///
+/// `--by-commit` is absent on purpose: it exists only on the diff grammar, so
+/// it is read in [`DiffRequest::from_matches`] rather than probed here for
+/// commands that never define it.
 fn aggregation_from_matches(matches: &ArgMatches) -> Aggregation {
     if matches.get_flag("by_file") {
         Aggregation::ByFile

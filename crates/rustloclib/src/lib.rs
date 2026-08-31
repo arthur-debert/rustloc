@@ -49,13 +49,15 @@
 //! - [`gather_stats`]: Parse a single file into [`Locs`]
 //! - [`count_workspace`]: Count all files, returns [`CountResult`]
 //! - [`diff_revspec`]: Compare commits via a git revspec string, returns [`DiffResult`]
+//! - [`diff_by_commit`]: Diff every commit a revspec selects against its first
+//!   parent, returns a [`DiffResult`] with per-commit records
 //!
 //! ### Stage 3: Query Processing ([`query`])
 //!
 //! Filter, aggregate, sort, and slice the collected data:
 //! - [`ReportQuerySet`]: Processed data ready for display, specialized as
 //!   [`CountQuerySet`] or [`DiffQuerySet`]
-//! - [`Aggregation`]: Total, ByCrate, ByModule, ByFile
+//! - [`Aggregation`]: Total, ByCrate, ByModule, ByFile, ByCommit (diff only)
 //! - [`LineTypes`]: Which line types to include in output
 //! - [`Ordering`]: How to sort results
 //! - [`Predicate`] (built from [`Field`] + [`Op`]): Threshold filters,
@@ -149,10 +151,11 @@ pub mod error;
 // Re-export all public types at crate root for convenience
 pub use data::{
     available_languages, count_directory, count_directory_with_options, count_file,
-    count_file_with_filter, count_workspace, default_languages, diff_revspec, diff_workdir,
-    gather_stats, gather_stats_for_path, sat_sub_u64, CountOptions, CountResult, CrateDiffStats,
-    CrateStats, DiffOptions, DiffResult, FileChangeType, FileDiffStats, FileStats, LanguageName,
-    LanguageSelection, Locs, LocsDiff, ModuleStats, VisitorContext, WorkdirDiffMode,
+    count_file_with_filter, count_workspace, default_languages, diff_by_commit, diff_revspec,
+    diff_workdir, gather_stats, gather_stats_for_path, sat_sub_u64, CommitDiffStats, CountOptions,
+    CountResult, CrateDiffStats, CrateStats, DiffOptions, DiffResult, FileChangeType,
+    FileDiffStats, FileStats, LanguageName, LanguageSelection, Locs, LocsDiff, ModuleStats,
+    VisitorContext, WorkdirDiffMode,
 };
 pub use error::RustlocError;
 pub use query::{

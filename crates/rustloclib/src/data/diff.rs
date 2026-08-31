@@ -4,8 +4,10 @@
 //! - Two git commits via a revspec string (using [`diff_revspec`]) — accepts
 //!   a single revspec like `<rev>`, `<a>..<b>`, or `<a>...<b>`.
 //! - Working directory and HEAD or index (using [`diff_workdir`]).
+//! - Every commit a revspec selects and its first parent (using
+//!   [`diff_by_commit`]), one [`CommitDiffStats`] record per commit.
 //!
-//! Both entry points return a [`DiffResult`], which downstream code lifts
+//! All entry points return a [`DiffResult`], which downstream code lifts
 //! into a [`crate::query::DiffQuerySet`] for sorting, truncation, and
 //! threshold filtering. Threshold predicates on a diff query set evaluate
 //! against the net change per row (added − removed).
@@ -216,6 +218,36 @@ impl CrateDiffStats {
     }
 }
 
+/// Diff statistics for one selected commit, compared with its first parent.
+///
+/// Produced only by [`diff_by_commit`]. The identity fields are already in
+/// the shape the canonical per-commit row label needs; callers join them as
+/// `"<hash> <subject>"` and treat the result as plain data, never as markup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitDiffStats {
+    /// First eight lowercase hexadecimal characters of the commit ID.
+    pub hash: String,
+    /// The commit subject: the message's first logical line with
+    /// line-breaking whitespace normalized to spaces, `(no subject)` when
+    /// the message has none. See [`commit_subject`].
+    pub subject: String,
+    /// LOC diff of this commit against its first parent (the empty tree for
+    /// a root commit). Zero for empty commits and commits whose changes the
+    /// active filters skip — such commits still get a record.
+    pub diff: LocsDiff,
+}
+
+impl CommitDiffStats {
+    /// Return a filtered copy with only the specified line types included.
+    pub fn filter(&self, types: LineTypes) -> Self {
+        Self {
+            hash: self.hash.clone(),
+            subject: self.subject.clone(),
+            diff: self.diff.filter(types),
+        }
+    }
+}
+
 /// Result of a diff operation between two commits.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiffResult {
@@ -226,13 +258,24 @@ pub struct DiffResult {
     /// Target commit (to).
     pub to_commit: String,
     /// Total diff across all files.
+    ///
+    /// For [`diff_by_commit`] this is the sum of every per-commit diff —
+    /// commit *churn*, not the endpoint tree difference: a line added in one
+    /// selected commit and removed in another counts on both sides, and a
+    /// merge commit's first-parent comparison can repeat changes its merged
+    /// branch's commits also report.
     pub total: LocsDiff,
-    /// Total number of analyzed source files changed.
+    /// Total number of analyzed source files changed. For [`diff_by_commit`],
+    /// the number of *distinct* analyzed files the selected commits touch.
     pub file_count: usize,
     /// Per-crate diff breakdown.
     pub crates: Vec<CrateDiffStats>,
     /// Per-file diff (optional, for detailed output).
     pub files: Vec<FileDiffStats>,
+    /// Per-commit diff breakdown, in `git rev-list` traversal order.
+    /// Populated only by [`diff_by_commit`]; empty for every other entry point.
+    #[serde(default)]
+    pub commits: Vec<CommitDiffStats>,
     /// Lines added in files skipped by the active language selection.
     #[serde(default)]
     pub non_rust_added: u64,
@@ -252,6 +295,7 @@ impl DiffResult {
             file_count: self.file_count,
             crates: self.crates.iter().map(|c| c.filter(types)).collect(),
             files: self.files.iter().map(|f| f.filter(types)).collect(),
+            commits: self.commits.iter().map(|c| c.filter(types)).collect(),
             non_rust_added: self.non_rust_added,
             non_rust_removed: self.non_rust_removed,
         }
@@ -485,6 +529,7 @@ pub fn diff_workdir(
         file_count,
         crates,
         files,
+        commits: Vec::new(),
         non_rust_added,
         non_rust_removed,
     };
@@ -1005,11 +1050,294 @@ pub fn diff_revspec(
         file_count,
         crates,
         files,
+        commits: Vec::new(),
         non_rust_added,
         non_rust_removed,
     };
 
     Ok(result.filter(options.line_types))
+}
+
+/// Compute the LOC diff of every commit a revspec selects, one record per
+/// commit, each compared with its first parent.
+///
+/// The revspec accepts the same forms as [`diff_revspec`] and selects commits
+/// the way `git diff` reads the corresponding endpoints:
+///
+/// - `<a>..<b>` — commits reachable from `<b>` but not from `<a>`
+/// - `<a>...<b>` — commits from merge-base(`<a>`, `<b>`) through `<b>`
+///   (following `git diff a...b`, not `git log`'s symmetric selection)
+/// - `<rev>` — commits reachable from `HEAD` but not from `<rev>`
+///
+/// The left endpoint is excluded. Every selected commit produces a
+/// [`CommitDiffStats`] record — merge commits (still a first-parent
+/// comparison), root commits (compared with the empty tree), empty commits,
+/// and commits whose changes the language/glob/crate filters skip (a zero
+/// record). Records arrive in `git rev-list` traversal order: every commit
+/// precedes its parents, otherwise descending commit timestamp with git's
+/// own tie-break.
+///
+/// [`DiffResult::total`] sums the per-commit diffs (churn, not the endpoint
+/// difference), [`DiffResult::file_count`] counts distinct analyzed files the
+/// selected commits touch, and the skipped-change counters accumulate across
+/// commits. `options.aggregation` is ignored: this entry point always fills
+/// [`DiffResult::commits`] and leaves the crate/file breakdowns empty.
+///
+/// Project classification is cached per tree object, so adjacent comparisons
+/// that share a tree (the common linear-history case) classify it once.
+///
+/// Like [`diff_revspec`], revision resolution and commit enumeration shell
+/// out to git, so this requires `git` on `PATH`. A selected commit whose
+/// first parent object is missing (a shallow clone's history boundary) is an
+/// error, never a silently dropped row.
+pub fn diff_by_commit(
+    repo_path: impl AsRef<Path>,
+    revspec: &str,
+    options: DiffOptions,
+) -> Result<DiffResult> {
+    use std::collections::HashSet;
+    use std::rc::Rc;
+
+    let repo_path = repo_path.as_ref();
+
+    let repo = gix::discover(repo_path)
+        .map_err(|e| RustlocError::GitError(format!("Failed to discover git repository: {}", e)))?;
+
+    let repo_root = repo
+        .workdir()
+        .ok_or_else(|| RustlocError::GitError("Repository has no work directory".to_string()))?
+        .to_path_buf();
+
+    // The same endpoint resolution as diff_revspec, so `a...b` excludes the
+    // merge base git already computed and a single rev is measured to HEAD.
+    let resolved = resolve_revspec(&repo, repo_path, revspec)?;
+    let from_id = resolved.from.id().detach();
+    let to_id = resolved.to.id().detach();
+    let commit_ids = git_rev_list(repo_path, &to_id, &from_id)?;
+
+    let workspace = WorkspaceInfo::discover(&repo_root).ok();
+    let filtered_workspace = workspace.as_ref().map(|ws| {
+        if options.crate_filter.is_empty() {
+            ws.clone()
+        } else {
+            let names: Vec<&str> = options.crate_filter.iter().map(|s| s.as_str()).collect();
+            ws.filter_by_names(&names)
+        }
+    });
+
+    // Classification per unique tree: adjacent comparisons share trees (a
+    // commit's first-parent tree is usually the next record's own tree), so
+    // the cache is what keeps runtime proportional to unique trees rather
+    // than to two full classifications per row.
+    let mut classifications: HashMap<gix::ObjectId, Rc<ProjectClassification>> = HashMap::new();
+    let mut classify_cached = |repo: &gix::Repository, tree: &gix::Tree<'_>| {
+        classifications
+            .entry(tree.id)
+            .or_insert_with(|| Rc::new(classify_tree(repo, tree)))
+            .clone()
+    };
+
+    let mut total = LocsDiff::new();
+    let mut touched: HashSet<PathBuf> = HashSet::new();
+    let mut non_rust_added: u64 = 0;
+    let mut non_rust_removed: u64 = 0;
+    let mut commits = Vec::with_capacity(commit_ids.len());
+
+    for oid in commit_ids {
+        let commit = peel_oid_to_commit(&repo, oid, revspec)?;
+        let hash = short_hex(&oid);
+        let subject = commit_subject(&String::from_utf8_lossy(commit.message_raw_sloppy()));
+
+        let to_tree = commit.tree().map_err(|e| {
+            RustlocError::GitError(format!("Failed to get tree for commit {}: {}", hash, e))
+        })?;
+        // First-parent comparison for every commit, merges included; a root
+        // commit diffs against the empty tree. A recorded parent whose object
+        // is absent (a shallow clone's boundary) must error, not skip: the
+        // selection already includes this commit and a silent omission would
+        // misreport the range.
+        let from_tree = match commit.parent_ids().next() {
+            Some(parent_id) => {
+                let parent_oid = parent_id.detach();
+                repo.find_object(parent_oid)
+                    .map_err(|e| {
+                        RustlocError::GitError(format!(
+                            "Failed to read first parent {} of commit {}: {} \
+                             (missing parents can come from a shallow clone)",
+                            short_hex(&parent_oid),
+                            hash,
+                            e
+                        ))
+                    })?
+                    .peel_to_commit()
+                    .map_err(|e| {
+                        RustlocError::GitError(format!(
+                            "First parent {} of commit {} is not a commit: {}",
+                            short_hex(&parent_oid),
+                            hash,
+                            e
+                        ))
+                    })?
+                    .tree()
+                    .map_err(|e| {
+                        RustlocError::GitError(format!(
+                            "Failed to get tree for parent of commit {}: {}",
+                            hash, e
+                        ))
+                    })?
+            }
+            None => repo.empty_tree(),
+        };
+
+        let from_project = classify_cached(&repo, &from_tree);
+        let to_project = classify_cached(&repo, &to_tree);
+
+        let mut commit_diff = LocsDiff::new();
+        for change in compute_tree_diff(&from_tree, &to_tree)? {
+            let path = change.path.clone();
+
+            // Track source lines outside the command's active language set.
+            if !is_analyzed_source_path(&path, &options.file_filter) {
+                let old_lines = change
+                    .old_oid
+                    .and_then(|oid| read_blob(&repo, oid).ok().map(|c| count_lines(&c)))
+                    .unwrap_or(0);
+                let new_lines = change
+                    .new_oid
+                    .and_then(|oid| read_blob(&repo, oid).ok().map(|c| count_lines(&c)))
+                    .unwrap_or(0);
+                non_rust_added += new_lines.saturating_sub(old_lines);
+                non_rust_removed += old_lines.saturating_sub(new_lines);
+                continue;
+            }
+
+            if !options.file_filter.matches(&path) {
+                continue;
+            }
+
+            let crate_info = filtered_workspace
+                .as_ref()
+                .and_then(|ws| ws.crate_for_path(&path));
+            if !options.crate_filter.is_empty() && crate_info.is_none() {
+                continue;
+            }
+
+            let file_diff = compute_file_diff(&repo, &change, &path, &from_project, &to_project)?;
+            commit_diff += file_diff.diff;
+            touched.insert(path);
+        }
+
+        total += commit_diff;
+        commits.push(CommitDiffStats {
+            hash,
+            subject,
+            diff: commit_diff,
+        });
+    }
+
+    let result = DiffResult {
+        root: repo_root,
+        from_commit: resolved.from_label,
+        to_commit: resolved.to_label,
+        total,
+        file_count: touched.len(),
+        crates: Vec::new(),
+        files: Vec::new(),
+        commits,
+        non_rust_added,
+        non_rust_removed,
+    };
+
+    Ok(result.filter(options.line_types))
+}
+
+/// The commit subject, following `git log --format=%s`: the lines of the
+/// message's first paragraph (leading blank lines skipped, ended by the next
+/// blank line) joined by single spaces. An all-whitespace message yields
+/// `(no subject)` so a row label never collapses to a bare hash.
+fn commit_subject(message: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for line in message.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            if parts.is_empty() {
+                continue;
+            }
+            break;
+        }
+        parts.push(line);
+    }
+
+    if parts.is_empty() {
+        "(no subject)".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
+/// Run `git -C <repo_path> rev-list <to> ^<from>` and return the selected
+/// commit ids in git's own traversal order.
+///
+/// The order is the feature's default row order, so it is delegated to git
+/// rather than re-implemented: children precede parents, otherwise commits
+/// sort by descending commit timestamp with git's tie-break.
+///
+/// Unlike [`git_rev_parse_with`], empty stdout is a valid result — a range
+/// whose endpoints coincide selects no commits.
+fn git_rev_list(
+    repo_path: &Path,
+    to: &gix::ObjectId,
+    from: &gix::ObjectId,
+) -> Result<Vec<gix::ObjectId>> {
+    let output = match Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .arg("rev-list")
+        .arg(to.to_string())
+        .arg(format!("^{}", from))
+        .stdin(Stdio::null())
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            return Err(rev_list_error(to, from, "git is not on PATH"));
+        }
+        Err(err) => return Err(rev_list_error(to, from, &err.to_string())),
+    };
+
+    if !output.status.success() {
+        return Err(rev_list_error(
+            to,
+            from,
+            &String::from_utf8_lossy(&output.stderr),
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut ids = Vec::new();
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        ids.push(gix::ObjectId::from_hex(line.as_bytes()).map_err(|e| {
+            RustlocError::GitError(format!("Could not parse git rev-list object id: {e}"))
+        })?);
+    }
+    Ok(ids)
+}
+
+/// One wrapper line naming the failed enumeration, then git's error text
+/// un-rephrased — the same shape as [`revspec_resolve_error`].
+fn rev_list_error(to: &gix::ObjectId, from: &gix::ObjectId, detail: &str) -> RustlocError {
+    let detail = detail.trim_end();
+    let range = format!("{}..{}", short_hex(from), short_hex(to));
+    let msg = if detail.is_empty() {
+        format!("Could not enumerate commits in '{range}'.")
+    } else {
+        format!("Could not enumerate commits in '{range}'.\n{detail}")
+    };
+    RustlocError::GitError(msg)
 }
 
 /// Internal representation of a file change
@@ -2361,6 +2689,19 @@ mod tests {
                     removed: Locs::default(),
                 },
             }],
+            commits: vec![CommitDiffStats {
+                hash: "0123abcd".to_string(),
+                subject: "add docs".to_string(),
+                diff: LocsDiff {
+                    added: Locs {
+                        code: 10,
+                        docs: 4,
+                        total: 14,
+                        ..Locs::default()
+                    },
+                    removed: Locs::default(),
+                },
+            }],
             non_rust_added: 7,
             non_rust_removed: 3,
         };
@@ -2376,6 +2717,11 @@ mod tests {
         assert_eq!(filtered.total.added.docs, 0);
         assert_eq!(filtered.files[0].diff.added.docs, 0);
         assert_eq!(filtered.crates.len(), 1);
+        // Commit records filter like every other breakdown, keeping identity.
+        assert_eq!(filtered.commits[0].hash, "0123abcd");
+        assert_eq!(filtered.commits[0].subject, "add docs");
+        assert_eq!(filtered.commits[0].diff.added.code, 10);
+        assert_eq!(filtered.commits[0].diff.added.docs, 0);
     }
 
     #[test]
@@ -2401,6 +2747,36 @@ mod tests {
         let cfg = FilterConfig::new();
         let _opts = DiffOptions::new().filter(cfg);
         // Just exercising the builder; FilterConfig has no PartialEq.
+    }
+
+    #[test]
+    fn commit_subject_takes_the_first_paragraph_and_normalizes_line_breaks() {
+        // One-line subject, body ignored.
+        assert_eq!(commit_subject("Add feature\n\nBody text.\n"), "Add feature");
+        // A wrapped title (no blank line yet) folds onto one line, like %s.
+        assert_eq!(
+            commit_subject("Add a very\nlong feature\n\nBody.\n"),
+            "Add a very long feature"
+        );
+        // CRLF line breaks normalize the same way.
+        assert_eq!(
+            commit_subject("Add\r\nfeature\r\n\r\nBody\r\n"),
+            "Add feature"
+        );
+        // Leading blank lines are skipped, not treated as an empty subject.
+        assert_eq!(commit_subject("\n\nLate subject\n"), "Late subject");
+    }
+
+    #[test]
+    fn commit_subject_falls_back_for_missing_subjects() {
+        assert_eq!(commit_subject(""), "(no subject)");
+        assert_eq!(commit_subject("\n\n \n"), "(no subject)");
+    }
+
+    #[test]
+    fn commit_subject_keeps_markup_lookalikes_verbatim() {
+        // Escaping is the renderer's job; the library records plain data.
+        assert_eq!(commit_subject("[bold] not markup\n"), "[bold] not markup");
     }
 
     #[test]

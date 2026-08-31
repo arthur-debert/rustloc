@@ -10,8 +10,10 @@
 //! A QuerySet is where this library's pipeline ends: it sits between raw
 //! counting/diff results and whatever presentation the caller builds.
 //! It represents data that has been:
-//! - Aggregated to the requested level (crate, module, file)
-//! - Sorted according to the ordering preference
+//! - Aggregated to the requested level (crate, module, file, or — for diffs —
+//!   commit)
+//! - Sorted according to the ordering preference (diff construction can also
+//!   keep the result's own row order; see [`DiffQuerySet::from_result`])
 //!
 //! ## Line types are a *view descriptor*, not a data filter
 //!
@@ -70,8 +72,9 @@ use super::options::{Aggregation, Field, LineTypes, OrderBy, OrderDirection, Ord
 /// A single item in a query set (one row of data before string formatting).
 ///
 /// [`Self::change_type`] is populated only for `--by-file` diff rows. Count
-/// items and crate/module/total aggregations leave it unset; it is omitted
-/// from serialization so count JSON does not grow a `change_type` field.
+/// items and crate/module/commit/total aggregations leave it unset; it is
+/// omitted from serialization so count JSON does not grow a `change_type`
+/// field.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QueryItem<T> {
     /// Row label (file path, crate name, module name, etc.)
@@ -292,9 +295,15 @@ fn relative_path_label(path: &std::path::Path, root: &std::path::Path) -> String
 impl ReportQuerySet<LocsDiff, DiffReportMetadata> {
     /// Create a QuerySet from a DiffResult.
     ///
-    /// Applies aggregation level and ordering. `line_types` is recorded as the
-    /// requested *view* and does not filter the data here: `items` and `total`
-    /// carry whatever `result` carried.
+    /// Applies aggregation level and ordering. `ordering` is optional because
+    /// diff rows have a meaningful order of their own: `None` keeps the order
+    /// the result carries — for [`Aggregation::ByCommit`] that is `git
+    /// rev-list` traversal order, the feature's default — while `Some`
+    /// sorts rows by the explicit request (label ordering compares complete
+    /// row labels, numeric ordering compares net changes).
+    ///
+    /// `line_types` is recorded as the requested *view* and does not filter
+    /// the data here: `items` and `total` carry whatever `result` carried.
     ///
     /// So they are complete only if `result` was diffed with
     /// [`LineTypes::everything`] — [`DiffOptions::line_types`] zeroes disabled
@@ -307,9 +316,9 @@ impl ReportQuerySet<LocsDiff, DiffReportMetadata> {
         result: &DiffResult,
         aggregation: Aggregation,
         line_types: LineTypes,
-        ordering: Ordering,
+        ordering: Option<Ordering>,
     ) -> Self {
-        let items = build_diff_items(result, &aggregation, &ordering);
+        let items = build_diff_items(result, &aggregation, ordering.as_ref());
         let total = result.total;
         let total_items = items.len();
 
@@ -372,7 +381,9 @@ fn build_count_items(
     ordering: &Ordering,
 ) -> Vec<QueryItem<Locs>> {
     let mut items: Vec<(String, Locs)> = match aggregation {
-        Aggregation::Total => return vec![],
+        // Counts have no commits; a by-commit count degrades to totals-only
+        // rather than inventing rows.
+        Aggregation::Total | Aggregation::ByCommit => return vec![],
         Aggregation::ByCrate => result
             .crates
             .iter()
@@ -449,16 +460,26 @@ fn diff_sort_key(diff: &LocsDiff, order_by: &OrderBy) -> i64 {
 /// Stats are carried through complete — line-type selection is a view concern
 /// resolved at render time, so sorting here always sees real values.
 ///
+/// `ordering: None` keeps the result's own row order (for `ByCommit`, git's
+/// traversal order); `Some` sorts as requested.
+///
 /// File-level items keep the [`FileChangeType`] the library already computed.
-/// Crate, module, and total rows have no single-file status, so they leave
+/// Commit rows carry the complete `"<hash> <subject>"` label as plain data —
+/// escaping any markup lookalikes in it is a human-renderer concern. Crate,
+/// module, commit, and total rows have no single-file status, so they leave
 /// [`QueryItem::change_type`] unset.
 fn build_diff_items(
     result: &DiffResult,
     aggregation: &Aggregation,
-    ordering: &Ordering,
+    ordering: Option<&Ordering>,
 ) -> Vec<QueryItem<LocsDiff>> {
     let mut items: Vec<(String, LocsDiff, Option<FileChangeType>)> = match aggregation {
         Aggregation::Total => return vec![],
+        Aggregation::ByCommit => result
+            .commits
+            .iter()
+            .map(|c| (format!("{} {}", c.hash, c.subject), c.diff, None))
+            .collect(),
         Aggregation::ByCrate => result
             .crates
             .iter()
@@ -525,23 +546,25 @@ fn build_diff_items(
             .collect(),
     };
 
-    // Sort based on ordering
-    match ordering.by {
-        OrderBy::Label => {
-            items.sort_by(|a, b| a.0.cmp(&b.0));
+    // Sort only on an explicit request; None keeps the result's own order.
+    if let Some(ordering) = ordering {
+        match ordering.by {
+            OrderBy::Label => {
+                items.sort_by(|a, b| a.0.cmp(&b.0));
+            }
+            _ => {
+                items.sort_by(|a, b| {
+                    let key_a = diff_sort_key(&a.1, &ordering.by);
+                    let key_b = diff_sort_key(&b.1, &ordering.by);
+                    key_a.cmp(&key_b)
+                });
+            }
         }
-        _ => {
-            items.sort_by(|a, b| {
-                let key_a = diff_sort_key(&a.1, &ordering.by);
-                let key_b = diff_sort_key(&b.1, &ordering.by);
-                key_a.cmp(&key_b)
-            });
-        }
-    }
 
-    // Reverse if descending
-    if ordering.direction == OrderDirection::Descending {
-        items.reverse();
+        // Reverse if descending
+        if ordering.direction == OrderDirection::Descending {
+            items.reverse();
+        }
     }
 
     // Map to QueryItems
@@ -1064,6 +1087,7 @@ mod tests {
                 files: vec![big_file.clone(), small_file.clone()],
             }],
             files: vec![big_file, small_file],
+            commits: vec![],
             non_rust_added: 0,
             non_rust_removed: 0,
         }
@@ -1078,7 +1102,7 @@ mod tests {
             &result,
             Aggregation::ByFile,
             LineTypes::everything(),
-            Ordering::default(),
+            Some(Ordering::default()),
         )
         .filter(&[Predicate::new(Field::Code, Op::Gt, 0)]);
 
@@ -1102,7 +1126,7 @@ mod tests {
             &result,
             Aggregation::ByFile,
             LineTypes::everything(),
-            Ordering::default(),
+            Some(Ordering::default()),
         )
         .filter(&[Predicate::new(Field::Code, Op::Lt, 0)]);
 
@@ -1117,7 +1141,7 @@ mod tests {
             &result,
             Aggregation::ByFile,
             LineTypes::everything(),
-            Ordering::default(),
+            Some(Ordering::default()),
         )
         .filter(&[Predicate::new(Field::Code, Op::Gte, 100)]);
 
@@ -1162,6 +1186,7 @@ mod tests {
             file_count: 3,
             crates: vec![],
             files: vec![added, deleted, modified],
+            commits: vec![],
             non_rust_added: 0,
             non_rust_removed: 0,
         }
@@ -1174,7 +1199,7 @@ mod tests {
             &result,
             Aggregation::ByFile,
             LineTypes::everything(),
-            Ordering::default(),
+            Some(Ordering::default()),
         );
 
         let by_label: std::collections::HashMap<_, _> = qs
@@ -1195,7 +1220,7 @@ mod tests {
                 &result,
                 aggregation,
                 LineTypes::everything(),
-                Ordering::default(),
+                Some(Ordering::default()),
             );
             assert!(
                 qs.items.iter().all(|item| item.change_type.is_none()),
@@ -1215,7 +1240,7 @@ mod tests {
                 &result,
                 aggregation,
                 LineTypes::everything(),
-                Ordering::default(),
+                Some(Ordering::default()),
             );
 
             assert_eq!(qs.file_count, 2, "{aggregation:?}");
@@ -1232,5 +1257,176 @@ mod tests {
             Ordering::default(),
         );
         assert!(qs.items.iter().all(|item| item.change_type.is_none()));
+    }
+
+    #[test]
+    fn test_count_by_commit_has_no_rows() {
+        // Counts have no commits; the aggregation degrades to totals-only.
+        let result = sample_count_result();
+        let qs = CountQuerySet::from_result(
+            &result,
+            Aggregation::ByCommit,
+            LineTypes::everything(),
+            Ordering::default(),
+        );
+        assert!(qs.items.is_empty());
+        assert_eq!(qs.total.code, 200);
+    }
+
+    /// Three commits in traversal order (children first), with deliberately
+    /// label-unsorted hashes and net values 30/−20/+5 so every ordering mode
+    /// produces a distinct row sequence.
+    fn sample_diff_result_by_commit() -> crate::data::diff::DiffResult {
+        use crate::data::diff::{CommitDiffStats, DiffResult, LocsDiff};
+
+        let commit = |hash: &str, subject: &str, added: u64, removed: u64| CommitDiffStats {
+            hash: hash.to_string(),
+            subject: subject.to_string(),
+            diff: LocsDiff {
+                added: sample_locs(added, 0),
+                removed: sample_locs(removed, 0),
+            },
+        };
+
+        let newest = commit("ffff0003", "newest change", 40, 10);
+        let middle = commit("00000002", "middle change", 5, 25);
+        let oldest = commit("aaaa0001", "oldest change", 5, 0);
+        let total = newest.diff + middle.diff + oldest.diff;
+
+        DiffResult {
+            root: PathBuf::from("/workspace"),
+            from_commit: "base".to_string(),
+            to_commit: "tip".to_string(),
+            total,
+            file_count: 2,
+            crates: vec![],
+            files: vec![],
+            commits: vec![newest, middle, oldest],
+            non_rust_added: 4,
+            non_rust_removed: 1,
+        }
+    }
+
+    fn labels(qs: &DiffQuerySet) -> Vec<&str> {
+        qs.items.iter().map(|i| i.label.as_str()).collect()
+    }
+
+    #[test]
+    fn test_diff_by_commit_default_order_is_the_result_traversal_order() {
+        // `None` means "no explicit --ordering": rows keep git's traversal
+        // order, not a label sort — the hashes here would sort differently.
+        let result = sample_diff_result_by_commit();
+        let qs = DiffQuerySet::from_result(
+            &result,
+            Aggregation::ByCommit,
+            LineTypes::everything(),
+            None,
+        );
+
+        assert_eq!(
+            labels(&qs),
+            vec![
+                "ffff0003 newest change",
+                "00000002 middle change",
+                "aaaa0001 oldest change",
+            ]
+        );
+        assert!(qs.items.iter().all(|item| item.change_type.is_none()));
+    }
+
+    #[test]
+    fn test_diff_by_commit_label_ordering_sorts_complete_labels() {
+        let result = sample_diff_result_by_commit();
+        let qs = DiffQuerySet::from_result(
+            &result,
+            Aggregation::ByCommit,
+            LineTypes::everything(),
+            Some(Ordering::default()), // label ascending
+        );
+
+        assert_eq!(
+            labels(&qs),
+            vec![
+                "00000002 middle change",
+                "aaaa0001 oldest change",
+                "ffff0003 newest change",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_diff_by_commit_numeric_ordering_uses_net_change() {
+        // Nets: newest +30, middle −20, oldest +5. Descending by code.
+        let result = sample_diff_result_by_commit();
+        let qs = DiffQuerySet::from_result(
+            &result,
+            Aggregation::ByCommit,
+            LineTypes::everything(),
+            Some(Ordering::by_code()),
+        );
+
+        assert_eq!(
+            labels(&qs),
+            vec![
+                "ffff0003 newest change",
+                "aaaa0001 oldest change",
+                "00000002 middle change",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_diff_by_commit_predicates_then_top_narrow_commit_rows() {
+        // --code-gt 0 drops the net-negative middle commit; --top 1 then keeps
+        // the biggest of the survivors. Totals still describe the full set.
+        let result = sample_diff_result_by_commit();
+        let qs = DiffQuerySet::from_result(
+            &result,
+            Aggregation::ByCommit,
+            LineTypes::everything(),
+            Some(Ordering::by_code()),
+        )
+        .filter(&[Predicate::new(Field::Code, Op::Gt, 0)])
+        .top(1);
+
+        assert_eq!(labels(&qs), vec!["ffff0003 newest change"]);
+        assert_eq!(qs.total_items, 3);
+        assert!(qs.top_applied);
+        assert_eq!(qs.total.added.code, 50);
+        assert_eq!(qs.total.removed.code, 35);
+    }
+
+    #[test]
+    fn test_diff_by_commit_carries_churn_metadata_through() {
+        // total is commit churn, file_count the distinct-file count, and the
+        // skipped counters the accumulated values — all straight from the
+        // result, untouched by row construction.
+        let result = sample_diff_result_by_commit();
+        let qs = DiffQuerySet::from_result(
+            &result,
+            Aggregation::ByCommit,
+            LineTypes::everything(),
+            None,
+        );
+
+        assert_eq!(qs.total.added.code, 50);
+        assert_eq!(qs.total.removed.code, 35);
+        assert_eq!(qs.file_count, 2);
+        assert_eq!(qs.metadata.non_rust_added, 4);
+        assert_eq!(qs.metadata.non_rust_removed, 1);
+    }
+
+    #[test]
+    fn test_diff_explicit_ordering_matches_the_former_default_for_files() {
+        // The Option is new; Some(default) must behave exactly as the old
+        // always-sorted construction for the existing aggregations.
+        let result = sample_diff_result_two_files();
+        let sorted = DiffQuerySet::from_result(
+            &result,
+            Aggregation::ByFile,
+            LineTypes::everything(),
+            Some(Ordering::default()),
+        );
+        assert_eq!(labels(&sorted), vec!["big.rs", "small.rs"]);
     }
 }

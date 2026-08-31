@@ -1,0 +1,15 @@
+
+Diff: HEAD~3 → HEAD
+
+[header]                 Commit                      Code   Tests    Docs    Total[/header]
+──────────────────────────────────────────────────────────────────────────
+c5569712 Escape [muted] and [bold] brac… [additions]+0[/additions]/[deletions]-2[/deletions]/-2 [additions]+0[/additions]/[deletions]-0[/deletions]/0 [additions]+0[/additions]/[deletions]-0[/deletions]/0 [additions]+0[/additions]/[deletions]-2[/deletions]/-2
+[table_row_odd]3789e4f1 数据处理模块 🎉 widens the lab… [additions]+1[/additions]/[deletions]-0[/deletions]/ 1 [additions]+0[/additions]/[deletions]-0[/deletions]/0 [additions]+0[/additions]/[deletions]-0[/deletions]/0 [additions]+1[/additions]/[deletions]-0[/deletions]/ 1[/table_row_odd]
+4027b5c1 Rework the diff pipeline to st… [additions]+2[/additions]/[deletions]-0[/deletions]/ 2 [additions]+0[/additions]/[deletions]-0[/deletions]/0 [additions]+0[/additions]/[deletions]-0[/deletions]/0 [additions]+2[/additions]/[deletions]-0[/deletions]/ 2
+──────────────────────────────────────────────────────────────────────────
+Total (3 commits)                        [additions]+3[/additions]/[deletions]-2[/deletions]/ 1 [additions]+0[/additions]/[deletions]-0[/deletions]/0 [additions]+0[/additions]/[deletions]-0[/deletions]/0 [additions]+3[/additions]/[deletions]-2[/deletions]/ 1
+
+
+Skipped changes: [additions]+1[/additions] / [deletions]-0[/deletions] / 1 net
+
+[muted](+added / -removed / net)[/muted]

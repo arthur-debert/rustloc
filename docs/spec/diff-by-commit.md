@@ -112,8 +112,9 @@ additions and removals across those commits.
 
 Human output names the label column `Commit` and the total unit `commits`.
 JSON, YAML, and XML identify the aggregation as `ByCommit` and contain one diff
-item per commit. CSV contains one row per commit followed by the existing
-`TOTAL` row.
+item per commit. CSV contains one row per commit, then the existing optional
+`SKIPPED` row when unsupported-file changes were accumulated, then the
+existing `TOTAL` row.
 
 ## User / Agent Stories
 

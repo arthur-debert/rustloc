@@ -17,9 +17,9 @@
 //! the library and is only *called* from here.
 
 use rustloclib::{
-    count_directory_with_options, count_file_with_filter, count_workspace, diff_revspec,
-    diff_workdir, Aggregation, CountOptions, CountQuerySet, CountResult, DiffOptions, DiffQuerySet,
-    LineTypes,
+    count_directory_with_options, count_file_with_filter, count_workspace, diff_by_commit,
+    diff_revspec, diff_workdir, Aggregation, CountOptions, CountQuerySet, CountResult, DiffOptions,
+    DiffQuerySet, LineTypes, Ordering,
 };
 
 use crate::command::{CountPath, CountRequest, DiffEndpoints, DiffRequest, QueryRequest};
@@ -73,7 +73,14 @@ pub fn count(request: &CountRequest) -> Result<CountQuerySet, anyhow::Error> {
     };
 
     Ok(narrow(
-        CountQuerySet::from_result(&result, query.aggregation, query.line_types, query.ordering),
+        CountQuerySet::from_result(
+            &result,
+            query.aggregation,
+            query.line_types,
+            // Counts have no natural row order, so an absent --ordering is
+            // simply the default (label ascending).
+            query.ordering.unwrap_or_default(),
+        ),
         query,
         CountQuerySet::filter,
         CountQuerySet::top,
@@ -82,9 +89,13 @@ pub fn count(request: &CountRequest) -> Result<CountQuerySet, anyhow::Error> {
 
 /// Run a diff and return its canonical response.
 ///
+/// A `ByCommit` aggregation selects the per-commit library entry point; the
+/// parsing boundary guarantees it always arrives with revspec endpoints.
+///
 /// # Errors
 ///
-/// Fails when the library cannot resolve the revspec or read the repository.
+/// Fails when the library cannot resolve the revspec, enumerate the selected
+/// commits, or read the repository.
 pub fn diff(request: &DiffRequest) -> Result<DiffQuerySet, anyhow::Error> {
     let query = &request.query;
 
@@ -95,14 +106,26 @@ pub fn diff(request: &DiffRequest) -> Result<DiffQuerySet, anyhow::Error> {
         .aggregation(query.aggregation)
         .line_types(LineTypes::everything());
 
-    let result = match &request.endpoints {
+    let result = match (&request.endpoints, query.aggregation) {
+        // Per-commit rows walk the selected range commit by commit.
+        (DiffEndpoints::Revspec(revspec), Aggregation::ByCommit) => {
+            diff_by_commit(&request.repo, revspec, options)?
+        }
         // The revspec goes to the library verbatim; git rev-parse owns resolution.
-        DiffEndpoints::Revspec(revspec) => diff_revspec(&request.repo, revspec, options)?,
-        DiffEndpoints::Workdir(mode) => diff_workdir(&request.repo, *mode, options)?,
+        (DiffEndpoints::Revspec(revspec), _) => diff_revspec(&request.repo, revspec, options)?,
+        (DiffEndpoints::Workdir(mode), _) => diff_workdir(&request.repo, *mode, options)?,
+    };
+
+    // An absent --ordering means git's traversal order for commit rows (the
+    // library keeps the result's own order for `None`) and the label-ascending
+    // default everywhere else.
+    let ordering: Option<Ordering> = match (query.aggregation, query.ordering) {
+        (Aggregation::ByCommit, None) => None,
+        (_, ordering) => Some(ordering.unwrap_or_default()),
     };
 
     Ok(narrow(
-        DiffQuerySet::from_result(&result, query.aggregation, query.line_types, query.ordering),
+        DiffQuerySet::from_result(&result, query.aggregation, query.line_types, ordering),
         query,
         DiffQuerySet::filter,
         DiffQuerySet::top,
@@ -148,7 +171,7 @@ mod tests {
                 filter: FilterConfig::new(),
                 aggregation: Aggregation::Total,
                 line_types: LineTypes::default(),
-                ordering: Ordering::default(),
+                ordering: None,
                 top: None,
                 predicates: Vec::new(),
             },
@@ -216,7 +239,7 @@ mod tests {
         let dir = workspace();
         let mut request = request_for(dir.path());
         request.query.aggregation = Aggregation::ByFile;
-        request.query.ordering = Ordering::by_code();
+        request.query.ordering = Some(Ordering::by_code());
         // Only src/lib.rs (3 code lines) clears the predicate. Were `top`
         // applied first, this would still pass at top=2 but return the
         // filtered remainder of a 2-row slice; asserting the surviving label
@@ -234,7 +257,7 @@ mod tests {
         let dir = workspace();
         let mut request = request_for(dir.path());
         request.query.aggregation = Aggregation::ByFile;
-        request.query.ordering = Ordering::by_code();
+        request.query.ordering = Some(Ordering::by_code());
         request.query.top = Some(1);
 
         let result = count(&request).unwrap();

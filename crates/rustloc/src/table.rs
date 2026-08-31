@@ -421,13 +421,16 @@ fn enabled_columns(line_types: &LineTypes) -> Vec<Column> {
 /// The aggregation's key.
 ///
 /// Like [`Column::key`], a data name: the templates turn `crate` into the
-/// "Crate" header and the "crates" footer unit.
+/// "Crate" header and the "crates" footer unit, and `commit` additionally
+/// selects the end-truncated, markup-escaped label treatment commit subjects
+/// need.
 fn aggregation_key(aggregation: &Aggregation) -> &'static str {
     match aggregation {
         Aggregation::Total => "total",
         Aggregation::ByCrate => "crate",
         Aggregation::ByModule => "module",
         Aggregation::ByFile => "file",
+        Aggregation::ByCommit => "commit",
     }
 }
 
@@ -602,6 +605,7 @@ mod tests {
             (Aggregation::ByCrate, "crate"),
             (Aggregation::ByModule, "module"),
             (Aggregation::ByFile, "file"),
+            (Aggregation::ByCommit, "commit"),
         ] {
             assert_eq!(aggregation_key(&aggregation), expected);
         }

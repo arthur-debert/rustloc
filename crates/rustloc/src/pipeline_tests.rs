@@ -2229,3 +2229,431 @@ fn commit_help_documents_the_revision_and_the_one_commit_comparison() {
         "synthetic filter doc missing from:\n{help}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Diff by commit, through the real pipeline
+// ---------------------------------------------------------------------------
+
+/// Like [`git`], plus a pinned author/committer date. By-commit rows carry
+/// commit hashes, so any output pinned byte-for-byte (the render fixtures)
+/// needs every hash input — identity, content, and time — deterministic.
+fn git_dated(dir: &Path, date: &str, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@e")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@e")
+        .env("GIT_AUTHOR_DATE", date)
+        .env("GIT_COMMITTER_DATE", date)
+        .output()
+        .expect("git must be available");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed in {dir:?}: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+/// A four-commit repo whose three selected subjects exercise the by-commit
+/// label corpus: a long ASCII subject that must end-truncate, a CJK + emoji
+/// subject that must truncate by display width, and a subject holding valid
+/// semantic tag names whose brackets must render literally. Timestamps are
+/// pinned so the commit hashes — part of the rendered labels — are stable
+/// across runs.
+///
+/// No `Cargo.toml` on purpose: project classification stays empty and the
+/// counts are file-local, which this corpus does not need to vary.
+fn by_commit_repo() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    git_dated(
+        p,
+        "2024-01-01T00:00:00Z",
+        &["init", "-q", "--initial-branch=main"],
+    );
+    git_dated(
+        p,
+        "2024-01-01T00:00:00Z",
+        &["config", "commit.gpgsign", "false"],
+    );
+
+    std::fs::write(p.join("a.rs"), "fn a() {}\n").unwrap();
+    std::fs::write(p.join("notes.md"), "one\ntwo\n").unwrap();
+    git_dated(p, "2024-01-01T00:00:00Z", &["add", "-A"]);
+    git_dated(p, "2024-01-01T00:00:00Z", &["commit", "-qm", "base"]);
+
+    std::fs::write(p.join("b.rs"), "fn b() {}\nfn b2() {}\n").unwrap();
+    std::fs::write(p.join("notes.md"), "one\ntwo\nthree\n").unwrap();
+    git_dated(p, "2024-01-02T00:00:00Z", &["add", "-A"]);
+    git_dated(
+        p,
+        "2024-01-02T00:00:00Z",
+        &[
+            "commit",
+            "-qm",
+            "Rework the diff pipeline to stream per-commit rows without buffering",
+        ],
+    );
+
+    std::fs::write(p.join("a.rs"), "fn a() {}\nfn a2() {}\n").unwrap();
+    git_dated(p, "2024-01-03T00:00:00Z", &["add", "-A"]);
+    git_dated(
+        p,
+        "2024-01-03T00:00:00Z",
+        &[
+            "commit",
+            "-qm",
+            "\u{6570}\u{636e}\u{5904}\u{7406}\u{6a21}\u{5757} \u{1f389} widens the labels",
+        ],
+    );
+
+    std::fs::remove_file(p.join("b.rs")).unwrap();
+    git_dated(p, "2024-01-04T00:00:00Z", &["add", "-A"]);
+    git_dated(
+        p,
+        "2024-01-04T00:00:00Z",
+        &["commit", "-qm", "Escape [muted] and [bold] brackets"],
+    );
+
+    dir
+}
+
+/// The three selected subjects of [`by_commit_repo`]'s `base..HEAD` range, in
+/// git's traversal order (newest first — the fixture's dates are distinct).
+const BY_COMMIT_SUBJECTS: &[&str] = &[
+    "Escape [muted] and [bold] brackets",
+    "\u{6570}\u{636e}\u{5904}\u{7406}\u{6a21}\u{5757} \u{1f389} widens the labels",
+    "Rework the diff pipeline to stream per-commit rows without buffering",
+];
+
+fn by_commit_json(dir: &TempDir, extra: &[&str]) -> DiffQuerySet {
+    let mut args = vec![
+        "diff",
+        "-p",
+        dir.path().to_str().unwrap(),
+        "HEAD~3..HEAD",
+        "--by-commit",
+        "--output",
+        "json",
+    ];
+    args.extend_from_slice(extra);
+    serde_json::from_str(&stdout(&args)).expect("by-commit diff response")
+}
+
+/// `--by-commit` excludes every other grouping and the staged mode; clap owns
+/// these conflicts, so they surface as usage errors before any repository work.
+#[test]
+fn by_commit_conflicts_with_other_groupings_and_staged() {
+    for conflicting in ["--by-file", "--by-crate", "--by-module", "--staged"] {
+        let msg = error(&["diff", "HEAD~1..HEAD", "--by-commit", conflicting]);
+        assert!(
+            msg.contains("cannot be used with"),
+            "expected a clap conflict for {conflicting}, got: {msg}"
+        );
+    }
+}
+
+/// A working tree contains no commits to enumerate, so `--by-commit` without a
+/// revision is a usage error at the parsing boundary — before any analysis.
+#[test]
+fn by_commit_without_a_revision_is_rejected() {
+    let dir = by_commit_repo();
+    let msg = error(&["diff", "-p", dir.path().to_str().unwrap(), "--by-commit"]);
+    assert!(
+        msg.contains("--by-commit requires a revision"),
+        "unexpected message: {msg}"
+    );
+}
+
+/// `--by-commit` belongs to the diff grammar only: the count route and the
+/// single-commit `commit` command must reject it as an unknown argument.
+#[test]
+fn by_commit_is_not_registered_on_count_or_commit() {
+    let count_msg = error(&["--by-commit"]);
+    assert!(
+        count_msg.contains("--by-commit"),
+        "count should reject the flag: {count_msg}"
+    );
+    let commit_msg = error(&["commit", "HEAD", "--by-commit"]);
+    assert!(
+        commit_msg.contains("--by-commit"),
+        "commit should reject the flag: {commit_msg}"
+    );
+}
+
+/// The canonical response: `ByCommit` aggregation, one item per selected
+/// commit in traversal order, each carrying the complete `hash subject` label
+/// (structured output never truncates) and no file change type.
+#[test]
+fn by_commit_json_carries_complete_labels_in_traversal_order() {
+    let dir = by_commit_repo();
+    let parsed = by_commit_json(&dir, &[]);
+
+    assert_eq!(parsed.aggregation, rustloclib::Aggregation::ByCommit);
+    assert_eq!(parsed.items.len(), 3);
+    assert_eq!(parsed.total_items, 3);
+
+    for (item, subject) in parsed.items.iter().zip(BY_COMMIT_SUBJECTS) {
+        let (hash, label_subject) = item.label.split_once(' ').expect("hash-prefixed label");
+        assert_eq!(hash.len(), 8, "label {:?}", item.label);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(label_subject, *subject);
+        assert!(item.change_type.is_none());
+    }
+
+    // Churn accounting: 3 added code lines across the range, 2 removed (the
+    // b.rs deletion), 1 skipped markdown line, 2 distinct analyzed files.
+    assert_eq!(parsed.total.added.code, 3);
+    assert_eq!(parsed.total.removed.code, 2);
+    assert_eq!(parsed.file_count, 2);
+    assert_eq!(parsed.metadata.non_rust_added, 1);
+}
+
+/// Without `--ordering`, rows keep git's traversal order; an explicit
+/// ordering overrides it — label ordering compares the complete labels and
+/// numeric ordering the net changes.
+#[test]
+fn by_commit_ordering_defaults_to_traversal_and_stays_overridable() {
+    let dir = by_commit_repo();
+
+    let subjects = |qs: &DiffQuerySet| -> Vec<String> {
+        qs.items
+            .iter()
+            .map(|i| i.label.split_once(' ').unwrap().1.to_string())
+            .collect()
+    };
+
+    let traversal = by_commit_json(&dir, &[]);
+    assert_eq!(subjects(&traversal), BY_COMMIT_SUBJECTS);
+
+    // Hash-prefixed labels sort by hash, so label ordering almost surely
+    // differs from row-position assertions; pin it structurally instead: the
+    // labels must arrive sorted.
+    let by_label = by_commit_json(&dir, &["-o", "label"]);
+    let labels: Vec<&str> = by_label.items.iter().map(|i| i.label.as_str()).collect();
+    let mut sorted = labels.clone();
+    sorted.sort();
+    assert_eq!(labels, sorted);
+
+    // Net code: rework +2, CJK +1, escape −2. Descending numeric ordering.
+    let by_code = by_commit_json(&dir, &["-o", "-code"]);
+    assert_eq!(
+        subjects(&by_code),
+        vec![
+            BY_COMMIT_SUBJECTS[2].to_string(),
+            BY_COMMIT_SUBJECTS[1].to_string(),
+            BY_COMMIT_SUBJECTS[0].to_string(),
+        ]
+    );
+}
+
+/// Two positional revisions select the same commits as the joined two-dot
+/// range — the join happens at the parsing boundary, so `--by-commit` rides
+/// it unchanged.
+#[test]
+fn by_commit_two_positional_revisions_match_the_two_dot_range() {
+    let dir = by_commit_repo();
+    let path = dir.path().to_str().unwrap();
+    let two_dot = stdout(&[
+        "diff",
+        "-p",
+        path,
+        "HEAD~3..HEAD",
+        "--by-commit",
+        "--output",
+        "json",
+    ]);
+    let positional = stdout(&[
+        "diff",
+        "-p",
+        path,
+        "HEAD~3",
+        "HEAD",
+        "--by-commit",
+        "--output",
+        "json",
+    ]);
+    assert_eq!(two_dot, positional);
+}
+
+/// Predicates read net changes and `--top` slices after them, exactly as for
+/// every other diff aggregation.
+#[test]
+fn by_commit_supports_predicates_and_top() {
+    let dir = by_commit_repo();
+    let parsed = by_commit_json(&dir, &["--code-gt", "0", "-o", "-code", "--top", "1"]);
+
+    assert_eq!(parsed.items.len(), 1);
+    assert!(parsed.items[0].label.ends_with(BY_COMMIT_SUBJECTS[2]));
+    assert_eq!(parsed.total_items, 3); // the full range still described
+    assert!(parsed.top_applied);
+}
+
+/// YAML and XML carry the same canonical response; the aggregation identifies
+/// itself as `ByCommit` in both.
+#[test]
+fn by_commit_structured_modes_agree() {
+    let dir = by_commit_repo();
+    let path = dir.path().to_str().unwrap().to_string();
+    let base = ["diff", "-p", path.as_str(), "HEAD~3..HEAD", "--by-commit"];
+
+    let json = by_commit_json(&dir, &[]);
+
+    let mut yaml_args = base.to_vec();
+    yaml_args.extend_from_slice(&["--output", "yaml"]);
+    let yaml: DiffQuerySet = serde_yaml::from_str(&stdout(&yaml_args)).expect("yaml response");
+    assert_eq!(yaml, json);
+
+    let mut xml_args = base.to_vec();
+    xml_args.extend_from_slice(&["--output", "xml"]);
+    let xml = stdout(&xml_args);
+    assert!(xml.contains("ByCommit"), "missing aggregation in:\n{xml}");
+    assert!(
+        xml.contains("Rework the diff pipeline"),
+        "missing complete label in:\n{xml}"
+    );
+}
+
+/// CSV flattens to one row per commit, each labeled with the complete
+/// untruncated label, followed by the `TOTAL` row.
+#[test]
+fn by_commit_csv_has_one_row_per_commit_plus_total() {
+    let dir = by_commit_repo();
+    let out = stdout(&[
+        "diff",
+        "-p",
+        dir.path().to_str().unwrap(),
+        "HEAD~3..HEAD",
+        "--by-commit",
+        "--output",
+        "csv",
+    ]);
+
+    let labels = csv_column(&out, "label");
+    // The markdown edit in the range feeds the existing SKIPPED summary row.
+    assert_eq!(labels.len(), 5, "3 commits + SKIPPED + TOTAL in:\n{out}");
+    for (label, subject) in labels.iter().zip(BY_COMMIT_SUBJECTS) {
+        assert!(
+            label.ends_with(subject),
+            "csv label {label:?} should carry the complete subject {subject:?}"
+        );
+    }
+    assert_eq!(labels[3], "SKIPPED");
+    assert_eq!(labels[4], "TOTAL");
+}
+
+/// The human table names the label column `Commit`, counts `commits` in the
+/// footer, and end-truncates long subjects with an ellipsis while keeping the
+/// leading hash — the tail of a subject is expendable, the identity is not.
+#[test]
+fn by_commit_text_names_the_column_and_truncates_subjects_at_the_end() {
+    let dir = by_commit_repo();
+    let out = stdout(&[
+        "diff",
+        "-p",
+        dir.path().to_str().unwrap(),
+        "HEAD~3..HEAD",
+        "--by-commit",
+        "--output",
+        "text",
+    ]);
+
+    assert!(
+        line_starting(&out, "Diff:").contains("HEAD~3"),
+        "missing title in:\n{out}"
+    );
+    assert!(out.contains("Commit"), "missing column header in:\n{out}");
+    assert!(
+        out.contains("Total (3 commits)"),
+        "missing footer in:\n{out}"
+    );
+
+    // The long ASCII subject cannot fit the 40-column label: its row must
+    // keep the eight-char hash + space and end in an ellipsis, and the full
+    // subject must not appear.
+    let long_row = line_containing(&out, "Rework the diff");
+    let (hash, rest) = long_row.split_once(' ').unwrap();
+    assert_eq!(hash.len(), 8);
+    assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    assert!(
+        rest.contains('\u{2026}'),
+        "expected ellipsis in {long_row:?}"
+    );
+    assert!(
+        !out.contains("without buffering"),
+        "the subject tail should have been truncated:\n{out}"
+    );
+
+    // The CJK/emoji subject truncates by display width without splitting a
+    // character; its leading CJK run survives.
+    let cjk_row = line_containing(&out, "\u{6570}\u{636e}");
+    assert!(
+        cjk_row.contains('\u{2026}'),
+        "expected ellipsis in {cjk_row:?}"
+    );
+}
+
+/// Commit subjects are untrusted text: a subject spelling valid semantic tag
+/// names must render its brackets literally with no styling. Text mode is the
+/// sharp probe — the tag stripper would *delete* a live `[muted]`/`[bold]`,
+/// so their literal presence proves the escape. Term-debug keeps real tags
+/// visible, so the subject's brackets appearing there without a matching
+/// close-tag pair pins that no tag was formed.
+#[test]
+fn by_commit_bracketed_subjects_render_literally_with_no_styling() {
+    let dir = by_commit_repo();
+    let base = [
+        "diff",
+        "-p",
+        dir.path().to_str().unwrap(),
+        "HEAD~1..HEAD",
+        "--by-commit",
+    ];
+
+    // The label column end-truncates the subject's tail, so the probe stops
+    // at the part that must survive: both bracketed tag names.
+    let mut text_args = base.to_vec();
+    text_args.extend_from_slice(&["--output", "text"]);
+    let text = stdout(&text_args);
+    assert!(
+        text.contains("Escape [muted] and [bold]"),
+        "brackets must survive text mode literally:\n{text}"
+    );
+
+    let mut debug_args = base.to_vec();
+    debug_args.extend_from_slice(&["--output", "term-debug"]);
+    let debug = stdout(&debug_args);
+    assert!(
+        debug.contains("Escape [muted] and [bold]"),
+        "brackets must stay literal in term-debug:\n{debug}"
+    );
+    assert!(
+        !debug.contains("[/muted] and") && !debug.contains("[/bold] brackets"),
+        "no close tags may be minted from subject text:\n{debug}"
+    );
+}
+
+/// The whole rendered by-commit table, pinned in both stable human modes.
+/// Deterministic commit dates make the hashes — part of the labels — stable,
+/// so the fixture can be byte-exact like the rest of the render corpus.
+#[test]
+fn by_commit_tables_match_the_approved_fixtures() {
+    let dir = by_commit_repo();
+    for mode in ["text", "term-debug"] {
+        assert_render_fixture(
+            &format!("diff_by_commit.{mode}"),
+            &stdout(&[
+                "diff",
+                "-p",
+                dir.path().to_str().unwrap(),
+                "HEAD~3..HEAD",
+                "--by-commit",
+                "--output",
+                mode,
+            ]),
+        );
+    }
+}

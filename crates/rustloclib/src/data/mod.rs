@@ -6,7 +6,8 @@
 //! - **Parsing**: language backends that categorize lines
 //! - **Statistics**: Core data structures (`Locs`, `FileStats`, etc.)
 //! - **Counting**: High-level API (`count_workspace`, `count_file`)
-//! - **Diffing**: Git diff analysis (`diff_revspec`, `diff_workdir`)
+//! - **Diffing**: Git diff analysis (`diff_revspec`, `diff_workdir`,
+//!   `diff_by_commit`)
 //!
 //! ## Example
 //!
@@ -36,8 +37,8 @@ pub use counter::{
     count_file_with_filter, count_workspace, CountOptions, CountResult,
 };
 pub use diff::{
-    diff_revspec, diff_workdir, sat_sub_u64, CrateDiffStats, DiffOptions, DiffResult,
-    FileChangeType, FileDiffStats, LocsDiff, WorkdirDiffMode,
+    diff_by_commit, diff_revspec, diff_workdir, sat_sub_u64, CommitDiffStats, CrateDiffStats,
+    DiffOptions, DiffResult, FileChangeType, FileDiffStats, LocsDiff, WorkdirDiffMode,
 };
 pub use stats::{CrateStats, FileStats, Locs, ModuleStats};
 pub use visitor::{gather_stats, gather_stats_for_path, VisitorContext};
