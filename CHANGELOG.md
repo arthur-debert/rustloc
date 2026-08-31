@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+## 0.24.0 - 2026-08-31
+
+- Add `rustloc commit <revision>` for inspecting the line-count changes one commit introduces. It compares the commit against its first parent and produces exactly the output of `rustloc diff <revision>~1..<revision>`, accepting the diff command's repository, language, include/exclude, line-type, aggregation, ordering, filtering, top, number-format, and output controls.
+
 ## 0.23.0 - 2026-08-29
 
 - Rustloc now reads the Cargo module graph to decide whether a Rust file is production code, instead of judging each file on its own contents. A file only exists as a module when some parent declares it, and that declaration can be conditional: Proiectio's `archive.rs` says `#[cfg(all(test, unix))] #[path = "archive_tests.rs"] mod tests;`, so every line of `archive_tests.rs` belongs to the test build. Rustloc used to see `archive_tests.rs` without that context and count its unannotated lines as production code: that 1084-line file counted 264 code / 563 tests / 126 docs, and now counts 0 code / 827 tests / 126 docs. `archive.rs` keeps the production logic it really has. Counting loads the project twice, once with `cfg(test)` off and once with it on; a file the second load reaches and the first does not, or a file Cargo builds as a test target, has its production logic lines recounted as tests. Documentation, comments, blanks, examples, and logic a file already marks as tests are unchanged. Revision and working-tree diffs classify each side against the snapshot its content came from — HEAD against an exported tree, the working tree against the files on disk, and a `--staged` diff's new side against the index — so a module that moves behind `#[cfg(test)]` shows up as production lines removed and test lines added. Directory and single-file counting stay file-local: they do not search parent directories for a manifest. Loading never runs build scripts or proc macros, and when cargo or rustc is unavailable — or the project fails to load — the previous file-local result stands.
