@@ -50,6 +50,7 @@
       "crate": "Crate",
       "module": "Module",
       "file": "File",
+      "commit": "Commit",
     } -%}
 
 {#- Aggregation key -> the plural unit the footer counts. Total aggregation is
@@ -58,7 +59,18 @@
       "crate": "crates",
       "module": "modules",
       "file": "files",
+      "commit": "commits",
     } -%}
+
+{#- Escape semantic-markup delimiters so untrusted label text renders as plain
+    data. The tag parser reads `\[` / `\]` as literal brackets in every output
+    mode, so a commit subject containing `[bold]` — even a tag name the theme
+    knows — shows its brackets and applies no styling. A backslash the text
+    already carried stays literal on its own (`\\` is not an escape), so only
+    the brackets need rewriting. -#}
+{%- macro escape_markup(s) -%}
+{{ s | replace("[", "\\[") | replace("]", "\\]") }}
+{%- endmacro -%}
 
 {#- The horizontal rule, spanning the label column plus every value column and
     the single space that separates each. -#}
@@ -101,9 +113,22 @@ Total ({{ footer.displayed_display }} of {{ footer.total_items_display }} {{ UNI
     width; `col` then pads the tagged string (tags are zero-width).
 
     Added → `[file_added]`, Deleted → `[file_removed]`, Modified / any other
-    row (count, crate, module, totals) → no extra tag. -#}
-{%- macro label_cell(row) -%}
-{%- if row.change_type == "Added" -%}
+    row (count, crate, module, totals) → no extra tag.
+
+    Commit rows are the one label the user does not author, so they get their
+    own treatment: escaped as plain data (see `escape_markup`) and truncated
+    at the END, which keeps the leading `hash ` intact and spends the rest of
+    the column on the start of the subject. The escape runs twice around the
+    truncation on purpose — `truncate_at` measures and cuts the *stripped*
+    text, and stripping consumes escapes: the inner escape is what makes the
+    stripper read `[bold]` as six literal display columns instead of deleting
+    it as a tag, and the outer escape re-protects the truncated result before
+    the real render pass. `truncate_at` cuts by terminal display width, so
+    CJK/emoji subjects never split mid-character. -#}
+{%- macro label_cell(row, aggregation) -%}
+{%- if aggregation == "commit" -%}
+{{ escape_markup(escape_markup(row.label) | truncate_at(LABEL_WIDTH, 'end')) | col(LABEL_WIDTH) }}
+{%- elif row.change_type == "Added" -%}
 {{ ("[file_added]" ~ (row.label | truncate_at(LABEL_WIDTH, 'start')) ~ "[/file_added]") | col(LABEL_WIDTH) }}
 {%- elif row.change_type == "Deleted" -%}
 {{ ("[file_removed]" ~ (row.label | truncate_at(LABEL_WIDTH, 'start')) ~ "[/file_removed]") | col(LABEL_WIDTH) }}
@@ -136,9 +161,9 @@ Total ({{ footer.displayed_display }} of {{ footer.total_items_display }} {{ UNI
 {{ (ratio.whole ~ "." ~ ratio.tenth) | col(width - 1, align='right') }}[muted]%[/muted]
 {%- endmacro -%}
 
-{%- macro data_row(row, value_widths, index, reserve_suffix) -%}
+{%- macro data_row(row, value_widths, index, reserve_suffix, aggregation) -%}
 {%- set line -%}
-{{ label_cell(row) }}{% for v in row.values %} {{ count_value(v, value_widths[loop.index0], reserve_suffix) }}{% endfor %}
+{{ label_cell(row, aggregation) }}{% for v in row.values %} {{ count_value(v, value_widths[loop.index0], reserve_suffix) }}{% endfor %}
 {%- endset -%}
 {%- if index is even -%}
 [table_row_odd]{{ line }}[/table_row_odd]
@@ -166,7 +191,7 @@ Total ({{ footer.displayed_display }} of {{ footer.total_items_display }} {{ UNI
 [header]{{ LABEL_HEADERS[aggregation] | col(LABEL_WIDTH, align='center') }}{% for h in headers %} {{ h | col(value_widths[loop.index0], align='right') }}{% endfor %}[/header]
 {{ rule(value_widths) }}
 {% for row in rows -%}
-{{ data_row(row, value_widths, loop.index, reserve_suffix) }}
+{{ data_row(row, value_widths, loop.index, reserve_suffix, aggregation) }}
 {% endfor -%}
 {%- if rows | length > 0 -%}
 {{ rule(value_widths) }}

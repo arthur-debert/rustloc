@@ -212,6 +212,9 @@ pub enum Aggregation {
     ByModule,
     /// Include per-file breakdown
     ByFile,
+    /// Include per-commit breakdown. Diff-only: counts have no commits, so a
+    /// count query set built with this aggregation has no rows.
+    ByCommit,
 }
 
 /// Field to order results by.

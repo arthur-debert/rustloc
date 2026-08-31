@@ -44,6 +44,9 @@
 //! rustloc diff HEAD~5..HEAD
 //! rustloc diff main feature-branch
 //!
+//! # One diff row per commit in a range
+//! rustloc diff HEAD~5..HEAD --by-commit
+//!
 //! # Changes introduced by one commit (same as `rustloc diff R~1..R`)
 //! rustloc commit HEAD
 //!
@@ -99,6 +102,7 @@ Examples:
   rustloc diff --lang python           Python changes since last commit
   rustloc diff --lang typescript       TypeScript changes since last commit
   rustloc diff HEAD~5..HEAD --by-file  Per-file diff between commits
+  rustloc diff HEAD~5..HEAD --by-commit  One diff row per commit
   rustloc commit HEAD                  Changes introduced by the last commit")]
 struct Cli {
     #[command(subcommand)]
@@ -140,6 +144,7 @@ Examples:
   rustloc diff v1.0.0..v2.0.0          Between two tags
   rustloc diff main feature --by-file  Two-arg form, per-file breakdown
   rustloc diff main...feature          From their merge base to feature
+  rustloc diff HEAD~5..HEAD --by-commit  One row per selected commit
   rustloc diff -t code                 Only code line changes")]
     Diff(DiffArgs),
 
@@ -318,6 +323,25 @@ diff` / `rustloc diff --staged`) stay in-process and do not.")]
     /// Only staged changes (like git diff --cached)
     #[arg(long = "staged", visible_alias = "cached")]
     staged: bool,
+
+    /// One row per selected commit (requires a revision)
+    // Diff-only on purpose: count has nothing to enumerate and `commit` is
+    // already a single-commit diff. Clap owns the conflicts; the "requires a
+    // revision" rule lives in `DiffRequest::from_matches` because the
+    // revision argument is optional for plain diffs.
+    #[arg(
+        long = "by-commit",
+        conflicts_with_all = ["by_crate", "by_file", "by_module", "staged"]
+    )]
+    #[arg(long_help = "\
+Report one row per commit the revision range selects, instead of grouping
+by crate, module, or file. Each commit is compared with its first parent
+(merges included; a root commit is compared with the empty tree), so the
+total row measures commit churn rather than the endpoint difference.
+
+Rows appear in `git rev-list` order unless --ordering says otherwise.
+Requires a revision: a working tree contains no commits to enumerate.")]
+    by_commit: bool,
 
     #[command(flatten)]
     common: DiffCommonArgs,
