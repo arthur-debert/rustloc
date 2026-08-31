@@ -2167,11 +2167,13 @@ fn commit_matches_the_equivalent_diff_range_under_representative_options() {
     }
 }
 
-/// The equivalence must hold for any resolvable revision, not just HEAD —
-/// `commit HEAD~1` reads the *first* commit's range, which pins that the
-/// revision really parameterizes the range instead of being ignored.
+/// The revision must really parameterize the derived range instead of being
+/// ignored: `commit HEAD` resolves and reports the second commit's added
+/// code, while `commit HEAD~1` — the root commit in this two-commit fixture —
+/// derives a parentless range and fails to resolve. If the revision were
+/// ignored, both invocations would succeed identically.
 #[test]
-fn commit_accepts_a_non_head_revision() {
+fn commit_revision_parameterizes_the_derived_range() {
     let dir = commit_repo();
     let path = path_of(&dir);
 
