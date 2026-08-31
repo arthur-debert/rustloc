@@ -1,11 +1,11 @@
 //! Locale-aware integer formatting for human-readable output.
 //!
-//! Rustloc keeps canonical count and diff responses numeric. This module is
-//! only used by the human table presentation adapter, where a reader may ask
-//! for grouped digits. Locale lookup happens once for that render: the active
-//! system locale is parsed against `num-format`'s supported locale table, and
-//! unsupported or absent locales fall back to `en` so counting and diffing never
-//! fail because of locale discovery.
+//! Rustloc keeps canonical count, diff, and commit responses numeric. This
+//! module is only used by the human table presentation adapter, where a reader
+//! may ask for grouped digits. Locale lookup happens once for that render: the
+//! active system locale is parsed against `num-format`'s supported locale table,
+//! and unsupported or absent locales fall back to `en` so count, diff, and
+//! commit commands never fail because of locale discovery.
 
 use num_format::{Locale, ToFormattedString};
 

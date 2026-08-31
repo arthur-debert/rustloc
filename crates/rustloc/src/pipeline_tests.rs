@@ -1177,6 +1177,11 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
+fn init_git_repo(dir: &Path) {
+    git(dir, &["init", "-q"]);
+    git(dir, &["config", "commit.gpgsign", "false"]);
+}
+
 /// Every column a diff CSV must expose: added_*, removed_*, and net_* for each
 /// line type, plus a label. Same full-set rationale as [`COUNT_CSV_HEADERS`].
 const DIFF_CSV_HEADERS: &[&str] = &[
@@ -1210,7 +1215,7 @@ const DIFF_CSV_HEADERS: &[&str] = &[
 fn repo() -> TempDir {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path();
-    git(p, &["init", "-q"]);
+    init_git_repo(p);
     std::fs::write(
         p.join("Cargo.toml"),
         "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
@@ -1230,7 +1235,7 @@ fn repo() -> TempDir {
 fn large_diff_repo() -> TempDir {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path();
-    git(p, &["init", "-q"]);
+    init_git_repo(p);
     std::fs::write(
         p.join("Cargo.toml"),
         "[package]\nname = \"large-diff\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
@@ -1474,7 +1479,7 @@ fn label_workspace() -> TempDir {
 fn label_repo() -> TempDir {
     let dir = label_workspace();
     let p = dir.path();
-    git(p, &["init", "-q"]);
+    init_git_repo(p);
     std::fs::write(
         p.join("src/this_is_a_deliberately_long_ascii_filename_for_the_parity_gate.rs"),
         "pub fn ascii_one() {}\npub fn ascii_two() {}\n",
@@ -1754,7 +1759,7 @@ fn count_by_crate_term_debug_matches_the_approved_fixture() {
 fn wide_repo() -> TempDir {
     let dir = wide_workspace();
     let p = dir.path();
-    git(p, &["init", "-q"]);
+    init_git_repo(p);
     // README.md is committed *now* and edited below. A workdir diff compares
     // HEAD against the working tree, so an untracked file contributes nothing —
     // the skipped-changes summary would silently never render and this fixture
@@ -1848,7 +1853,7 @@ fn diff_by_crate_term_debug_matches_the_approved_fixture() {
 fn status_repo() -> TempDir {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path();
-    git(p, &["init", "-q"]);
+    init_git_repo(p);
     std::fs::write(
         p.join("Cargo.toml"),
         "[package]\nname = \"status\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
@@ -2103,7 +2108,7 @@ fn diff_invalid_revspec_is_a_dispatch_error() {
 fn commit_repo() -> TempDir {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path();
-    git(p, &["init", "-q"]);
+    init_git_repo(p);
     std::fs::write(
         p.join("Cargo.toml"),
         "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",

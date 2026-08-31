@@ -84,10 +84,15 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
+fn init_git_repo(dir: &Path) {
+    git(dir, &["init", "-q"]);
+    git(dir, &["config", "commit.gpgsign", "false"]);
+}
+
 fn query_repo() -> TempDir {
     let dir = TempDir::new().expect("query repo");
     let root = dir.path();
-    git(root, &["init", "-q"]);
+    init_git_repo(root);
     std::fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"query-repo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",

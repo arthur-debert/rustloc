@@ -16,7 +16,7 @@
 //! - **Glob filtering**: Include/exclude files with glob patterns
 //! - **Multiple output formats**: Table (default), JSON, YAML, XML, CSV
 //! - **Git diff analysis**: Compare LOC between commits
-//! - **Optional locale grouping**: Add digit separators to human-readable counts and diffs
+//! - **Optional locale grouping**: Add digit separators to count, diff, and commit tables
 //!
 //! ## Usage
 //!
@@ -289,10 +289,10 @@ The total row and file count still describe the full data set, not the
 truncated slice. No-op when no `--by-*` aggregation is in effect.")]
     top: Option<usize>,
 
-    /// Group integer digits in human-readable output using the active locale
+    /// Group integer digits in count, diff, and commit tables using the active locale
     #[arg(long = "number-fmt", global = true)]
     #[arg(long_help = "\
-Group integer digits in human-readable count and diff output using the active system
+Group integer digits in count, diff, and commit tables using the active system
 locale. If the locale is unavailable or unsupported, rustloc uses English-style
 grouping (1,234) instead of failing the command.")]
     number_fmt: bool,
@@ -368,10 +368,10 @@ struct DiffCommonArgs {
 /// [`super::presentation`], which runs at the render boundary.
 ///
 /// Standout's `#[handler]` macro would normally generate this bridge from typed
-/// parameters, but it maps one parameter per named clap arg, and the count/diff
-/// grammar includes the 42 dynamically registered `--<field>-<op>` filter flags
-/// (see [`super::filter_args`]) that no fixed parameter list can express. Its
-/// `#[matches]` escape hatch would hand the raw matches back to the handler
+/// parameters, but it maps one parameter per named clap arg, and the shared
+/// query grammar includes the 42 dynamically registered `--<field>-<op>` filter
+/// flags (see [`super::filter_args`]) that no fixed parameter list can express.
+/// Its `#[matches]` escape hatch would hand the raw matches back to the handler
 /// anyway, so we keep the plain dispatch signature and put the typed seam in
 /// `command` + `application` instead — the same separation, minus a macro that
 /// cannot cover the grammar.
