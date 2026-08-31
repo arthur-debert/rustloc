@@ -44,6 +44,9 @@
 //! rustloc diff HEAD~5..HEAD
 //! rustloc diff main feature-branch
 //!
+//! # Changes introduced by one commit (same as `rustloc diff R~1..R`)
+//! rustloc commit HEAD
+//!
 //! # Diff working directory changes (like git diff)
 //! rustloc diff
 //!
@@ -91,7 +94,8 @@ Examples:
   rustloc diff                         Changes since last commit
   rustloc diff --lang python           Python changes since last commit
   rustloc diff --lang typescript       TypeScript changes since last commit
-  rustloc diff HEAD~5..HEAD --by-file  Per-file diff between commits")]
+  rustloc diff HEAD~5..HEAD --by-file  Per-file diff between commits
+  rustloc commit HEAD                  Changes introduced by the last commit")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -131,6 +135,24 @@ Examples:
   rustloc diff main...feature          From their merge base to feature
   rustloc diff -t code                 Only code line changes")]
     Diff(DiffArgs),
+
+    /// Show the LOC changes introduced by one commit
+    #[dispatch(template = "diff_table", post_dispatch = presentation::diff)]
+    #[command(long_about = "\
+Show the LOC changes introduced by one commit.
+
+Takes one required revision and compares it against its first parent:
+`rustloc commit R` produces exactly the output of `rustloc diff R~1..R`.
+The revision is resolved by `git rev-parse`, so hashes, tags, branches,
+and forms like HEAD~N all work. Requires `git` on PATH.")]
+    #[command(after_help = "Use --help for examples")]
+    #[command(after_long_help = "\
+Examples:
+  rustloc commit HEAD                  Changes introduced by the last commit
+  rustloc commit abc1234 --by-file     Per-file changes of one commit
+  rustloc commit v1.0.0                Changes introduced by a tagged commit
+  rustloc commit HEAD~3 -t code        Only code line changes of HEAD~3")]
+    Commit(CommitArgs),
 }
 
 /// Shared arguments for count command and top-level
@@ -258,13 +280,41 @@ diff` / `rustloc diff --staged`) stay in-process and do not.")]
     /// Target revspec (alternative to a..b range syntax)
     to: Option<String>,
 
-    /// Path to the repository
-    #[arg(short = 'p', long = "path", default_value = ".")]
-    path: String,
-
     /// Only staged changes (like git diff --cached)
     #[arg(long = "staged", visible_alias = "cached")]
     staged: bool,
+
+    #[command(flatten)]
+    common: DiffCommonArgs,
+}
+
+/// Arguments for commit command
+#[derive(Args, Clone)]
+struct CommitArgs {
+    /// Commit to inspect [hash, tag, branch, HEAD~N]
+    #[arg(long_help = "\
+Commit to inspect, resolved by `git rev-parse`: hashes, tags, branches,
+and forms like HEAD~N all work. The commit is compared against its first
+parent, exactly as `rustloc diff <revision>~1..<revision>`.")]
+    revision: String,
+
+    #[command(flatten)]
+    common: DiffCommonArgs,
+}
+
+/// Repository and view controls shared by `diff` and `commit`.
+///
+/// Flattened into both because `commit <revision>` is defined as
+/// `diff <revision>~1..<revision>`: the two commands must accept the same
+/// repository, query, and presentation flags with identical semantics, and
+/// one declaration keeps them from drifting apart. What differs — diff's
+/// endpoints (`from`/`to`/`--staged`) vs commit's single required revision —
+/// stays in the per-command structs.
+#[derive(Args, Clone)]
+struct DiffCommonArgs {
+    /// Path to the repository
+    #[arg(short = 'p', long = "path", default_value = ".")]
+    path: String,
 
     /// Only count specific crate(s)
     #[arg(short = 'c', long = "crate", action = clap::ArgAction::Append)]
@@ -402,6 +452,18 @@ mod handlers {
     /// Handler for the diff command.
     pub fn diff(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<DiffQuerySet> {
         let request = DiffRequest::from_matches(matches)?;
+        Ok(Output::Render(application::diff(&request)?))
+    }
+
+    /// Handler for the commit command: a diff against the commit's first
+    /// parent.
+    ///
+    /// The commit grammar becomes a [`DiffRequest`] at the parsing boundary
+    /// ([`DiffRequest::from_commit_matches`]), so orchestration and
+    /// presentation are byte-for-byte the diff command's — the equivalence
+    /// `commit R` == `diff R~1..R` is structural, not re-implemented.
+    pub fn commit(matches: &ArgMatches, _ctx: &CommandContext) -> HandlerResult<DiffQuerySet> {
+        let request = DiffRequest::from_commit_matches(matches)?;
         Ok(Output::Render(application::diff(&request)?))
     }
 }
@@ -671,7 +733,8 @@ mod presentation {
         }
     }
 
-    /// Post-dispatch adapter for `diff`.
+    /// Post-dispatch adapter for `diff` — and for `commit`, which renders
+    /// the same canonical [`DiffQuerySet`] through the same targets.
     pub fn diff(
         matches: &ArgMatches,
         _ctx: &CommandContext,
@@ -707,7 +770,7 @@ mod filter_args {
     /// `IntoResettable<Str>` which is implemented for `&'static str` but
     /// not for `String`. Caching avoids re-leaking on repeated calls
     /// (`make_args` is invoked once per injection point: top-level + count
-    /// + diff = three calls), keeping the leak count to exactly 42.
+    /// + diff + commit = four calls), keeping the leak count to exactly 42.
     fn flag_table() -> &'static [(Field, Op, &'static str)] {
         static TABLE: OnceLock<Vec<(Field, Op, &'static str)>> = OnceLock::new();
         TABLE.get_or_init(|| {
@@ -765,17 +828,18 @@ mod filter_args {
         cmd.after_long_help(combined)
     }
 
-    /// Inject the filter args + synthetic doc onto the top-level Cli, the
-    /// `count` subcommand, and the `diff` subcommand.
+    /// Inject the filter args + synthetic doc onto the top-level Cli and the
+    /// `count`, `diff`, and `commit` subcommands.
     ///
-    /// All three are required:
+    /// All four are required:
     /// - top-level: for the bare-call form (`rustloc --code-gte 100 .`)
     ///   where clap routes through the default subcommand machinery via
     ///   the flattened `CountArgs`.
     /// - count subcommand: for the explicit form (`rustloc count ...`).
     /// - diff subcommand: for the diff path.
+    /// - commit subcommand: for the one-commit diff path.
     ///
-    /// Adding to fewer than all three breaks one or more of the call shapes.
+    /// Adding to fewer than all four breaks one or more of the call shapes.
     pub fn inject(cmd: Command) -> Command {
         fn augment(sub: Command) -> Command {
             let mut sub = sub;
@@ -792,6 +856,7 @@ mod filter_args {
         append_long_help(cmd, SYNTHETIC_DOC)
             .mut_subcommand("count", augment)
             .mut_subcommand("diff", augment)
+            .mut_subcommand("commit", augment)
     }
 
     /// Read all filter args back from `ArgMatches` into a flat

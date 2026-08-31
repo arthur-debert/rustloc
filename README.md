@@ -104,11 +104,14 @@ rustloc diff HEAD~5..HEAD            # between two commits
 rustloc diff v1.0.0..v2.0.0          # between two tags
 rustloc diff main feature --by-file  # two-arg form, per-file breakdown
 rustloc diff main...feature          # from the merge base of main and feature
+rustloc commit HEAD                  # changes introduced by one commit
 ```
 
 Revspec syntax is resolved by `git rev-parse`: tags (annotated or lightweight), branches, short hashes, `HEAD~N`, `@{-N}`, `:/regex`, ranges (`a..b`), and merge-base ranges (`a...b`) all work. A single rev is diffed against HEAD; tag objects are peeled to their target commit automatically. A revspec `diff` requires `git` on `PATH`. Working-tree diffs (`rustloc diff` / `rustloc diff --staged`) do not.
 
-The same `--by-*`, `-o`, `--top`, `-t`, `--lang`, and filter flags work on `diff` results — diff filters operate on the net change.
+`rustloc commit <revision>` inspects the changes one commit introduced: it takes a single required revision and produces exactly the output of `rustloc diff <revision>~1..<revision>` — the commit against its first parent. It accepts the same repository, language, filter, aggregation, ordering, and output flags as `diff`.
+
+The same `--by-*`, `-o`, `--top`, `-t`, `--lang`, and filter flags work on `diff` and `commit` results — diff filters operate on the net change.
 
 Diffs use the active language selection. Files outside that selection are not analyzed semantically; their added and removed physical lines are reported separately as `Skipped changes` so branch sanity checks still show that something changed outside the counted language set.
 
