@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- Add `rustloc diff --by-commit` to report one row for every commit selected by a Git revision range. Each row compares the commit with its first parent and shows its short hash, subject, and line-count changes. Commit rows follow Git traversal order unless explicitly sorted and support the existing language, path, line-type, predicate, `--top`, and structured-output controls.
+
 ## 0.25.0 - 2026-08-31
 
 - Make shared query options behave consistently across count, diff, and commit. Count and diff now share a report structure, and diff totals report correct changed-file counts for every grouping mode.
