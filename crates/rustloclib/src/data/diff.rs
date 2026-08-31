@@ -227,6 +227,8 @@ pub struct DiffResult {
     pub to_commit: String,
     /// Total diff across all files.
     pub total: LocsDiff,
+    /// Total number of analyzed source files changed.
+    pub file_count: usize,
     /// Per-crate diff breakdown.
     pub crates: Vec<CrateDiffStats>,
     /// Per-file diff (optional, for detailed output).
@@ -247,6 +249,7 @@ impl DiffResult {
             from_commit: self.from_commit.clone(),
             to_commit: self.to_commit.clone(),
             total: self.total.filter(types),
+            file_count: self.file_count,
             crates: self.crates.iter().map(|c| c.filter(types)).collect(),
             files: self.files.iter().map(|f| f.filter(types)).collect(),
             non_rust_added: self.non_rust_added,
@@ -401,6 +404,7 @@ pub fn diff_workdir(
 
     // Process changes
     let mut total = LocsDiff::new();
+    let mut file_count = 0;
     let mut files = Vec::new();
     let mut crate_stats: HashMap<String, CrateDiffStats> = HashMap::new();
 
@@ -438,6 +442,7 @@ pub fn diff_workdir(
 
         // Aggregate into total
         total += file_diff.diff;
+        file_count += 1;
 
         // Aggregate into crate stats if applicable
         if include_crates {
@@ -477,6 +482,7 @@ pub fn diff_workdir(
         from_commit: from_label.to_string(),
         to_commit: to_label.to_string(),
         total,
+        file_count,
         crates,
         files,
         non_rust_added,
@@ -917,6 +923,7 @@ pub fn diff_revspec(
 
     // Process changes
     let mut total = LocsDiff::new();
+    let mut file_count = 0;
     let mut files = Vec::new();
     let mut crate_stats: HashMap<String, CrateDiffStats> = HashMap::new();
     let mut non_rust_added: u64 = 0;
@@ -964,6 +971,7 @@ pub fn diff_revspec(
         let file_diff = compute_file_diff(&repo, &change, &path, &from_project, &to_project)?;
 
         total += file_diff.diff;
+        file_count += 1;
 
         if include_crates {
             if let Some(crate_info) = crate_info {
@@ -994,6 +1002,7 @@ pub fn diff_revspec(
         from_commit: resolved.from_label,
         to_commit: resolved.to_label,
         total,
+        file_count,
         crates,
         files,
         non_rust_added,
@@ -2334,6 +2343,7 @@ mod tests {
                 },
                 removed: Locs::default(),
             },
+            file_count: 1,
             crates: vec![CrateDiffStats::new(
                 "foo".to_string(),
                 PathBuf::from("/r/foo"),

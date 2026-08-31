@@ -9,7 +9,8 @@
 //!   ([`Predicate`]). Operators are `gt`/`gte`/`eq`/`ne`/`lt`/`lte`.
 //! - **QuerySet**: Processed data ready for presentation, with chainable
 //!   `.filter(&[Predicate])` and `.top(N)` methods on both [`CountQuerySet`]
-//!   and [`DiffQuerySet`]. The two are independent and order matters —
+//!   and [`DiffQuerySet`]. Both names specialize the shared
+//!   [`ReportQuerySet`] envelope, and order matters —
 //!   `.filter(...).top(N)` gives "top N of those matching the predicates"
 //!   (what the CLI does); `.top(N).filter(...)` instead truncates first
 //!   and then filters from that slice.
@@ -41,4 +42,6 @@ pub mod queryset;
 pub use options::{
     Aggregation, Field, LineTypes, Op, OrderBy, OrderDirection, Ordering, Predicate,
 };
-pub use queryset::{CountQuerySet, DiffQuerySet, QueryItem};
+pub use queryset::{
+    CountQuerySet, CountReportMetadata, DiffQuerySet, DiffReportMetadata, QueryItem, ReportQuerySet,
+};

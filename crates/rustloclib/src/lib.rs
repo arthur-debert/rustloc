@@ -53,7 +53,8 @@
 //! ### Stage 3: Query Processing ([`query`])
 //!
 //! Filter, aggregate, sort, and slice the collected data:
-//! - [`CountQuerySet`] / [`DiffQuerySet`]: Processed data ready for display
+//! - [`ReportQuerySet`]: Processed data ready for display, specialized as
+//!   [`CountQuerySet`] or [`DiffQuerySet`]
 //! - [`Aggregation`]: Total, ByCrate, ByModule, ByFile
 //! - [`LineTypes`]: Which line types to include in output
 //! - [`Ordering`]: How to sort results
@@ -61,9 +62,10 @@
 //!   chained via `CountQuerySet::filter(&[Predicate])`
 //! - `CountQuerySet::top(N)`: Truncate to the first N rows after sorting
 //!
-//! [`CountQuerySet`] / [`DiffQuerySet`] are the canonical, output-mode
-//! independent responses and the end of the library: serialize them directly,
-//! or format them however your application presents data.
+//! [`CountQuerySet`] and [`DiffQuerySet`] are aliases over the same canonical,
+//! output-mode independent [`ReportQuerySet`] envelope and the end of the
+//! library: serialize them directly, or format them however your application
+//! presents data.
 //!
 //! ## Example
 //!
@@ -131,9 +133,10 @@
 //! }
 //! ```
 //!
-//! [`DiffQuerySet`] mirrors [`CountQuerySet`] for the diff side; both
-//! support the same `.filter()` / `.top()` chain. Diff filters operate
-//! on the net change (added − removed) per row.
+//! [`DiffQuerySet`] mirrors [`CountQuerySet`] by changing the measurement type
+//! from [`Locs`] to [`LocsDiff`] and adding flattened diff metadata. Both
+//! support the same `.filter()` / `.top()` chain. Diff filters operate on the
+//! net change (added − removed) per row.
 //!
 // Pipeline modules (in order)
 pub mod data;
@@ -153,8 +156,8 @@ pub use data::{
 };
 pub use error::RustlocError;
 pub use query::{
-    Aggregation, CountQuerySet, DiffQuerySet, Field, LineTypes, Op, OrderBy, OrderDirection,
-    Ordering, Predicate, QueryItem,
+    Aggregation, CountQuerySet, CountReportMetadata, DiffQuerySet, DiffReportMetadata, Field,
+    LineTypes, Op, OrderBy, OrderDirection, Ordering, Predicate, QueryItem, ReportQuerySet,
 };
 pub use source::{CrateInfo, FilterConfig, ProjectClassification, WorkspaceInfo};
 

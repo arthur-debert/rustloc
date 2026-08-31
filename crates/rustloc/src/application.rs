@@ -115,9 +115,10 @@ pub fn diff(request: &DiffRequest) -> Result<DiffQuerySet, anyhow::Error> {
 /// set. Slicing first would drop rows that were in the top N but failed a
 /// predicate, quietly returning fewer than N matching rows.
 ///
-/// The two query-set types share no trait, so the operations come in as
-/// function pointers rather than a bound — cheaper than inventing a trait for
-/// two call sites.
+/// The report envelopes share their `top` shape, while `filter` remains
+/// measurement-specific: count predicates read scalar counts and diff
+/// predicates read net changes. Function pointers keep those two choices at
+/// the call site without adding a public trait.
 fn narrow<T>(
     queryset: T,
     query: &QueryRequest,

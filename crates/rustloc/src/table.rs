@@ -331,9 +331,13 @@ impl DiffView {
                 qs.top_applied,
                 number_format,
             ),
-            from_commit: qs.from_commit.clone(),
-            to_commit: qs.to_commit.clone(),
-            non_rust: DiffValue::new(qs.non_rust_added, qs.non_rust_removed, number_format),
+            from_commit: qs.metadata.from_commit.clone(),
+            to_commit: qs.metadata.to_commit.clone(),
+            non_rust: DiffValue::new(
+                qs.metadata.non_rust_added,
+                qs.metadata.non_rust_removed,
+                number_format,
+            ),
             columns: columns.iter().map(|c| c.key()).collect(),
         }
     }
@@ -430,7 +434,9 @@ fn aggregation_key(aggregation: &Aggregation) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustloclib::{CountResult, CrateStats, Ordering, QueryItem};
+    use rustloclib::{
+        CountReportMetadata, CountResult, CrateStats, DiffReportMetadata, Ordering, QueryItem,
+    };
     use standout::tabular::{CellValue, Col, SubCol, SubColumns, TabularFormatter, TabularSpec};
     use std::path::PathBuf;
 
@@ -554,6 +560,7 @@ mod tests {
             items: vec![],
             total: sample_locs(3805, 1200),
             file_count: 1200,
+            metadata: CountReportMetadata::default(),
             total_items: 0,
             top_applied: false,
         };
@@ -689,6 +696,7 @@ mod tests {
             items: vec![],
             total: Locs::default(),
             file_count: 0,
+            metadata: CountReportMetadata::default(),
             total_items: 0,
             top_applied: false,
         };
@@ -752,10 +760,12 @@ mod tests {
             items: vec![],
             total: LocsDiff::default(),
             file_count: 0,
-            from_commit: "HEAD".to_string(),
-            to_commit: "working tree".to_string(),
-            non_rust_added: 0,
-            non_rust_removed: 0,
+            metadata: DiffReportMetadata {
+                from_commit: "HEAD".to_string(),
+                to_commit: "working tree".to_string(),
+                non_rust_added: 0,
+                non_rust_removed: 0,
+            },
             total_items: 0,
             top_applied: false,
         };
@@ -790,10 +800,12 @@ mod tests {
             ],
             total: LocsDiff::default(),
             file_count: 3,
-            from_commit: "HEAD~1".to_string(),
-            to_commit: "HEAD".to_string(),
-            non_rust_added: 0,
-            non_rust_removed: 0,
+            metadata: DiffReportMetadata {
+                from_commit: "HEAD~1".to_string(),
+                to_commit: "HEAD".to_string(),
+                non_rust_added: 0,
+                non_rust_removed: 0,
+            },
             total_items: 3,
             top_applied: false,
         };

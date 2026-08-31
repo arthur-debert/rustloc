@@ -200,6 +200,39 @@ fn diff_shared_query_options_match_before_and_after_the_subcommand() {
 }
 
 #[test]
+fn diff_json_reports_changed_file_count_for_every_aggregation() {
+    let dir = query_repo();
+    let path = dir.path().to_str().unwrap();
+
+    for flag in [
+        None,
+        Some("--by-file"),
+        Some("--by-module"),
+        Some("--by-crate"),
+    ] {
+        let mut args = vec!["diff", "-p", path, "HEAD~1..HEAD", "--output", "json"];
+        if let Some(flag) = flag {
+            args.insert(4, flag);
+        }
+
+        let output = rustloc(&args, workspace_root(), &[]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{flag:?} stderr: {}",
+            stderr(&output)
+        );
+        let response: serde_json::Value =
+            serde_json::from_str(&stdout(&output)).expect("diff json");
+        assert_eq!(
+            response["file_count"].as_u64(),
+            Some(2),
+            "{flag:?} response: {response:#}"
+        );
+    }
+}
+
+#[test]
 fn commit_shared_query_options_match_before_and_after_the_subcommand() {
     let dir = query_repo();
     let path = dir.path().to_str().unwrap();
