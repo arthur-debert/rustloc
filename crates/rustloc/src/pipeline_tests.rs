@@ -75,11 +75,10 @@ fn theme() -> Theme {
 /// Fixture paths are always passed absolute, so no test changes the process
 /// working directory and the whole module stays parallel-safe.
 fn run(args: &[&str]) -> RunResult {
-    let app = crate::app::app().expect("app must build from embedded assets");
     let argv: Vec<String> = std::iter::once("rustloc".to_string())
         .chain(args.iter().map(|s| s.to_string()))
         .collect();
-    app.run_to_string(crate::app::cli_command(), argv)
+    crate::run_args(argv).expect("app must build from embedded assets")
 }
 
 /// The rendered/serialized stdout of a successful run.

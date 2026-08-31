@@ -66,6 +66,54 @@ fn active_format_u64(value: u64) -> String {
     value.to_formatted_string(&locale)
 }
 
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@e")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@e")
+        .output()
+        .expect("git executable should start");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+fn query_repo() -> TempDir {
+    let dir = TempDir::new().expect("query repo");
+    let root = dir.path();
+    git(root, &["init", "-q"]);
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"query-repo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir(root.join("src")).unwrap();
+    std::fs::write(root.join("src/lib.rs"), "pub fn a() {}\n").unwrap();
+    std::fs::write(root.join("src/small.rs"), "pub fn small() {}\n").unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "baseline"]);
+
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn a() {}\npub fn b() {}\npub fn c() {}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/small.rs"),
+        "pub fn small() {}\n\n#[test]\nfn keeps_tests_visible() {}\n",
+    )
+    .unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "change"]);
+    dir
+}
+
 /// Process-only contract: the built and linked executable reaches `main` and
 /// writes its version to the real stdout stream.
 #[test]
@@ -75,6 +123,284 @@ fn packaged_binary_starts_and_reports_its_version() {
     assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
     assert!(stdout(&output).starts_with("rustloc "));
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn diff_shared_query_options_match_before_and_after_the_subcommand() {
+    let dir = query_repo();
+    let path = dir.path().to_str().unwrap();
+
+    let prefix = rustloc(
+        &[
+            "--type",
+            "code",
+            "--lang",
+            "rust",
+            "--by-file",
+            "--ordering",
+            "-code",
+            "--code-gte",
+            "1",
+            "--top",
+            "2",
+            "--number-fmt",
+            "diff",
+            "-p",
+            path,
+            "HEAD~1..HEAD",
+            "--output",
+            "text",
+        ],
+        workspace_root(),
+        &[],
+    );
+    let suffix = rustloc(
+        &[
+            "diff",
+            "-p",
+            path,
+            "HEAD~1..HEAD",
+            "--type",
+            "code",
+            "--lang",
+            "rust",
+            "--by-file",
+            "--ordering",
+            "-code",
+            "--code-gte",
+            "1",
+            "--top",
+            "2",
+            "--number-fmt",
+            "--output",
+            "text",
+        ],
+        workspace_root(),
+        &[],
+    );
+
+    assert_eq!(
+        prefix.status.code(),
+        Some(0),
+        "prefix stderr: {}",
+        stderr(&prefix)
+    );
+    assert_eq!(
+        suffix.status.code(),
+        Some(0),
+        "suffix stderr: {}",
+        stderr(&suffix)
+    );
+    assert_eq!(stdout(&prefix), stdout(&suffix));
+}
+
+#[test]
+fn commit_shared_query_options_match_before_and_after_the_subcommand() {
+    let dir = query_repo();
+    let path = dir.path().to_str().unwrap();
+
+    let prefix = rustloc(
+        &[
+            "--type",
+            "code",
+            "--lang",
+            "rust",
+            "--by-file",
+            "--ordering",
+            "-code",
+            "--code-gte",
+            "1",
+            "--top",
+            "2",
+            "--number-fmt",
+            "commit",
+            "-p",
+            path,
+            "HEAD",
+            "--output",
+            "text",
+        ],
+        workspace_root(),
+        &[],
+    );
+    let suffix = rustloc(
+        &[
+            "commit",
+            "-p",
+            path,
+            "HEAD",
+            "--type",
+            "code",
+            "--lang",
+            "rust",
+            "--by-file",
+            "--ordering",
+            "-code",
+            "--code-gte",
+            "1",
+            "--top",
+            "2",
+            "--number-fmt",
+            "--output",
+            "text",
+        ],
+        workspace_root(),
+        &[],
+    );
+
+    assert_eq!(
+        prefix.status.code(),
+        Some(0),
+        "prefix stderr: {}",
+        stderr(&prefix)
+    );
+    assert_eq!(
+        suffix.status.code(),
+        Some(0),
+        "suffix stderr: {}",
+        stderr(&suffix)
+    );
+    assert_eq!(stdout(&prefix), stdout(&suffix));
+}
+
+#[test]
+fn count_only_options_fail_for_diff_and_commit_regardless_of_position() {
+    let dir = query_repo();
+    let path = dir.path().to_str().unwrap();
+
+    for args in [
+        vec!["--shows-ratio", "diff", "-p", path, "HEAD~1..HEAD"],
+        vec!["diff", "-p", path, "HEAD~1..HEAD", "--shows-ratio"],
+        vec!["--shows-ratio", "commit", "-p", path, "HEAD"],
+        vec!["commit", "-p", path, "HEAD", "--shows-ratio"],
+    ] {
+        let output = rustloc(&args, workspace_root(), &[]);
+        assert_ne!(
+            output.status.code(),
+            Some(0),
+            "{args:?} should fail, stdout={} stderr={}",
+            stdout(&output),
+            stderr(&output),
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "{args:?} should not write successful output"
+        );
+        assert!(
+            stderr(&output).contains("--shows-ratio")
+                || stderr(&output).contains("unexpected argument"),
+            "{args:?} should name the count-only option, got: {}",
+            stderr(&output)
+        );
+    }
+}
+
+#[test]
+fn root_count_path_fails_with_explicit_diff_or_commit() {
+    let dir = query_repo();
+    let path = dir.path().to_str().unwrap();
+
+    for args in [
+        vec!["/tmp", "diff", "-p", path, "HEAD~1..HEAD"],
+        vec!["/tmp", "commit", "-p", path, "HEAD"],
+        vec!["/tmp", "commit", "HEAD"],
+    ] {
+        let output = rustloc(&args, workspace_root(), &[]);
+        assert_ne!(
+            output.status.code(),
+            Some(0),
+            "{args:?} should fail, stdout={} stderr={}",
+            stdout(&output),
+            stderr(&output),
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "{args:?} should not write successful output"
+        );
+    }
+}
+
+#[test]
+fn bare_and_explicit_count_match_with_shared_query_options() {
+    let dir = TempDir::new().expect("count workspace");
+    let root = dir.path();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"count-workspace\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn a() {}\npub fn b() {}\n\n#[test]\nfn t() {}\n",
+    )
+    .unwrap();
+    let path = root.to_str().unwrap();
+
+    let bare = rustloc(
+        &[
+            "--type",
+            "code",
+            "--lang",
+            "rust",
+            "--by-file",
+            "--ordering",
+            "-code",
+            "--code-gte",
+            "1",
+            "--top",
+            "1",
+            "--number-fmt",
+            path,
+            "--output",
+            "text",
+        ],
+        workspace_root(),
+        &[],
+    );
+    let explicit = rustloc(
+        &[
+            "count",
+            path,
+            "--type",
+            "code",
+            "--lang",
+            "rust",
+            "--by-file",
+            "--ordering",
+            "-code",
+            "--code-gte",
+            "1",
+            "--top",
+            "1",
+            "--number-fmt",
+            "--output",
+            "text",
+        ],
+        workspace_root(),
+        &[],
+    );
+
+    assert_eq!(bare.status.code(), Some(0), "stderr: {}", stderr(&bare));
+    assert_eq!(
+        explicit.status.code(),
+        Some(0),
+        "stderr: {}",
+        stderr(&explicit)
+    );
+    assert_eq!(stdout(&bare), stdout(&explicit));
+}
+
+#[test]
+fn root_help_does_not_advertise_path_before_explicit_commands() {
+    let output = rustloc(&["--help"], workspace_root(), &[]);
+    let help = stdout(&output);
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert!(
+        !help.contains("[PATH] [COMMAND]"),
+        "root help should not advertise a count path before a subcommand:\n{help}"
+    );
 }
 
 /// Process-only contract: a relative path is resolved from the child's actual
