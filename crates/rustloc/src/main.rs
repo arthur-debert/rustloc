@@ -819,10 +819,14 @@ where
 {
     let argv: Vec<String> = args.into_iter().map(Into::into).collect();
     if let Some(message) = count_root_argument_error(&argv) {
-        return Ok(RunResult::Error(message));
+        return Ok(RunResult::Error(run_error_payload(message)));
     }
 
     Ok(app::app()?.run_to_string(app::cli_command(), argv))
+}
+
+fn run_error_payload<T: From<String>>(message: String) -> T {
+    T::from(message)
 }
 
 fn count_root_argument_error(argv: &[String]) -> Option<String> {
