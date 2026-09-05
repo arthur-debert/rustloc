@@ -548,9 +548,21 @@ mod presentation {
         })
     }
 
-    /// Resolve `number_fmt` from the config file and the `--number-fmt`
-    /// override, once per render.
-    fn number_format(matches: &ArgMatches) -> Result<NumberFormat, HookError> {
+    fn count_table_options(matches: &ArgMatches) -> Result<CountTableOptions, HookError> {
+        let config = load_config()?;
+        let number_fmt = config.number_fmt || matches.get_flag("number_fmt");
+
+        Ok(CountTableOptions {
+            shows_ratios: config.shows_ratios || matches.get_flag("shows_ratio"),
+            number_format: if number_fmt {
+                NumberFormat::active()
+            } else {
+                NumberFormat::disabled()
+            },
+        })
+    }
+
+    fn diff_number_format(matches: &ArgMatches) -> Result<NumberFormat, HookError> {
         let config = load_config()?;
         Ok(if config.number_fmt || matches.get_flag("number_fmt") {
             NumberFormat::active()
@@ -559,19 +571,12 @@ mod presentation {
         })
     }
 
-    fn count_table_options(matches: &ArgMatches) -> Result<CountTableOptions, HookError> {
-        Ok(CountTableOptions {
-            shows_ratios: load_config()?.shows_ratios || matches.get_flag("shows_ratio"),
-            number_format: number_format(matches)?,
-        })
-    }
-
     /// `net_only` is read unconditionally because `--net-only` is declared on
     /// both grammars this adapter serves (`diff` and `commit`), and on no
     /// other.
     fn diff_table_options(matches: &ArgMatches) -> Result<DiffTableOptions, HookError> {
         Ok(DiffTableOptions {
-            number_format: number_format(matches)?,
+            number_format: diff_number_format(matches)?,
             net_only: matches.get_flag("net_only"),
         })
     }
