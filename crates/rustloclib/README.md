@@ -11,7 +11,7 @@ A Rust-aware lines-of-code counter library. Unlike generic LOC tools, rustloclib
 Every line is classified into one of six types:
 
 - **code** — production logic lines
-- **tests** — test logic lines (`#[test]`, `#[cfg(test)]`, `tests/`, and whole files a parent module declares only under `cfg(test)`)
+- **tests** — test logic lines (`#[test]`, `#[cfg(test)]`, `tests/`, whole files a parent module declares only under `cfg(test)`, and every file of a crate whose manifest declares `role = "tests"`)
 - **examples** — example logic lines (`examples/`)
 - **docs** — doc comments (`///`, `//!`, `/** */`, `/*! */`)
 - **comments** — regular comments (`//`, `/* */`)
@@ -39,6 +39,23 @@ declares `#[cfg(all(test, unix))] #[path = "archive_tests.rs"] mod tests;`,
 every line of `archive_tests.rs` belongs to the test build, and rustloclib
 counts them as tests. Cargo test targets and the modules only they reach are
 test code for the same reason.
+
+A crate whose whole purpose is testing other crates — a published test
+harness, a shared fixture crate, an unpublished tooling crate — compiles as an
+ordinary library, so the module graph cannot tell. Such a crate declares its
+role in its own manifest:
+
+```toml
+[package.metadata.rustloc]
+role = "tests"
+```
+
+Every analyzed file under that crate's directory then counts its production
+logic as tests. `role = "tests"` is the only value that reclassifies;
+`role = "code"` is the default stated explicitly, and any other value is
+ignored. Diffs read the declaration from each revision they compare, so a
+commit that adds the role shows the crate's lines leaving code and entering
+tests.
 
 `count_directory` and `count_file` stay file-local: given a directory or one
 path, rustloclib does not search parent directories for a manifest, so those

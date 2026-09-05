@@ -41,7 +41,8 @@
 //! - [`WorkspaceInfo`]: Discover Cargo workspace structure
 //! - [`FilterConfig`]: Include/exclude files with glob patterns
 //! - [`ProjectClassification`]: Ask the Cargo module graph which Rust files
-//!   only a `cfg(test)` build reaches
+//!   only a `cfg(test)` build reaches, and the manifests which crates declare
+//!   `[package.metadata.rustloc] role = "tests"`
 //!
 //! ### Stage 2: Data Collection ([`data`])
 //!

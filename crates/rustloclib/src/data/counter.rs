@@ -446,7 +446,8 @@ pub fn count_file_with_filter(path: impl AsRef<Path>, filter: &FilterConfig) -> 
 ///
 /// The backend classifies the file's own syntax; `project` supplies the part
 /// the file cannot know — whether a parent module declaration puts the whole
-/// file behind `cfg(test)`, or whether Cargo builds it as a test target.
+/// file behind `cfg(test)`, whether Cargo builds it as a test target, or
+/// whether its crate's manifest declares `role = "tests"`.
 fn analyze_file_stats(
     registry: &BackendRegistry,
     path: &Path,

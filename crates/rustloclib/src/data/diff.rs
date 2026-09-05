@@ -813,9 +813,11 @@ fn classify_index(repo: &gix::Repository, index: &gix::worktree::Index) -> Proje
 /// Write `entries` to a temporary directory and load the project it forms.
 ///
 /// Module reachability is a property of the whole project — a `mod`
-/// declaration in one file decides whether another file exists at all — so a
-/// snapshot cannot be classified from the changed blobs alone. It is written
-/// out complete, loaded once, and thrown away.
+/// declaration in one file decides whether another file exists at all — and a
+/// crate's `role = "tests"` declaration lives in its manifest rather than in
+/// its sources, so a snapshot cannot be classified from the changed blobs
+/// alone. It is written out complete, loaded once, and thrown away. Each
+/// revision is therefore read with the roles that revision declared.
 ///
 /// Any failure, and any snapshot without a root `Cargo.toml`, yields an empty
 /// classification, which leaves the diff with its file-local numbers.
@@ -1687,6 +1689,10 @@ fn analyze_content_stats(
 }
 
 /// Classify one version of a file, then apply that revision's project context.
+///
+/// `project` carries both facts a file cannot see about itself: whether the
+/// module graph reaches it only under `cfg(test)`, and whether its crate's
+/// manifest declares `role = "tests"`.
 fn analyze_content(
     path: &Path,
     source: &str,
