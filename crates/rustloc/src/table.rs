@@ -19,9 +19,10 @@
 //! It computes no widths, picks no wording, and writes no style tags. Every one
 //! of those is human rendering *policy*, and policy lives in MiniJinja. What
 //! crosses this boundary is typed numbers, optional display text for those
-//! numbers, and the handful of facts the wording depends on (how many rows were
-//! displayed of how many, whether `--top` or a filter did the reducing, and the
-//! optional file-level [`FileChangeType`] on `--by-file` diff rows) — never a
+//! numbers, and the handful of facts the wording and layout depend on (how many
+//! rows were displayed of how many, whether `--top` or a filter did the
+//! reducing, the optional file-level [`FileChangeType`] on `--by-file` diff
+//! rows, and whether `--net-only` asked a diff cell for its net alone) — never a
 //! sentence built from them. The template maps Added/Deleted onto semantic tags;
 //! this module names no style.
 //!
@@ -300,11 +301,20 @@ pub struct DiffView {
     /// Always present, even when zero: whether a zero summary is worth showing
     /// a reader is the template's call, not this module's.
     pub non_rust: DiffValue,
+    /// True when `--net-only` asked for cells showing the signed net alone.
+    ///
+    /// A request, not a layout: every cell still carries its added, removed,
+    /// and net numbers, and the template decides what a net-only cell, column
+    /// width, skipped-changes summary, and legend look like.
+    pub net_only: bool,
 }
 
 impl DiffView {
     /// Build the diff table's payload from its canonical response.
-    pub fn from_queryset(qs: &DiffQuerySet, number_format: NumberFormat) -> Self {
+    ///
+    /// `net_only` passes `--net-only` through untouched; nothing here narrows
+    /// the cells, because which sub-values a reader sees is template policy.
+    pub fn from_queryset(qs: &DiffQuerySet, number_format: NumberFormat, net_only: bool) -> Self {
         let columns = enabled_columns(&qs.line_types);
         DiffView {
             aggregation: aggregation_key(&qs.aggregation),
@@ -339,6 +349,7 @@ impl DiffView {
                 number_format,
             ),
             columns: columns.iter().map(|c| c.key()).collect(),
+            net_only,
         }
     }
 }
@@ -773,11 +784,45 @@ mod tests {
             total_items: 0,
             top_applied: false,
         };
-        let view = DiffView::from_queryset(&qs, disabled_format());
+        let view = DiffView::from_queryset(&qs, disabled_format(), false);
 
         assert_eq!(view.non_rust.added.raw, 0);
         assert_eq!(view.non_rust.removed.raw, 0);
         assert_eq!(view.non_rust.net.raw, 0);
+    }
+
+    #[test]
+    fn diff_view_carries_net_only_as_a_request_without_dropping_numbers() {
+        // The narrowing is the template's to perform. This layer must keep
+        // shipping added and removed even when a reader will not see them, so
+        // the two modes render from one payload and cannot disagree on a net.
+        let qs = DiffQuerySet {
+            aggregation: Aggregation::Total,
+            line_types: LineTypes::new().with_code(),
+            items: vec![],
+            total: LocsDiff {
+                added: sample_locs(2, 0),
+                removed: sample_locs(50, 0),
+            },
+            file_count: 1,
+            metadata: DiffReportMetadata {
+                from_commit: "HEAD".to_string(),
+                to_commit: "working tree".to_string(),
+                non_rust_added: 2,
+                non_rust_removed: 0,
+            },
+            total_items: 0,
+            top_applied: false,
+        };
+
+        let view = DiffView::from_queryset(&qs, disabled_format(), true);
+        assert!(view.net_only);
+        assert_eq!(view.total[0].added.raw, 2);
+        assert_eq!(view.total[0].removed.raw, 50);
+        assert_eq!(view.total[0].net.raw, -48);
+        assert_eq!(view.non_rust.added.raw, 2);
+
+        assert!(!DiffView::from_queryset(&qs, disabled_format(), false).net_only);
     }
 
     #[test]
@@ -813,7 +858,7 @@ mod tests {
             total_items: 3,
             top_applied: false,
         };
-        let view = DiffView::from_queryset(&qs, disabled_format());
+        let view = DiffView::from_queryset(&qs, disabled_format(), false);
 
         assert_eq!(view.rows[0].change_type, Some(FileChangeType::Added));
         assert_eq!(view.rows[1].change_type, Some(FileChangeType::Deleted));

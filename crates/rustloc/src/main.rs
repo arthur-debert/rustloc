@@ -17,6 +17,7 @@
 //! - **Multiple output formats**: Table (default), JSON, YAML, XML, CSV
 //! - **Git diff analysis**: Compare LOC between commits
 //! - **Optional locale grouping**: Add digit separators to count, diff, and commit tables
+//! - **Net-only diffs**: Show each diff cell's signed net change alone with `--net-only`
 //!
 //! ## Usage
 //!
@@ -49,6 +50,9 @@
 //!
 //! # Changes introduced by one commit (same as `rustloc diff R~1..R`)
 //! rustloc commit HEAD
+//!
+//! # Show only the net change in each diff cell
+//! rustloc diff HEAD~5..HEAD --net-only
 //!
 //! # Diff working directory changes (like git diff)
 //! rustloc diff
@@ -103,6 +107,7 @@ Examples:
   rustloc diff --lang typescript       TypeScript changes since last commit
   rustloc diff HEAD~5..HEAD --by-file  Per-file diff between commits
   rustloc diff HEAD~5..HEAD --by-commit  One diff row per commit
+  rustloc diff --net-only              Only the net change per diff cell
   rustloc commit HEAD                  Changes introduced by the last commit")]
 struct Cli {
     #[command(subcommand)]
@@ -145,7 +150,8 @@ Examples:
   rustloc diff main feature --by-file  Two-arg form, per-file breakdown
   rustloc diff main...feature          From their merge base to feature
   rustloc diff HEAD~5..HEAD --by-commit  One row per selected commit
-  rustloc diff -t code                 Only code line changes")]
+  rustloc diff -t code                 Only code line changes
+  rustloc diff --net-only              Net change per cell, no +added/-removed")]
     Diff(DiffArgs),
 
     /// Show the LOC changes introduced by one commit
@@ -163,7 +169,8 @@ Examples:
   rustloc commit HEAD                  Changes introduced by the last commit
   rustloc commit abc1234 --by-file     Per-file changes of one commit
   rustloc commit v1.0.0                Changes introduced by a tagged commit
-  rustloc commit HEAD~3 -t code        Only code line changes of HEAD~3")]
+  rustloc commit HEAD~3 -t code        Only code line changes of HEAD~3
+  rustloc commit HEAD --net-only       Net change per cell, no +added/-removed")]
     Commit(CommitArgs),
 }
 
@@ -375,19 +382,32 @@ parent, exactly as `rustloc diff <revision>~1..<revision>`.")]
     common: DiffCommonArgs,
 }
 
-/// Repository selection shared by `diff` and `commit`.
+/// Repository selection and diff-only display flags shared by `diff` and
+/// `commit`.
 ///
 /// Flattened into both because `commit <revision>` is defined as
 /// `diff <revision>~1..<revision>`: the two commands must accept the same
-/// repository flag with identical semantics. The shared query and
-/// human-display flags live in [`QueryArgs`] as global top-level args, so a
-/// prefix form such as `rustloc --type code diff ...` reaches the same
-/// selected-command matches as the suffix form.
+/// flags with identical semantics. Flags that also apply to `count` live in
+/// [`QueryArgs`] as global top-level args, so a prefix form such as
+/// `rustloc --type code diff ...` reaches the same selected-command matches as
+/// the suffix form. `--net-only` is not among them: a count cell is a single
+/// number and has no net to narrow to.
 #[derive(Args, Clone)]
 struct DiffCommonArgs {
     /// Path to the repository
     #[arg(short = 'p', long = "path", default_value = ".")]
     path: String,
+
+    /// Show only each cell's signed net change in human tables
+    #[arg(long = "net-only")]
+    #[arg(long_help = "\
+Show only the signed net change in each human-table cell, instead of the
+`+added/-removed/net` triple. Applies to data rows, the totals row, and the
+skipped-changes summary.
+
+A human-table display option: line-type selection, digit grouping, and the
+json/yaml/xml/csv data shapes are unchanged.")]
+    net_only: bool,
 }
 
 /// Command handlers — the dispatch boundary.
@@ -469,10 +489,11 @@ mod handlers {
 ///   `diff_table` templates. `line_types` picks the columns here, at render
 ///   time. Count tables also resolve the `shows_ratios` app setting and the
 ///   `--shows-ratio` override here because that row is human presentation
-///   only. Both tables resolve `number_fmt` and `--number-fmt` here, once per
-///   render, so typed command data stays unformatted while human display values
-///   use the active locale. The template still owns every word, width, and
-///   style tag a reader sees (see [`crate::table`]).
+///   only, and diff tables resolve `--net-only` here for the same reason. Both
+///   tables resolve `number_fmt` and `--number-fmt` here, once per render, so
+///   typed command data stays unformatted while human display values use the
+///   active locale. The template still owns every word, width, and style tag a
+///   reader sees (see [`crate::table`]).
 mod presentation {
     use crate::config::RustlocConfig;
     use crate::number_format::NumberFormat;
@@ -493,10 +514,20 @@ mod presentation {
         Table,
     }
 
-    /// Human-table settings resolved at the render boundary.
-    struct TableOptions {
+    /// Count-table settings resolved at the render boundary.
+    struct CountTableOptions {
         shows_ratios: bool,
         number_format: NumberFormat,
+    }
+
+    /// Diff-table settings resolved at the render boundary.
+    ///
+    /// `net_only` is carried as a fact rather than applied here: which
+    /// sub-values a cell shows, how wide the column then becomes, and what the
+    /// legend says are template decisions (see [`crate::table::DiffView`]).
+    struct DiffTableOptions {
+        number_format: NumberFormat,
+        net_only: bool,
     }
 
     /// Read the render target from standout's injected `_output_mode` arg.
@@ -531,11 +562,11 @@ mod presentation {
         })
     }
 
-    fn count_table_options(matches: &ArgMatches) -> Result<TableOptions, HookError> {
+    fn count_table_options(matches: &ArgMatches) -> Result<CountTableOptions, HookError> {
         let config = load_config()?;
         let number_fmt = config.number_fmt || matches.get_flag("number_fmt");
 
-        Ok(TableOptions {
+        Ok(CountTableOptions {
             shows_ratios: config.shows_ratios || matches.get_flag("shows_ratio"),
             number_format: if number_fmt {
                 NumberFormat::active()
@@ -551,6 +582,16 @@ mod presentation {
             NumberFormat::active()
         } else {
             NumberFormat::disabled()
+        })
+    }
+
+    /// `net_only` is read unconditionally because `--net-only` is declared on
+    /// both grammars this adapter serves (`diff` and `commit`), and on no
+    /// other.
+    fn diff_table_options(matches: &ArgMatches) -> Result<DiffTableOptions, HookError> {
+        Ok(DiffTableOptions {
+            number_format: diff_number_format(matches)?,
+            net_only: matches.get_flag("net_only"),
         })
     }
 
@@ -720,10 +761,14 @@ mod presentation {
         match target(matches) {
             Target::Data => Ok(data),
             Target::Csv => encode(diff_csv_rows(&decode::<DiffQuerySet>(data)?)),
-            Target::Table => encode(DiffView::from_queryset(
-                &decode::<DiffQuerySet>(data)?,
-                diff_number_format(matches)?,
-            )),
+            Target::Table => {
+                let options = diff_table_options(matches)?;
+                encode(DiffView::from_queryset(
+                    &decode::<DiffQuerySet>(data)?,
+                    options.number_format,
+                    options.net_only,
+                ))
+            }
         }
     }
 }

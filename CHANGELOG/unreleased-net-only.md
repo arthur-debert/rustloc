@@ -1,0 +1,1 @@
+- Add `--net-only` to `rustloc diff` and `rustloc commit`. Each human-table cell then shows its signed net change alone instead of the `+added/-removed/net` triple, in data rows, `--by-commit` rows, the totals row, and the `Skipped changes` summary. Line-type selection, digit grouping, and the JSON, YAML, XML, and CSV shapes are unchanged, and the default output is unchanged.

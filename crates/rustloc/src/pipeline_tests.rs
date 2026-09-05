@@ -1464,6 +1464,217 @@ fn number_fmt_does_not_change_diff_structured_output() {
 }
 
 // ---------------------------------------------------------------------------
+// `--net-only`
+// ---------------------------------------------------------------------------
+//
+// `--net-only` replaces each human-table cell's `+added/-removed/net` triple
+// with its signed net alone. [`wide_repo`] is the fixture these use because one
+// run of it produces all three signs at once: `alpha` is rewritten smaller so
+// its nets go negative, `beta` grows so its code net goes positive, and
+// `beta`'s untouched line types net zero.
+//
+// The sharp probe for "the counts are gone" is the `/` separator. It appears
+// nowhere else on a crate-aggregated diff line — not in the labels
+// (`alpha`, `beta`), not in the footer (`Total (2 crates)`) — so a line
+// carrying one is a cell that still renders the triple.
+
+/// Data rows and the totals row show the signed net alone, for a negative, a
+/// positive, and a zero net.
+#[test]
+fn net_only_replaces_each_cell_with_its_signed_net() {
+    let dir = wide_repo();
+    let out = stdout(&[
+        "diff",
+        "-p",
+        dir.path().to_str().unwrap(),
+        "--by-crate",
+        "--net-only",
+        "--output",
+        "text",
+    ]);
+
+    // alpha: `+0/-50/-50 +0/-44/-44 +0/-50/-50 +0/-254/-254` becomes the nets.
+    let alpha = line_containing(&out, "alpha");
+    assert_eq!(
+        values_of(alpha, "alpha"),
+        vec!["-50", "-44", "-50", "-254"],
+        "negative nets should render alone in:\n{out}"
+    );
+
+    // beta: a positive code net beside line types that did not change at all.
+    let beta = line_containing(&out, "beta");
+    assert_eq!(
+        values_of(beta, "beta"),
+        vec!["2", "0", "0", "2"],
+        "positive and zero nets should render alone in:\n{out}"
+    );
+
+    let total = line_starting(&out, "Total (");
+    assert_eq!(
+        values_of(total, "Total (2 crates)"),
+        vec!["-48", "-44", "-50", "-252"],
+        "the totals row should render its nets alone in:\n{out}"
+    );
+}
+
+/// The legend names what the cells now hold. Left unchanged it would keep
+/// promising a notation the table no longer prints.
+#[test]
+fn net_only_replaces_the_notation_legend() {
+    let dir = wide_repo();
+    let args = ["diff", "-p", dir.path().to_str().unwrap(), "--by-crate"];
+
+    let mut net_only = args.to_vec();
+    net_only.extend_from_slice(&["--net-only", "--output", "text"]);
+    let out = stdout(&net_only);
+    assert!(out.contains("(net)"), "missing net-only legend in:\n{out}");
+    assert!(
+        !out.contains("(+added / -removed / net)"),
+        "the triple's legend should be gone in:\n{out}"
+    );
+
+    // The default is the flag's whole point of comparison: without it the
+    // notation and its legend must both survive untouched.
+    let mut default = args.to_vec();
+    default.extend_from_slice(&["--output", "text"]);
+    let plain = stdout(&default);
+    assert!(
+        plain.contains("(+added / -removed / net)"),
+        "the default legend should be unchanged in:\n{plain}"
+    );
+    assert!(
+        line_containing(&plain, "alpha").contains("+0/-50/-50"),
+        "the default cells should be unchanged in:\n{plain}"
+    );
+}
+
+/// The skipped-changes summary is a cell in prose, and it narrows with the
+/// rest of the table rather than staying the last place the triple survives.
+#[test]
+fn net_only_narrows_the_skipped_changes_summary() {
+    let dir = wide_repo();
+    let args = ["diff", "-p", dir.path().to_str().unwrap(), "--by-crate"];
+
+    let mut net_only = args.to_vec();
+    net_only.extend_from_slice(&["--net-only", "--output", "text"]);
+    assert_eq!(
+        line_starting(&stdout(&net_only), "Skipped changes:"),
+        "Skipped changes: 2 net"
+    );
+
+    let mut default = args.to_vec();
+    default.extend_from_slice(&["--output", "text"]);
+    assert_eq!(
+        line_starting(&stdout(&default), "Skipped changes:"),
+        "Skipped changes: +2 / -0 / 2 net"
+    );
+}
+
+/// `--net-only` chooses which sub-values a cell shows; it must not also decide
+/// which columns exist or how their digits are punctuated. Both controls are
+/// exercised together so a regression that swallowed one would still fail.
+#[test]
+fn net_only_preserves_line_type_selection_and_digit_grouping() {
+    let dir = large_diff_repo();
+    let format = crate::number_format::NumberFormat::active();
+
+    let out = stdout(&[
+        "diff",
+        "-p",
+        dir.path().to_str().unwrap(),
+        "--by-file",
+        "--type",
+        "code",
+        "--net-only",
+        "--number-fmt",
+        "--output",
+        "text",
+    ]);
+
+    let header = line_containing(&out, "File");
+    assert_eq!(
+        header.split_whitespace().collect::<Vec<_>>(),
+        vec!["File", "Code"],
+        "`--type code` should still narrow the columns in:\n{out}"
+    );
+
+    // 3805 lines added in one file, 1200 removed in another: grouped and
+    // signed exactly as the triple's net sub-field would have shown them.
+    assert!(
+        line_containing(&out, "src/new.rs").ends_with(&format.i64(3805)),
+        "a grouped positive net should survive in:\n{out}"
+    );
+    assert!(
+        line_containing(&out, "src/old.rs").ends_with(&format.i64(-1200)),
+        "a grouped negative net should survive in:\n{out}"
+    );
+    assert_eq!(
+        line_starting(&out, "Skipped changes:"),
+        format!("Skipped changes: {} net", format.i64(3805))
+    );
+}
+
+/// A human-table display option must leave every machine-readable shape alone.
+#[test]
+fn net_only_does_not_change_diff_or_commit_structured_output() {
+    let dir = commit_repo();
+    let path = path_of(&dir);
+
+    for mode in ["json", "yaml", "xml", "csv"] {
+        for command in [
+            vec!["diff", "-p", path.as_str(), "HEAD~1..HEAD"],
+            vec!["commit", "-p", path.as_str(), "HEAD"],
+        ] {
+            let mut plain = command.clone();
+            plain.extend_from_slice(&["--by-file", "--output", mode]);
+            let mut net_only = command.clone();
+            net_only.extend_from_slice(&["--by-file", "--net-only", "--output", mode]);
+
+            assert_eq!(
+                stdout(&net_only),
+                stdout(&plain),
+                "--net-only should not change {command:?} {mode} output"
+            );
+        }
+    }
+}
+
+/// A count cell is a single number with no net to narrow to, so the flag is
+/// declared on the diff grammars only — on the default route and the explicit
+/// `count` subcommand alike.
+#[test]
+fn net_only_is_not_registered_on_count() {
+    let dir = workspace();
+    let path = path_of(&dir);
+
+    let bare = error(&["--net-only", &path]);
+    assert!(
+        bare.contains("--net-only"),
+        "the default count route should reject --net-only, got: {bare}"
+    );
+
+    let explicit = error(&["count", &path, "--net-only"]);
+    assert!(
+        explicit.contains("--net-only"),
+        "the count subcommand should reject --net-only, got: {explicit}"
+    );
+}
+
+/// The value cells of one rendered table line, with the label column removed.
+///
+/// Splitting on whitespace would fold the label's own words into the values,
+/// so the caller passes the label text to strip first. Every remaining field
+/// is asserted, which is what makes "the triple is gone" observable: a `/`
+/// would show up inside a value rather than pass silently.
+#[track_caller]
+fn values_of<'a>(line: &'a str, label: &str) -> Vec<&'a str> {
+    let rest = line
+        .strip_prefix(label)
+        .unwrap_or_else(|| panic!("line {line:?} does not start with label {label:?}"));
+    rest.split_whitespace().collect()
+}
+
+// ---------------------------------------------------------------------------
 // Approved render fixtures
 // ---------------------------------------------------------------------------
 //
@@ -1942,6 +2153,29 @@ fn diff_by_crate_term_debug_matches_the_approved_fixture() {
     );
 }
 
+/// The same table under `--net-only`, in both stable human modes. The text
+/// fixture pins the narrowed columns and the summary and legend wording; the
+/// term-debug fixture pins that a net cell carries no `[additions]` /
+/// `[deletions]` tag, which is the half text mode strips and cannot show.
+#[test]
+fn diff_by_crate_net_only_tables_match_the_approved_fixtures() {
+    let dir = wide_repo();
+    for mode in ["text", "term-debug"] {
+        assert_render_fixture(
+            &format!("diff_by_crate_net_only.{mode}"),
+            &stdout(&[
+                "diff",
+                "-p",
+                dir.path().to_str().unwrap(),
+                "--by-crate",
+                "--net-only",
+                "--output",
+                mode,
+            ]),
+        );
+    }
+}
+
 /// A two-commit repo whose range contains one added file, one deleted file,
 /// and one additions-only modified file. Status colour must come from
 /// `FileChangeType`, not from +added/-removed counts.
@@ -2247,6 +2481,7 @@ fn commit_matches_the_equivalent_diff_range_under_representative_options() {
         &["--by-file", "-o", "-code", "--top", "2"],
         &["-t", "code,tests"],
         &["--by-file", "--code-gte", "1"],
+        &["--by-file", "--net-only"],
         &["--include", "src/**", "--by-module"],
         &["--output", "json", "--by-file"],
         &["--output", "csv", "--by-file"],
@@ -2746,6 +2981,33 @@ fn by_commit_tables_match_the_approved_fixtures() {
                 dir.path().to_str().unwrap(),
                 "HEAD~3..HEAD",
                 "--by-commit",
+                "--output",
+                mode,
+            ]),
+        );
+    }
+}
+
+/// The narrowed by-commit table, pinned in both stable human modes.
+///
+/// A property test cannot separate a `--by-commit` cell from its label the way
+/// it can for crate rows: the labels are commit subjects, so any character a
+/// cell could be recognised by is a character a subject may legitimately
+/// contain. Pinning the whole string is what makes the narrowing observable
+/// here — column widths, subject truncation, and the legend included.
+#[test]
+fn by_commit_net_only_table_matches_the_approved_fixture() {
+    let dir = by_commit_repo();
+    for mode in ["text", "term-debug"] {
+        assert_render_fixture(
+            &format!("diff_by_commit_net_only.{mode}"),
+            &stdout(&[
+                "diff",
+                "-p",
+                dir.path().to_str().unwrap(),
+                "HEAD~3..HEAD",
+                "--by-commit",
+                "--net-only",
                 "--output",
                 mode,
             ]),
