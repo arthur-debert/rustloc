@@ -50,7 +50,17 @@ rustloc --lang python                # analyze Python files only
 rustloc --lang rust,python           # analyze Rust and Python files
 rustloc -i "src/**/*.rs"             # include glob
 rustloc -e "**/generated/**"         # exclude glob
+rustloc crates/my-lib                # count one path
 ```
+
+The positional path bounds what is counted. Inside a Cargo workspace, rustloc
+still loads the whole workspace — the module graph is what tells it which files
+only a `cfg(test)` build reaches — but reports only files under the given path,
+so `rustloc count crates/my-lib` and running `rustloc` from inside
+`crates/my-lib` both count that member, not the workspace. Row labels stay
+relative to the workspace root (`crates/my-lib/src/lib.rs`). `-c my-lib`
+selects a crate by name instead, and combining the two counts their
+intersection.
 
 ![by-file output](https://raw.githubusercontent.com/arthur-debert/rustloc/main/assets/output-by-file.png)
 

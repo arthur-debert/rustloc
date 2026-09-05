@@ -47,7 +47,8 @@
 //!
 //! Parse files and collect statistics:
 //! - [`gather_stats`]: Parse a single file into [`Locs`]
-//! - [`count_workspace`]: Count all files, returns [`CountResult`]
+//! - [`count_workspace`]: Count the files under a path in a Cargo workspace,
+//!   returns [`CountResult`]
 //! - [`diff_revspec`]: Compare commits via a git revspec string, returns [`DiffResult`]
 //! - [`diff_by_commit`]: Diff every commit a revspec selects against its first
 //!   parent, returns a [`DiffResult`] with per-commit records

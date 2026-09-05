@@ -458,6 +458,40 @@ fn dot_resolves_from_the_child_process_working_directory() {
     assert_eq!(response["total"]["code"], 1);
 }
 
+/// Process-only contract: with no PATH argument the count is scoped by the
+/// child's *own* working directory. Inside a workspace member that means the
+/// member, even though Cargo resolves its manifest to the whole workspace.
+#[test]
+fn a_bare_count_inside_a_member_is_scoped_to_that_member() {
+    let dir = TempDir::new().expect("member workspace fixture");
+    let root = dir.path();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crate-a\", \"crate-b\"]\nresolver = \"2\"\n",
+    )
+    .unwrap();
+    for (name, source) in [
+        ("crate-a", "pub fn a() {}\npub fn b() {}\n"),
+        ("crate-b", "pub fn c() {}\n"),
+    ] {
+        std::fs::create_dir_all(root.join(name).join("src")).unwrap();
+        std::fs::write(
+            root.join(name).join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        )
+        .unwrap();
+        std::fs::write(root.join(name).join("src/lib.rs"), source).unwrap();
+    }
+
+    let output = rustloc(&["--output", "json"], &root.join("crate-a"), &[]);
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    let response: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("valid count response");
+    assert_eq!(response["file_count"], 1);
+    assert_eq!(response["total"]["code"], 2);
+}
+
 /// Process-only contract: Standout's final writer creates the requested file
 /// and does not duplicate those bytes to the executable's stdout stream.
 #[test]

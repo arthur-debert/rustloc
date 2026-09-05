@@ -170,8 +170,22 @@ Examples:
 /// Count-only arguments used by the default route and explicit `count`.
 #[derive(Args, Clone, Default)]
 struct CountArgs {
-    /// Path to analyze
+    /// Path to analyze [file, directory, or Cargo workspace]
     #[arg(default_value = ".")]
+    #[arg(long_help = "\
+Path to analyze. Defaults to the current directory.
+
+Only files under PATH are counted. Inside a Cargo workspace rustloc still
+loads the whole workspace, because the module graph is what says which files
+only a cfg(test) build reaches, but it reports just the files under PATH:
+
+  rustloc count crates/my-lib    Count that member, not the whole workspace
+  rustloc count src/data         Count one directory
+  rustloc count src/lib.rs       Count one file
+
+Row labels stay relative to the workspace root, so a member's files still read
+as crates/my-lib/src/lib.rs. Use -c/--crate to select a crate by name; a path
+and -c narrow together.")]
     path: String,
 
     /// Show a percentage summary row below the count total
