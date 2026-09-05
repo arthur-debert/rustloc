@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-- Fix `rustloc count <path>` reporting the whole Cargo workspace when the path is a workspace member. The positional path now bounds the report — `rustloc count crates/my-lib`, `rustloc count crates/my-lib/Cargo.toml`, and running `rustloc` from inside that directory all count only that member — while the full workspace is still loaded so `cfg(test)` classification stays correct. Counting the workspace root is unchanged, row labels stay relative to the workspace root, and a path combined with `-c/--crate` counts their intersection (#168).
+- Fix `rustloc count <member-path>` counting unrelated Cargo workspace members. Member directories, member manifests, and running from a member directory now select that member while preserving workspace test classification and row labels. Crate filters narrow the selection further; counting the workspace root still includes every member (#168).
 
 ## 0.26.0 - 2026-08-31
 

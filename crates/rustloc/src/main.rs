@@ -175,17 +175,17 @@ struct CountArgs {
     #[arg(long_help = "\
 Path to analyze. Defaults to the current directory.
 
-Only files under PATH are counted. Inside a Cargo workspace rustloc still
-loads the whole workspace, because the module graph is what says which files
-only a cfg(test) build reaches, but it reports just the files under PATH:
+A member directory or Cargo.toml counts that member, retaining workspace
+context for cfg(test) classification and workspace-relative labels.
+The workspace root counts every member, including members outside its directory.
+A member path combined with -c/--crate counts their intersection.
 
-  rustloc count crates/my-lib    Count that member, not the whole workspace
+  rustloc count crates/my-lib    Count one workspace member
   rustloc count src/data         Count one directory
   rustloc count src/lib.rs       Count one file
 
-Row labels stay relative to the workspace root, so a member's files still read
-as crates/my-lib/src/lib.rs. Use -c/--crate to select a crate by name; a path
-and -c narrow together.")]
+Plain files and directories without Cargo.toml use file-local classification
+and labels relative to the requested path.")]
     path: String,
 
     /// Show a percentage summary row below the count total

@@ -53,14 +53,13 @@ rustloc -e "**/generated/**"         # exclude glob
 rustloc crates/my-lib                # count one path
 ```
 
-The positional path bounds what is counted. Inside a Cargo workspace, rustloc
-still loads the whole workspace — the module graph is what tells it which files
-only a `cfg(test)` build reaches — but reports only files under the given path,
-so `rustloc count crates/my-lib` and running `rustloc` from inside
-`crates/my-lib` both count that member, not the workspace. Row labels stay
-relative to the workspace root (`crates/my-lib/src/lib.rs`). `-c my-lib`
-selects a crate by name instead, and combining the two counts their
-intersection.
+`rustloc count crates/my-lib` counts that member, as does running `rustloc`
+from its directory or passing its `Cargo.toml`. Member counts retain workspace
+context for `cfg(test)` classification and workspace-relative row labels.
+Counting the workspace root includes every member, including members outside
+its directory. Combine a member path with `-c my-lib` to count their
+intersection. Plain files and directories without a `Cargo.toml` use file-local
+classification and labels relative to the requested path.
 
 ![by-file output](https://raw.githubusercontent.com/arthur-debert/rustloc/main/assets/output-by-file.png)
 

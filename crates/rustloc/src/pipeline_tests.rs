@@ -256,21 +256,42 @@ fn count_of_the_workspace_root_still_reports_every_member() {
     assert_eq!(parsed.items.len(), 2);
 }
 
-/// A plain directory inside a workspace stays a directory count: it reports
-/// what is under it, and (by design) reads no Cargo manifest above it, so the
-/// numbers are file-local.
 #[test]
-fn count_of_a_directory_inside_a_workspace_reports_only_that_directory() {
+fn count_of_a_member_manifest_matches_its_directory_and_intersects_crate_selection() {
     let dir = member_workspace();
-    let nested = dir.path().join("crate-a").join("src");
-    let nested = nested.to_str().unwrap();
-
-    let parsed: CountQuerySet =
-        serde_json::from_str(&stdout(&[nested, "--by-file", "--output", "json"]))
+    let member = dir.path().join("crate-a");
+    for path in [&member, &member.join("Cargo.toml")] {
+        for (name, count) in [("crate-a", 3), ("crate-b", 0)] {
+            let parsed: CountQuerySet = serde_json::from_str(&stdout(&[
+                "count",
+                path.to_str().unwrap(),
+                "-c",
+                name,
+                "--output",
+                "json",
+            ]))
             .expect("count response");
+            assert_eq!(parsed.total.code, count);
+        }
+    }
+}
 
-    assert_eq!(parsed.total.code, 3);
-    assert_eq!(parsed.items.len(), 1);
+#[test]
+fn count_of_nested_directories_and_files_is_bounded_to_the_requested_path() {
+    let dir = member_workspace();
+    for relative in ["crate-a/src", "crate-a/src/lib.rs"] {
+        let nested = dir.path().join(relative);
+        let parsed: CountQuerySet = serde_json::from_str(&stdout(&[
+            "count",
+            nested.to_str().unwrap(),
+            "--by-file",
+            "--output",
+            "json",
+        ]))
+        .expect("count response");
+        assert_eq!(parsed.total.code, 3);
+        assert_eq!(parsed.file_count, 1);
+    }
 }
 
 // ---------------------------------------------------------------------------
