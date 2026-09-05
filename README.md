@@ -48,10 +48,18 @@ rustloc --lang rust,typescript       # analyze Rust and TypeScript files
 rustloc -c my-lib                    # restrict to a specific crate
 rustloc --lang python                # analyze Python files only
 rustloc --lang rust,python           # analyze Rust and Python files
-rustloc -i "src/**/*.rs"             # include glob
+rustloc -i "crates/my-lib/**"        # include glob
 rustloc -e "**/generated/**"         # exclude glob
 rustloc crates/my-lib                # count one path
 ```
+
+`-i` and `-e` match the path relative to the root of what is analyzed: the
+Cargo workspace root, the counted directory, the counted file's directory, or
+the repository root for `diff` and `commit`. That is the same path a
+`--by-file` row shows, so a row's label is a glob that selects it, and one
+written glob means the same thing in `count` and in `diff`. A glob that matches
+no file is reported beside the table (and as `unmatched_globs` in JSON, YAML,
+and XML) rather than silently filtering nothing.
 
 `rustloc count crates/my-lib` counts that member, as does running `rustloc`
 from its directory or passing its `Cargo.toml`. Member counts retain workspace

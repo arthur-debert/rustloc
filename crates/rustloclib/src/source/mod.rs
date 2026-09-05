@@ -4,7 +4,8 @@
 //! files to count. It provides:
 //!
 //! - **Workspace discovery**: Find crates in a Cargo workspace
-//! - **File filtering**: Include/exclude files with glob patterns
+//! - **File filtering**: Include/exclude files with glob patterns, matched
+//!   against paths relative to the analyzed root
 //! - **Project classification**: Ask the Cargo module graph which Rust files
 //!   only the test build reaches
 //!
@@ -25,6 +26,6 @@ pub mod filter;
 pub mod project;
 pub mod workspace;
 
-pub use filter::{discover_files, discover_files_in_dirs, FilterConfig};
+pub use filter::{discover_candidates, discover_candidates_in_dirs, FilterConfig};
 pub use project::ProjectClassification;
 pub use workspace::{CrateInfo, WorkspaceInfo};

@@ -6,6 +6,8 @@
 
 - Fix `rustloc count <member-path>` counting unrelated Cargo workspace members. Member directories, member manifests, and running from a member directory now select that member while preserving workspace test classification and row labels. Crate filters narrow the selection further; counting the workspace root still includes every member (#168).
 - Add `--net-only` to `rustloc diff` and `rustloc commit`. Each human-table cell then shows its signed net change alone instead of the `+added/-removed/net` triple, in data rows, `--by-commit` rows, the totals row, and the `Skipped changes` summary. Line-type selection, digit grouping, and the JSON, YAML, XML, and CSV shapes are unchanged, and the default output is unchanged.
+- Fix `rustloc count -i/-e` matching globs against absolute paths, which made a repo-relative glob a silent no-op. Count and diff now both match globs against the path relative to the analyzed root — the Cargo workspace root, the counted directory or file's directory, or the repository root — which is the path a `--by-file` row already shows. A glob that matches no file is reported beside the table and as `unmatched_globs` in JSON, YAML, and XML (#167).
+- Report a glob-excluded single file as excluded by `-i`/`-e` rather than as an unsupported source file, so the message names the request that rejected it (#167).
 
 ## 0.26.0 - 2026-08-31
 

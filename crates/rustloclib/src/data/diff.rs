@@ -282,6 +282,10 @@ pub struct DiffResult {
     /// Lines removed in files skipped by the active language selection.
     #[serde(default)]
     pub non_rust_removed: u64,
+    /// Include/exclude globs, as written, that matched none of the changed
+    /// files this diff considered. Empty when every glob found something.
+    #[serde(default)]
+    pub unmatched_globs: Vec<String>,
 }
 
 impl DiffResult {
@@ -298,6 +302,7 @@ impl DiffResult {
             commits: self.commits.iter().map(|c| c.filter(types)).collect(),
             non_rust_added: self.non_rust_added,
             non_rust_removed: self.non_rust_removed,
+            unmatched_globs: self.unmatched_globs.clone(),
         }
     }
 }
@@ -451,6 +456,9 @@ pub fn diff_workdir(
     let mut file_count = 0;
     let mut files = Vec::new();
     let mut crate_stats: HashMap<String, CrateDiffStats> = HashMap::new();
+    // Every changed file a backend can analyze — what the globs get judged
+    // against, since a glob that matches none of them narrowed nothing.
+    let mut candidates: Vec<PathBuf> = Vec::new();
 
     // Determine what to include based on aggregation level
     let include_files = matches!(
@@ -464,6 +472,10 @@ pub fn diff_workdir(
 
     for change in changes {
         let path = change.path.clone();
+
+        // Collection already dropped the files no backend analyzes, so every
+        // change reaching here is a candidate for the globs.
+        candidates.push(path.clone());
 
         // Apply glob filter
         if !options.file_filter.matches(&path) {
@@ -532,6 +544,9 @@ pub fn diff_workdir(
         commits: Vec::new(),
         non_rust_added,
         non_rust_removed,
+        unmatched_globs: options
+            .file_filter
+            .unmatched_globs(candidates.iter().map(PathBuf::as_path)),
     };
 
     Ok(result.filter(options.line_types))
@@ -973,6 +988,9 @@ pub fn diff_revspec(
     let mut crate_stats: HashMap<String, CrateDiffStats> = HashMap::new();
     let mut non_rust_added: u64 = 0;
     let mut non_rust_removed: u64 = 0;
+    // Every changed file a backend can analyze — what the globs get judged
+    // against, since a glob that matches none of them narrowed nothing.
+    let mut candidates: Vec<PathBuf> = Vec::new();
 
     let include_files = matches!(
         options.aggregation,
@@ -1000,6 +1018,8 @@ pub fn diff_revspec(
             non_rust_removed += old_lines.saturating_sub(new_lines);
             continue;
         }
+
+        candidates.push(path.clone());
 
         if !options.file_filter.matches(&path) {
             continue;
@@ -1053,6 +1073,9 @@ pub fn diff_revspec(
         commits: Vec::new(),
         non_rust_added,
         non_rust_removed,
+        unmatched_globs: options
+            .file_filter
+            .unmatched_globs(candidates.iter().map(PathBuf::as_path)),
     };
 
     Ok(result.filter(options.line_types))
@@ -1139,6 +1162,9 @@ pub fn diff_by_commit(
 
     let mut total = LocsDiff::new();
     let mut touched: HashSet<PathBuf> = HashSet::new();
+    // Every changed file a backend can analyze, across all selected commits —
+    // what the globs get judged against.
+    let mut candidates: HashSet<PathBuf> = HashSet::new();
     let mut non_rust_added: u64 = 0;
     let mut non_rust_removed: u64 = 0;
     let mut commits = Vec::with_capacity(commit_ids.len());
@@ -1211,6 +1237,8 @@ pub fn diff_by_commit(
                 continue;
             }
 
+            candidates.insert(path.clone());
+
             if !options.file_filter.matches(&path) {
                 continue;
             }
@@ -1246,6 +1274,9 @@ pub fn diff_by_commit(
         commits,
         non_rust_added,
         non_rust_removed,
+        unmatched_globs: options
+            .file_filter
+            .unmatched_globs(candidates.iter().map(PathBuf::as_path)),
     };
 
     Ok(result.filter(options.line_types))
@@ -1674,8 +1705,13 @@ fn compute_file_diff(
     })
 }
 
+/// Whether the command's language selection has a backend for this path.
+///
+/// A diff asks separately from [`FilterConfig::matches`] because an
+/// unsupported changed file is not dropped: its lines land in the
+/// skipped-changes summary.
 fn is_analyzed_source_path(path: &Path, filter: &FilterConfig) -> bool {
-    BackendRegistry::new().supports_path_with_languages(path, &filter.languages)
+    filter.supports(path)
 }
 
 fn analyze_content_stats(
@@ -2704,6 +2740,7 @@ mod tests {
             }],
             non_rust_added: 7,
             non_rust_removed: 3,
+            unmatched_globs: Vec::new(),
         };
         let filtered = result.filter(LineTypes::code_only());
         // Metadata preserved

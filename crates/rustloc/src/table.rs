@@ -22,9 +22,9 @@
 //! numbers, and the handful of facts the wording and layout depend on (how many
 //! rows were displayed of how many, whether `--top` or a filter did the
 //! reducing, the optional file-level [`FileChangeType`] on `--by-file` diff
-//! rows, and whether `--net-only` asked a diff cell for its net alone) — never a
-//! sentence built from them. The template maps Added/Deleted onto semantic tags;
-//! this module names no style.
+//! rows, whether `--net-only` asked a diff cell for its net alone, and which
+//! globs matched no file) — never a sentence built from them. The template maps
+//! Added/Deleted onto semantic tags; this module names no style.
 //!
 //! That split is what makes the two readable in isolation: the templates are
 //! the whole answer to "what does a user see?", and this module is the whole
@@ -173,6 +173,9 @@ pub struct CountView {
     /// Optional percentage row values, positionally matching `columns`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ratios: Option<Vec<RatioValue>>,
+    /// Globs from the request that matched no file, as written. The template
+    /// owns the sentence that reports them; this is the fact behind it.
+    pub unmatched_globs: Vec<String>,
 }
 
 impl CountView {
@@ -217,6 +220,7 @@ impl CountView {
             ),
             columns: columns.iter().map(|c| c.key()).collect(),
             ratios,
+            unmatched_globs: qs.unmatched_globs.clone(),
         }
     }
 }
@@ -307,6 +311,9 @@ pub struct DiffView {
     /// and net numbers, and the template decides what a net-only cell, column
     /// width, skipped-changes summary, and legend look like.
     pub net_only: bool,
+    /// Globs from the request that matched no changed file, as written. The
+    /// template owns the sentence that reports them.
+    pub unmatched_globs: Vec<String>,
 }
 
 impl DiffView {
@@ -350,6 +357,7 @@ impl DiffView {
             ),
             columns: columns.iter().map(|c| c.key()).collect(),
             net_only,
+            unmatched_globs: qs.unmatched_globs.clone(),
         }
     }
 }
@@ -487,6 +495,7 @@ mod tests {
             ],
             files: vec![],
             modules: vec![],
+            unmatched_globs: Vec::new(),
         }
     }
 
@@ -577,6 +586,7 @@ mod tests {
             metadata: CountReportMetadata::default(),
             total_items: 0,
             top_applied: false,
+            unmatched_globs: Vec::new(),
         };
         let view = CountView::from_queryset(
             &qs,
@@ -714,6 +724,7 @@ mod tests {
             metadata: CountReportMetadata::default(),
             total_items: 0,
             top_applied: false,
+            unmatched_globs: Vec::new(),
         };
         let view = CountView::from_queryset(&qs, true, disabled_format());
 
@@ -783,6 +794,7 @@ mod tests {
             },
             total_items: 0,
             top_applied: false,
+            unmatched_globs: Vec::new(),
         };
         let view = DiffView::from_queryset(&qs, disabled_format(), false);
 
@@ -813,6 +825,7 @@ mod tests {
             },
             total_items: 0,
             top_applied: false,
+            unmatched_globs: Vec::new(),
         };
 
         let view = DiffView::from_queryset(&qs, disabled_format(), true);
@@ -857,6 +870,7 @@ mod tests {
             },
             total_items: 3,
             top_applied: false,
+            unmatched_globs: Vec::new(),
         };
         let view = DiffView::from_queryset(&qs, disabled_format(), false);
 

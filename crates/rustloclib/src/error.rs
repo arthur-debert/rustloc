@@ -33,6 +33,16 @@ pub enum RustlocError {
     #[error("unsupported source file: {0}")]
     UnsupportedSourceFile(PathBuf),
 
+    /// A supported source file the include/exclude globs rejected.
+    ///
+    /// Distinct from [`Self::UnsupportedSourceFile`] because the two send a
+    /// reader to different places: one means the language is not analyzed,
+    /// the other means the request's own globs excluded the file.
+    #[error(
+        "'{0}' is excluded by the include/exclude globs; globs match the path relative to the analyzed root"
+    )]
+    FilteredSourceFile(PathBuf),
+
     /// Not a Rust file.
     #[deprecated(note = "use UnsupportedSourceFile instead")]
     #[error("not a Rust file: {0}")]

@@ -57,3 +57,11 @@
 .muted {
     dim: true;
 }
+
+/* A request that did not do what it was written to do — a glob that matched
+ * no file. It sits beside the table, so it has to read as louder than the
+ * data, not as another row of it. */
+.warning {
+    color: yellow;
+    font-weight: bold;
+}

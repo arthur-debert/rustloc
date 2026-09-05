@@ -1,7 +1,24 @@
 //! File filtering and discovery with glob pattern support.
 //!
-//! This module provides functionality to discover supported source files
-//! with support for include/exclude glob patterns.
+//! Discovery walks a tree and returns every file an enabled language backend
+//! supports. [`FilterConfig`] then narrows that candidate set with include and
+//! exclude globs.
+//!
+//! ## Globs match the path form the report prints
+//!
+//! A glob is written the way a report labels its rows: relative to the root of
+//! what was analyzed — the Cargo workspace root, the counted directory, the
+//! counted file's own directory, or, for diffs, the repository root, since git
+//! already reports repository-relative paths. [`FilterConfig::relative_to`]
+//! records that root and [`FilterConfig::matches`] strips it before matching,
+//! so `-e 'crates/docs/**'` selects the same files under `count` as under
+//! `diff`. A path that does not lie under the root is matched in the form it
+//! arrives in.
+//!
+//! A glob that matches none of the candidates narrows nothing (exclude) or
+//! everything (include), which reads like an empty project rather than a
+//! mistyped pattern. [`FilterConfig::unmatched_globs`] names those globs so a
+//! caller can say so.
 
 use std::path::{Path, PathBuf};
 
@@ -12,15 +29,40 @@ use crate::data::{BackendRegistry, LanguageSelection};
 use crate::error::RustlocError;
 use crate::Result;
 
+/// A compiled glob paired with the text the user typed.
+///
+/// The source text is kept so a warning can quote the pattern back exactly as
+/// written; `Pattern`'s own `Display` is a reconstruction, not the input.
+#[derive(Debug, Clone)]
+struct GlobPattern {
+    source: String,
+    pattern: Pattern,
+}
+
+impl GlobPattern {
+    fn new(source: &str) -> Result<Self> {
+        let pattern = Pattern::new(source).map_err(|e| RustlocError::InvalidGlob {
+            pattern: source.to_string(),
+            message: e.to_string(),
+        })?;
+        Ok(Self {
+            source: source.to_string(),
+            pattern,
+        })
+    }
+}
+
 /// Configuration for file filtering.
 #[derive(Debug, Clone, Default)]
 pub struct FilterConfig {
     /// Glob patterns to include (if empty, include all supported source files)
-    pub include: Vec<Pattern>,
+    include: Vec<GlobPattern>,
     /// Glob patterns to exclude
-    pub exclude: Vec<Pattern>,
+    exclude: Vec<GlobPattern>,
     /// Language backend groups to analyze.
-    pub languages: LanguageSelection,
+    languages: LanguageSelection,
+    /// Root the globs are written relative to; see the module docs.
+    root: Option<PathBuf>,
 }
 
 impl FilterConfig {
@@ -31,21 +73,13 @@ impl FilterConfig {
 
     /// Add an include pattern.
     pub fn include(mut self, pattern: &str) -> Result<Self> {
-        let pat = Pattern::new(pattern).map_err(|e| RustlocError::InvalidGlob {
-            pattern: pattern.to_string(),
-            message: e.to_string(),
-        })?;
-        self.include.push(pat);
+        self.include.push(GlobPattern::new(pattern)?);
         Ok(self)
     }
 
     /// Add an exclude pattern.
     pub fn exclude(mut self, pattern: &str) -> Result<Self> {
-        let pat = Pattern::new(pattern).map_err(|e| RustlocError::InvalidGlob {
-            pattern: pattern.to_string(),
-            message: e.to_string(),
-        })?;
-        self.exclude.push(pat);
+        self.exclude.push(GlobPattern::new(pattern)?);
         Ok(self)
     }
 
@@ -71,25 +105,46 @@ impl FilterConfig {
         self
     }
 
+    /// Match globs against paths relative to `root`.
+    ///
+    /// Every counting entry point sets this to the root its report labels rows
+    /// against, which is what makes one written glob mean the same thing in a
+    /// count and in a diff. Without a root, globs match whatever path form the
+    /// caller supplies — the diff path, where git already yields
+    /// repository-relative paths.
+    pub fn relative_to(mut self, root: impl AsRef<Path>) -> Self {
+        self.root = Some(root.as_ref().to_path_buf());
+        self
+    }
+
+    /// Whether an enabled language backend can analyze this path at all.
+    ///
+    /// This is the support half of [`Self::matches`], separated because a diff
+    /// counts the lines of unsupported files that changed instead of dropping
+    /// them.
+    pub fn supports(&self, path: &Path) -> bool {
+        BackendRegistry::new().supports_path_with_languages(path, &self.languages)
+    }
+
     /// Check if a path matches the filter criteria.
     ///
     /// A path matches if:
     /// 1. It is supported by a registered language backend
     /// 2. It matches at least one include pattern (or include is empty)
     /// 3. It doesn't match any exclude pattern
+    ///
+    /// Globs see the path relative to [`Self::relative_to`]'s root.
     pub fn matches(&self, path: &Path) -> bool {
-        // Must be supported by a language backend.
-        if !BackendRegistry::new().supports_path_with_languages(path, &self.languages) {
+        if !self.supports(path) {
             return false;
         }
 
-        let path_str = path.to_string_lossy();
+        let candidate = self.glob_target(path);
+        let candidate = candidate.to_string_lossy();
 
         // Check excludes first
-        for pattern in &self.exclude {
-            if pattern.matches(&path_str) {
-                return false;
-            }
+        if self.exclude.iter().any(|p| p.pattern.matches(&candidate)) {
+            return false;
         }
 
         // If no include patterns, include all
@@ -98,13 +153,55 @@ impl FilterConfig {
         }
 
         // Must match at least one include pattern
-        for pattern in &self.include {
-            if pattern.matches(&path_str) {
-                return true;
+        self.include.iter().any(|p| p.pattern.matches(&candidate))
+    }
+
+    /// The globs, as the user wrote them, that none of `candidates` matched.
+    ///
+    /// `candidates` is the set of files the command actually considered —
+    /// every supported source file it discovered, before include and exclude
+    /// narrowed it. A glob absent from every candidate did not filter, it
+    /// missed: usually a path form the run does not use (an absolute path, or
+    /// a directory the walk never entered). Include and exclude globs are
+    /// reported together and in the order they were configured.
+    pub fn unmatched_globs<'a>(
+        &self,
+        candidates: impl IntoIterator<Item = &'a Path>,
+    ) -> Vec<String> {
+        let globs: Vec<&GlobPattern> = self.include.iter().chain(self.exclude.iter()).collect();
+        if globs.is_empty() {
+            return Vec::new();
+        }
+
+        let mut hit = vec![false; globs.len()];
+        for path in candidates {
+            let candidate = self.glob_target(path);
+            let candidate = candidate.to_string_lossy();
+            for (glob, hit) in globs.iter().zip(hit.iter_mut()) {
+                *hit = *hit || glob.pattern.matches(&candidate);
+            }
+            // Every glob has proved itself; the rest of the walk cannot
+            // change the answer.
+            if hit.iter().all(|hit| *hit) {
+                break;
             }
         }
 
-        false
+        globs
+            .iter()
+            .zip(hit)
+            .filter(|(_, hit)| !*hit)
+            .map(|(glob, _)| glob.source.clone())
+            .collect()
+    }
+
+    /// The path form globs are matched against: relative to the configured
+    /// root when the path lies under it, and the path as given otherwise.
+    fn glob_target<'a>(&'a self, path: &'a Path) -> &'a Path {
+        match &self.root {
+            Some(root) => path.strip_prefix(root).unwrap_or(path),
+            None => path,
+        }
     }
 }
 
@@ -114,10 +211,13 @@ fn should_skip_dir(name: &str) -> bool {
     name.starts_with('.') || name == "target"
 }
 
-/// Discover supported source files in a directory.
+/// Discover the files a filter could analyze under `root`, before its globs.
 ///
-/// Walks the directory tree and returns all supported files that match the filter.
-pub fn discover_files(root: impl AsRef<Path>, filter: &FilterConfig) -> Result<Vec<PathBuf>> {
+/// The walk applies the language selection but not the include/exclude globs,
+/// so the caller holds the same candidate set that
+/// [`FilterConfig::unmatched_globs`] judges the globs against. Narrow it with
+/// [`FilterConfig::matches`].
+pub fn discover_candidates(root: impl AsRef<Path>, filter: &FilterConfig) -> Result<Vec<PathBuf>> {
     let root = root.as_ref();
 
     if !root.exists() {
@@ -127,7 +227,7 @@ pub fn discover_files(root: impl AsRef<Path>, filter: &FilterConfig) -> Result<V
     let mut files = Vec::new();
 
     if root.is_file() {
-        if filter.matches(root) {
+        if filter.supports(root) {
             files.push(root.to_path_buf());
         }
         return Ok(files);
@@ -155,7 +255,7 @@ pub fn discover_files(root: impl AsRef<Path>, filter: &FilterConfig) -> Result<V
 
         let path = entry.path();
 
-        if path.is_file() && filter.matches(path) {
+        if path.is_file() && filter.supports(path) {
             files.push(path.to_path_buf());
         }
     }
@@ -166,16 +266,14 @@ pub fn discover_files(root: impl AsRef<Path>, filter: &FilterConfig) -> Result<V
     Ok(files)
 }
 
-/// Discover supported source files in multiple directories.
-pub fn discover_files_in_dirs(dirs: &[&Path], filter: &FilterConfig) -> Result<Vec<PathBuf>> {
+/// Discover candidates across several directories, deduplicated and sorted.
+pub fn discover_candidates_in_dirs(dirs: &[&Path], filter: &FilterConfig) -> Result<Vec<PathBuf>> {
     let mut all_files = Vec::new();
 
     for dir in dirs {
-        let files = discover_files(dir, filter)?;
-        all_files.extend(files);
+        all_files.extend(discover_candidates(dir, filter)?);
     }
 
-    // Remove duplicates and sort
     all_files.sort();
     all_files.dedup();
 
@@ -207,6 +305,13 @@ mod tests {
         fs::write(dir.join("target/debug/build.rs"), "// generated").unwrap();
         fs::write(dir.join(".hidden/secret.rs"), "// hidden").unwrap();
         fs::write(dir.join("README.md"), "# Readme").unwrap();
+    }
+
+    /// The candidate set a filter's globs get judged against.
+    fn discovered(root: &Path, filter: &FilterConfig) -> Vec<PathBuf> {
+        let mut files = discover_candidates(root, filter).unwrap();
+        files.retain(|path| filter.matches(path));
+        files
     }
 
     #[test]
@@ -284,13 +389,91 @@ mod tests {
         assert!(!filter.matches(Path::new("project/examples/demo.rs")));
     }
 
+    /// The bug this module's path form exists to prevent: an absolute path
+    /// makes a root-relative glob miss, so `-e 'src/**'` excluded nothing.
+    #[test]
+    fn test_globs_match_paths_relative_to_the_root() {
+        let filter = FilterConfig::new()
+            .exclude("src/utils/**")
+            .unwrap()
+            .relative_to("/ws");
+
+        assert!(!filter.matches(Path::new("/ws/src/utils/helper.rs")));
+        assert!(filter.matches(Path::new("/ws/src/main.rs")));
+    }
+
+    /// A path outside the root keeps its own form — a workspace member living
+    /// beside the root still has to be matchable.
+    #[test]
+    fn test_a_path_outside_the_root_matches_as_given() {
+        let filter = FilterConfig::new()
+            .include("outside/**")
+            .unwrap()
+            .relative_to("/ws");
+
+        assert!(filter.matches(Path::new("outside/src/lib.rs")));
+        assert!(!filter.matches(Path::new("/elsewhere/src/lib.rs")));
+    }
+
+    /// The count and diff path forms agree: one written glob, one meaning.
+    #[test]
+    fn test_the_same_glob_selects_the_same_repository_relative_path() {
+        let counted = FilterConfig::new()
+            .exclude("crates/docs/**")
+            .unwrap()
+            .relative_to("/repo");
+        let diffed = FilterConfig::new().exclude("crates/docs/**").unwrap();
+
+        assert!(!counted.matches(Path::new("/repo/crates/docs/src/lib.rs")));
+        assert!(!diffed.matches(Path::new("crates/docs/src/lib.rs")));
+    }
+
+    #[test]
+    fn test_unmatched_globs_names_only_the_globs_that_found_nothing() {
+        let filter = FilterConfig::new()
+            .include("src/**")
+            .unwrap()
+            .exclude("generated/**")
+            .unwrap()
+            .relative_to("/ws");
+
+        let candidates = [
+            PathBuf::from("/ws/src/main.rs"),
+            PathBuf::from("/ws/src/lib.rs"),
+        ];
+
+        assert_eq!(
+            filter.unmatched_globs(candidates.iter().map(PathBuf::as_path)),
+            vec!["generated/**".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_unmatched_globs_quotes_the_pattern_as_written() {
+        let filter = FilterConfig::new().include("crates/docs/**").unwrap();
+
+        assert_eq!(
+            filter.unmatched_globs([Path::new("crates/app/src/lib.rs")]),
+            vec!["crates/docs/**".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_a_filter_without_globs_has_nothing_unmatched() {
+        let filter = FilterConfig::new();
+
+        assert!(filter
+            .unmatched_globs([Path::new("src/main.rs")])
+            .is_empty());
+    }
+
     #[test]
     fn test_discover_files() {
         let temp = tempdir().unwrap();
         create_test_files(temp.path());
 
         let filter = FilterConfig::new();
-        let files = discover_files(temp.path(), &filter).unwrap();
+        let files = discovered(temp.path(), &filter);
 
         // Should find all .rs files except in target/ and .hidden/
         assert!(files.iter().any(|p| p.ends_with("src/main.rs")));
@@ -317,12 +500,34 @@ mod tests {
             .exclude("**/examples/**")
             .unwrap();
 
-        let files = discover_files(temp.path(), &filter).unwrap();
+        let files = discovered(temp.path(), &filter);
 
         // Should find src files only
         assert!(files.iter().any(|p| p.ends_with("src/main.rs")));
         assert!(!files.iter().any(|p| p.ends_with("tests/integration.rs")));
         assert!(!files.iter().any(|p| p.ends_with("examples/demo.rs")));
+    }
+
+    /// Candidates ignore the globs on purpose: they are what the globs get
+    /// judged against, so an exclude must not erase its own evidence.
+    #[test]
+    fn test_candidates_ignore_the_globs() {
+        let temp = tempdir().unwrap();
+        create_test_files(temp.path());
+
+        let filter = FilterConfig::new()
+            .exclude("**/tests/**")
+            .unwrap()
+            .relative_to(temp.path());
+
+        let candidates = discover_candidates(temp.path(), &filter).unwrap();
+
+        assert!(candidates
+            .iter()
+            .any(|p| p.ends_with("tests/integration.rs")));
+        assert!(filter
+            .unmatched_globs(candidates.iter().map(PathBuf::as_path))
+            .is_empty());
     }
 
     #[test]
@@ -332,7 +537,7 @@ mod tests {
         fs::write(&file_path, "fn test() {}").unwrap();
 
         let filter = FilterConfig::new();
-        let files = discover_files(&file_path, &filter).unwrap();
+        let files = discovered(&file_path, &filter);
 
         assert_eq!(files.len(), 1);
         assert_eq!(files[0], file_path);
@@ -341,7 +546,7 @@ mod tests {
     #[test]
     fn test_discover_files_nonexistent() {
         let filter = FilterConfig::new();
-        let result = discover_files("/nonexistent/path", &filter);
+        let result = discover_candidates("/nonexistent/path", &filter);
 
         assert!(result.is_err());
     }

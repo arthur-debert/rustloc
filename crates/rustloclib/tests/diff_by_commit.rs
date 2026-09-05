@@ -273,6 +273,45 @@ fn glob_filtered_changes_zero_the_row_without_dropping_it() {
     assert_eq!(result.file_count, 1); // only a.rs analyzed
 }
 
+/// A glob that matched none of the changed files narrows nothing, so the
+/// result reports it rather than leaving the reader to compare totals.
+#[test]
+fn a_glob_matching_no_changed_file_is_reported() {
+    let dir = linear_repo();
+    let p = dir.path();
+
+    let options = DiffOptions::new().filter(
+        FilterConfig::new()
+            .languages(LanguageSelection::new(rustloclib::default_languages()))
+            .exclude("src/**")
+            .unwrap(),
+    );
+    let result = diff_by_commit(p, "HEAD~2..HEAD", options).unwrap();
+
+    assert_eq!(result.unmatched_globs, vec!["src/**".to_string()]);
+    // Every changed file survived the glob that matched none of them.
+    assert_eq!(result.file_count, 2);
+}
+
+/// Diff globs read repository-relative paths — git's own path form, and the
+/// one a count now shares.
+#[test]
+fn a_glob_matching_a_changed_file_is_not_reported() {
+    let dir = linear_repo();
+    let p = dir.path();
+
+    let options = DiffOptions::new().filter(
+        FilterConfig::new()
+            .languages(LanguageSelection::new(rustloclib::default_languages()))
+            .exclude("b.rs")
+            .unwrap(),
+    );
+    let result = diff_by_commit(p, "HEAD~2..HEAD", options).unwrap();
+
+    assert!(result.unmatched_globs.is_empty());
+    assert_eq!(result.file_count, 1);
+}
+
 #[test]
 fn churn_totals_count_lines_added_and_then_removed_on_both_sides() {
     // c2 adds two lines, c3 removes them again: the endpoint diff is empty,

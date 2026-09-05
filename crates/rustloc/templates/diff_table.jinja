@@ -17,6 +17,7 @@
     non_rust     {added: {raw, display}, removed: {raw, display},
                   net: {raw, display}} for files the language selection skipped
     net_only     true when `--net-only` asked for the signed net alone
+    unmatched_globs  the `-i`/`-e` globs, as written, that matched no change
 
   Everything a diff shows beyond the shared table skeleton lives here: the
   title, the `+added/-removed/net` notation, the skipped-changes summary, and
@@ -99,7 +100,7 @@ Diff: {{ from_commit }} → {{ to_commit }}
 
 Skipped changes: {% if net_only %}{{ non_rust.net.display }} net{% else %}[additions]+{{ non_rust.added.display }}[/additions] / [deletions]-{{ non_rust.removed.display }}[/deletions] / {{ non_rust.net.display }} net{% endif %}
 {% endif %}
-[muted]({% if net_only %}net{% else %}+added / -removed / net{% endif %})[/muted]
+[muted]({% if net_only %}net{% else %}+added / -removed / net{% endif %})[/muted]{{ t.glob_warnings(unmatched_globs, "changed file", "repository root") }}
 {# The legend must end in a newline, and MiniJinja strips a single trailing
    newline at end of template — so this comment, not the legend, is what sits at
    EOF and absorbs the strip. Deleting it silently un-terminates the last line. #}

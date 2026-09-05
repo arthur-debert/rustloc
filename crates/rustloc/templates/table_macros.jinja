@@ -14,9 +14,9 @@
   rather than reconstructed from a parameterised abstraction.
 
   Style tags are *semantic* — `[header]`, `[table_row_odd]`, `[additions]`,
-  `[deletions]`, `[file_added]`, `[file_removed]`, `[muted]` — and resolve
-  through `styles/default.css`. Never write a raw ANSI sequence or a concrete
-  colour here. `[file_added]` / `[file_removed]` colour `--by-file` diff
+  `[deletions]`, `[file_added]`, `[file_removed]`, `[muted]`, `[warning]` — and
+  resolve through `styles/default.css`. Never write a raw ANSI sequence or a
+  concrete colour here. `[file_added]` / `[file_removed]` colour `--by-file` diff
   labels; they are not `[additions]` / `[deletions]`, which are the `+N`/`-N`
   cell notation.
 
@@ -70,6 +70,27 @@
     the brackets need rewriting. -#}
 {%- macro escape_markup(s) -%}
 {{ s | replace("[", "\\[") | replace("]", "\\]") }}
+{%- endmacro -%}
+
+{#- Warnings for globs that matched no file.
+
+    A glob that matched nothing is invisible in the numbers: `-e` excluded
+    nothing and `-i` included nothing, so the table reads as an unfiltered
+    project or an empty one, and neither says the glob missed. Quoting the
+    glob and naming the path form it was read against is what tells the
+    reader which happened — the usual cause is a glob written against a form
+    the report does not use.
+
+    Each warning is emitted with a leading newline and none trailing, so a
+    caller with no warnings places its final newline exactly as before.
+
+    `subject` and `root` are the two words that differ between reports: a
+    count matches files under a project root, a diff matches changed files
+    under a repository root. -#}
+{%- macro glob_warnings(globs, subject, root) -%}
+{%- for glob in globs %}
+[warning]warning: no {{ subject }} matched '{{ escape_markup(glob) }}' — globs match paths relative to the {{ root }}[/warning]
+{%- endfor -%}
 {%- endmacro -%}
 
 {#- The horizontal rule, spanning the label column plus every value column and

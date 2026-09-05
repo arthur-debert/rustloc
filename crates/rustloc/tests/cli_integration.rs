@@ -492,6 +492,58 @@ fn a_bare_count_inside_a_member_is_scoped_to_that_member() {
     assert_eq!(response["total"]["code"], 2);
 }
 
+/// Process-only contract: the child's working directory decides *which* files
+/// a bare count reports, never the path form its globs are read in. From
+/// inside a member, a workspace-relative glob filters and a member-relative
+/// one misses — and says so.
+#[test]
+fn globs_inside_a_member_read_the_workspace_relative_path() {
+    let dir = TempDir::new().expect("member workspace fixture");
+    let root = dir.path();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crate-a\", \"crate-b\"]\nresolver = \"2\"\n",
+    )
+    .unwrap();
+    for (name, source) in [
+        ("crate-a", "pub fn a() {}\npub fn b() {}\n"),
+        ("crate-b", "pub fn c() {}\n"),
+    ] {
+        std::fs::create_dir_all(root.join(name).join("src")).unwrap();
+        std::fs::write(
+            root.join(name).join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        )
+        .unwrap();
+        std::fs::write(root.join(name).join("src/lib.rs"), source).unwrap();
+    }
+    let member = root.join("crate-a");
+
+    let excluded = rustloc(&["-e", "crate-a/**", "--output", "json"], &member, &[]);
+    assert_eq!(
+        excluded.status.code(),
+        Some(0),
+        "stderr: {}",
+        stderr(&excluded)
+    );
+    let response: serde_json::Value =
+        serde_json::from_slice(&excluded.stdout).expect("valid count response");
+    assert_eq!(
+        response["file_count"], 0,
+        "the member's only file is excluded"
+    );
+
+    let missed = rustloc(&["-e", "src/**", "--output", "json"], &member, &[]);
+    let response: serde_json::Value =
+        serde_json::from_slice(&missed.stdout).expect("valid count response");
+    assert_eq!(response["file_count"], 1, "a missed glob filters nothing");
+    assert_eq!(
+        response["unmatched_globs"],
+        serde_json::json!(["src/**"]),
+        "a missed glob has to be named"
+    );
+}
+
 /// Process-only contract: Standout's final writer creates the requested file
 /// and does not duplicate those bytes to the executable's stdout stream.
 #[test]
