@@ -50,7 +50,16 @@ rustloc --lang python                # analyze Python files only
 rustloc --lang rust,python           # analyze Rust and Python files
 rustloc -i "src/**/*.rs"             # include glob
 rustloc -e "**/generated/**"         # exclude glob
+rustloc crates/my-lib                # count one path
 ```
+
+`rustloc count crates/my-lib` counts that member, as does running `rustloc`
+from its directory or passing its `Cargo.toml`. Member counts retain workspace
+context for `cfg(test)` classification and workspace-relative row labels.
+Counting the workspace root includes every member, including members outside
+its directory. Combine a member path with `-c my-lib` to count their
+intersection. Plain files and directories without a `Cargo.toml` use file-local
+classification and labels relative to the requested path.
 
 ![by-file output](https://raw.githubusercontent.com/arthur-debert/rustloc/main/assets/output-by-file.png)
 

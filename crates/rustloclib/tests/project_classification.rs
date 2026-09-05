@@ -222,6 +222,79 @@ fn every_workspace_member_is_classified_by_the_same_project_load() {
 }
 
 #[test]
+fn scoped_counts_preserve_classification_and_support_members_outside_the_root() {
+    let temp = TempDir::new().unwrap();
+    let parent = temp.path();
+    let root = parent.join("workspace");
+    write(
+        &root,
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"inside\", \"../outside\"]\nresolver = \"2\"\n",
+    );
+    write(&root, "inside/Cargo.toml", &manifest("inside"));
+    write(
+        &root,
+        "inside/src/lib.rs",
+        "#[cfg(test)]\nmod helpers;\npub fn inside() {}\n",
+    );
+    write(&root, "inside/src/helpers.rs", "pub fn helper() {}\n");
+    write(
+        parent,
+        "outside/Cargo.toml",
+        &format!("{}workspace = \"../workspace\"\n", manifest("outside")),
+    );
+    write(
+        parent,
+        "outside/src/lib.rs",
+        "#[cfg(test)]\nmod helpers;\npub fn outside() {}\n",
+    );
+    write(parent, "outside/src/helpers.rs", "pub fn helper() {}\n");
+
+    let whole = count_by_file(&root);
+    let root_manifest = count_by_file(&root.join("Cargo.toml"));
+    assert_eq!(whole.file_count, 4);
+    assert_eq!(root_manifest.total, whole.total);
+    assert_eq!(root_manifest.file_count, 4);
+    let internal = count_by_file(&root.join("inside"));
+    assert_eq!(internal.file_count, 2);
+    assert_eq!(file_stats(&internal, "inside/src/helpers.rs").tests, 1);
+    assert_eq!(
+        file_stats(&internal, "inside/src/helpers.rs"),
+        file_stats(&whole, "inside/src/helpers.rs")
+    );
+
+    for path in [parent.join("outside"), parent.join("outside/Cargo.toml")] {
+        let scoped = count_by_file(&path);
+        assert_eq!(scoped.file_count, 2);
+        assert_eq!(scoped.crates.len(), 1);
+        assert_eq!(scoped.crates[0].name, "outside");
+        assert_eq!(scoped.root, whole.root);
+        for file in &scoped.files {
+            let expected = whole
+                .files
+                .iter()
+                .find(|item| item.path == file.path)
+                .unwrap();
+            assert_eq!(file.stats, expected.stats);
+        }
+        for (selected_crate, expected_files) in [("inside", 0), ("outside", 2)] {
+            let filtered = count_workspace(
+                &path,
+                CountOptions::new().crates(vec![selected_crate.to_string()]),
+            )
+            .unwrap();
+            assert_eq!(filtered.file_count, expected_files);
+        }
+    }
+    let external_only = count_workspace(
+        &root,
+        CountOptions::new().crates(vec!["outside".to_string()]),
+    )
+    .unwrap();
+    assert_eq!(external_only.file_count, 2);
+}
+
+#[test]
 fn counting_runs_no_build_script_and_no_proc_macro() {
     let temp = TempDir::new().unwrap();
     let root = temp.path();

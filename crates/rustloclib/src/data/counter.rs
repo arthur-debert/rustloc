@@ -2,6 +2,9 @@
 //!
 //! This module provides the main entry points for counting lines of code
 //! in Rust projects, with support for workspace filtering and glob patterns.
+//!
+//! Member workspace requests count the selected member while retaining the
+//! whole workspace for project classification.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -109,11 +112,13 @@ impl CountResult {
 
 /// Count LOC in a Cargo workspace.
 ///
-/// This is the main entry point for analyzing a Rust project. It:
-/// 1. Discovers the workspace structure
-/// 2. Optionally filters to specific crates
-/// 3. Applies glob filters to files
-/// 4. Parses all matching files and aggregates statistics
+/// A member directory or manifest restricts the report to that member. A
+/// workspace-root directory or manifest counts every workspace member, including
+/// members outside the root directory. Crate and glob filters narrow that set.
+///
+/// The module graph loads from the workspace root for `cfg(test)` classification.
+/// [`CountResult::root`] remains the workspace root, preserving per-file labels
+/// when selecting a member.
 ///
 /// # Example
 ///
@@ -142,7 +147,9 @@ impl CountResult {
 /// let result = count_workspace(dir.path(), CountOptions::new().filter(filter)).unwrap();
 /// ```
 pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<CountResult> {
+    let path = path.as_ref();
     let workspace = WorkspaceInfo::discover(path)?;
+    let scope = report_scope(path, &workspace.root);
 
     // Filter crates if specified
     let crates: Vec<&CrateInfo> = if options.crate_filter.is_empty() {
@@ -173,7 +180,15 @@ pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<
     );
 
     for crate_info in &crates {
-        let crate_stats = count_crate(crate_info, &options, &project)?;
+        let files_under = match CrateScope::resolve(&crate_info.root, scope.as_deref()) {
+            CrateScope::Outside => continue,
+            CrateScope::Whole => None,
+            CrateScope::Part(under) => Some(under),
+        };
+        let crate_stats = count_crate(crate_info, &options, &project, files_under)?;
+        if files_under.is_some() && crate_stats.files.is_empty() {
+            continue;
+        }
         result.total += crate_stats.stats;
         result.file_count += crate_stats.files.len();
 
@@ -312,11 +327,58 @@ fn aggregate_directory_modules(files: &[FileStats], root: &Path) -> Vec<ModuleSt
     modules
 }
 
+/// A member request restricts the report to its canonical directory. A root
+/// request counts all workspace members, including members outside the root.
+fn report_scope(requested: &Path, workspace_root: &Path) -> Option<PathBuf> {
+    let requested = if requested.is_file() {
+        requested.parent().unwrap_or(requested)
+    } else {
+        requested
+    };
+    let requested = canonical_path(requested);
+    (requested != canonical_path(workspace_root)).then_some(requested)
+}
+
+fn canonical_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// How much of one crate the report scope covers.
+enum CrateScope<'a> {
+    /// The scope contains the crate: count all of it.
+    Whole,
+    /// The scope sits inside the crate: count only files under it.
+    Part(&'a Path),
+    /// The scope and the crate do not overlap: skip the crate entirely, so
+    /// a scoped count never walks the rest of the workspace.
+    Outside,
+}
+
+impl<'a> CrateScope<'a> {
+    fn resolve(crate_root: &Path, scope: Option<&'a Path>) -> Self {
+        let Some(scope) = scope else {
+            return Self::Whole;
+        };
+        let crate_root = canonical_path(crate_root);
+        if crate_root.starts_with(scope) {
+            Self::Whole
+        } else if scope.starts_with(&crate_root) {
+            Self::Part(scope)
+        } else {
+            Self::Outside
+        }
+    }
+}
+
 /// Count LOC in a single crate.
+///
+/// `files_under` bounds the count to one path inside the crate; `None`
+/// counts every discovered file.
 fn count_crate(
     crate_info: &CrateInfo,
     options: &CountOptions,
     project: &ProjectClassification,
+    files_under: Option<&Path>,
 ) -> Result<CrateStats> {
     let dirs: Vec<&Path> = crate_info.all_dirs();
     let files = discover_files_in_dirs(&dirs, &options.file_filter)?;
@@ -325,6 +387,9 @@ fn count_crate(
     let mut crate_stats = CrateStats::new(crate_info.name.clone(), crate_info.root.clone());
 
     for file_path in files {
+        if files_under.is_some_and(|under| !canonical_path(&file_path).starts_with(under)) {
+            continue;
+        }
         if let Some(stats) = analyze_file_stats(&registry, &file_path, project)? {
             let file_stats = FileStats::new(file_path, stats);
             crate_stats.add_file(file_stats);
@@ -715,6 +780,183 @@ fn foo() {
         .unwrap();
 
         assert_eq!(result.crates.len(), 2);
+    }
+
+    #[test]
+    fn test_count_workspace_member_directory_reports_only_that_member() {
+        let temp = tempdir().unwrap();
+        create_workspace(temp.path());
+
+        let options = CountOptions::new().aggregation(Aggregation::ByFile);
+        let result = count_workspace(temp.path().join("crate-a"), options).unwrap();
+
+        assert_eq!(result.crates.len(), 1);
+        assert_eq!(result.crates[0].name, "crate-a");
+        assert_eq!(result.file_count, 1);
+        assert!(result.files[0].path.ends_with("crate-a/src/lib.rs"));
+        // crate-b's comment line is what a whole-workspace count would add.
+        assert_eq!(result.total.comments, 0);
+    }
+
+    #[test]
+    fn test_count_workspace_member_keeps_the_workspace_root_for_labels() {
+        let temp = tempdir().unwrap();
+        create_workspace(temp.path());
+
+        let whole = count_workspace(temp.path(), CountOptions::new()).unwrap();
+        let member = count_workspace(temp.path().join("crate-a"), CountOptions::new()).unwrap();
+
+        // Per-file labels are relative to `root`, so a member count must
+        // report the same root a whole-workspace count does.
+        assert_eq!(member.root, whole.root);
+        assert!(member.total.code < whole.total.code);
+    }
+
+    #[test]
+    fn test_count_workspace_member_manifest_scopes_like_its_directory() {
+        let temp = tempdir().unwrap();
+        create_workspace(temp.path());
+
+        let by_dir = count_workspace(temp.path().join("crate-a"), CountOptions::new()).unwrap();
+        let by_manifest = count_workspace(
+            temp.path().join("crate-a").join("Cargo.toml"),
+            CountOptions::new(),
+        )
+        .unwrap();
+
+        assert_eq!(by_manifest.file_count, by_dir.file_count);
+        assert_eq!(by_manifest.total, by_dir.total);
+    }
+
+    #[test]
+    fn test_count_workspace_root_counts_every_member() {
+        let temp = tempdir().unwrap();
+        create_workspace(temp.path());
+
+        let result = count_workspace(
+            temp.path(),
+            CountOptions::new().aggregation(Aggregation::ByFile),
+        )
+        .unwrap();
+
+        assert_eq!(result.file_count, 2);
+    }
+
+    #[test]
+    fn test_count_workspace_member_scope_intersects_the_crate_filter() {
+        let temp = tempdir().unwrap();
+        create_workspace(temp.path());
+
+        // The path asks for crate-a and `-c crate-b` asks for crate-b: the
+        // two selections intersect to nothing rather than either winning.
+        let options = CountOptions::new()
+            .crates(vec!["crate-b".to_string()])
+            .aggregation(Aggregation::ByCrate);
+        let result = count_workspace(temp.path().join("crate-a"), options).unwrap();
+
+        assert_eq!(result.file_count, 0);
+        assert_eq!(result.total.code, 0);
+        assert!(result.crates.is_empty());
+    }
+
+    #[test]
+    fn test_member_count_omits_an_empty_parent_package_row() {
+        let temp = tempdir().unwrap();
+        create_workspace(temp.path());
+        let manifest = temp.path().join("Cargo.toml");
+        let workspace = fs::read_to_string(&manifest).unwrap();
+        fs::write(
+            manifest,
+            format!(
+                "[package]\nname = \"parent\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{workspace}"
+            ),
+        )
+        .unwrap();
+        fs::create_dir(temp.path().join("src")).unwrap();
+        fs::write(temp.path().join("src/lib.rs"), "pub fn parent() {}\n").unwrap();
+
+        let member = count_workspace(
+            temp.path().join("crate-a"),
+            CountOptions::new().aggregation(Aggregation::ByCrate),
+        )
+        .unwrap();
+        assert_eq!(member.crates.len(), 1);
+        assert_eq!(member.crates[0].name, "crate-a");
+        assert_eq!(member.file_count, 1);
+
+        let whole = count_workspace(
+            temp.path(),
+            CountOptions::new().aggregation(Aggregation::ByCrate),
+        )
+        .unwrap();
+        assert_eq!(whole.crates.len(), 3);
+        assert_eq!(whole.file_count, 3);
+    }
+
+    #[test]
+    fn test_report_scope_uses_the_requested_directory() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("crates/a")).unwrap();
+
+        assert_eq!(
+            report_scope(&root.join("crates/a"), root),
+            Some(canonical_path(&root.join("crates/a")))
+        );
+    }
+
+    #[test]
+    fn test_report_scope_of_a_manifest_is_its_directory() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("crates/a")).unwrap();
+        fs::write(root.join("crates/a/Cargo.toml"), "").unwrap();
+
+        assert_eq!(
+            report_scope(&root.join("crates/a/Cargo.toml"), root),
+            Some(canonical_path(&root.join("crates/a")))
+        );
+    }
+
+    #[test]
+    fn test_report_scope_of_the_root_is_the_root() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        assert_eq!(report_scope(root, root), None);
+    }
+
+    #[test]
+    fn test_report_scope_preserves_a_member_outside_the_workspace_root() {
+        let temp = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+
+        assert_eq!(
+            report_scope(outside.path(), temp.path()),
+            Some(canonical_path(outside.path()))
+        );
+    }
+
+    #[test]
+    fn test_crate_scope_resolves_containment_both_ways() {
+        let crate_root = Path::new("/ws/crates/a");
+
+        assert!(matches!(
+            CrateScope::resolve(crate_root, Some(Path::new("/ws"))),
+            CrateScope::Whole
+        ));
+        assert!(matches!(
+            CrateScope::resolve(crate_root, Some(Path::new("/ws/crates/a"))),
+            CrateScope::Whole
+        ));
+        assert!(matches!(
+            CrateScope::resolve(crate_root, Some(Path::new("/ws/crates/a/nested"))),
+            CrateScope::Part(_)
+        ));
+        assert!(matches!(
+            CrateScope::resolve(crate_root, Some(Path::new("/ws/crates/b"))),
+            CrateScope::Outside
+        ));
     }
 
     #[test]

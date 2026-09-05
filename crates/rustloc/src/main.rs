@@ -177,8 +177,22 @@ Examples:
 /// Count-only arguments used by the default route and explicit `count`.
 #[derive(Args, Clone, Default)]
 struct CountArgs {
-    /// Path to analyze
+    /// Path to analyze [file, directory, or Cargo workspace]
     #[arg(default_value = ".")]
+    #[arg(long_help = "\
+Path to analyze. Defaults to the current directory.
+
+A member directory or Cargo.toml counts that member, retaining workspace
+context for cfg(test) classification and workspace-relative labels.
+The workspace root counts every member, including members outside its directory.
+A member path combined with -c/--crate counts their intersection.
+
+  rustloc count crates/my-lib    Count one workspace member
+  rustloc count src/data         Count one directory
+  rustloc count src/lib.rs       Count one file
+
+Plain files and directories without Cargo.toml use file-local classification
+and labels relative to the requested path.")]
     path: String,
 
     /// Show a percentage summary row below the count total

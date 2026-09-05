@@ -121,6 +121,30 @@ fn path_of(dir: &TempDir) -> String {
     dir.path().to_str().unwrap().to_string()
 }
 
+/// A two-member workspace: `crate-a/src/lib.rs` (3 code lines) and
+/// `crate-b/src/lib.rs` (1). Counting one member must not report the other.
+fn member_workspace() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crate-a\", \"crate-b\"]\nresolver = \"2\"\n",
+    )
+    .unwrap();
+    for (name, source) in [
+        ("crate-a", "pub fn a() {}\npub fn b() {}\npub fn c() {}\n"),
+        ("crate-b", "pub fn d() {}\n"),
+    ] {
+        std::fs::create_dir_all(dir.path().join(name).join("src")).unwrap();
+        std::fs::write(
+            dir.path().join(name).join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(name).join("src/lib.rs"), source).unwrap();
+    }
+    dir
+}
+
 /// Deterministic source tree used by the checked-in JSON/CSV compatibility
 /// fixtures. It includes production code, inline tests, docs, comments, and
 /// blanks so every public count column is nontrivial.
@@ -197,6 +221,77 @@ fn explicit_count_subcommand_matches_the_default_route() {
         stdout(&[&path, "--output", "json"]),
         stdout(&["count", &path, "--output", "json"]),
     );
+}
+
+/// Cargo answers a member manifest with the whole workspace, so without a
+/// scope the positional PATH would be inert inside one: `rustloc count
+/// crates/my-lib` would report every crate. The rendered response must carry
+/// only the member's files, while the workspace-relative labels show where in
+/// the workspace those files live.
+#[test]
+fn count_of_a_workspace_member_reports_only_that_member() {
+    let dir = member_workspace();
+    let member = dir.path().join("crate-a");
+    let member = member.to_str().unwrap();
+
+    let parsed: CountQuerySet =
+        serde_json::from_str(&stdout(&[member, "--by-file", "--output", "json"]))
+            .expect("count response");
+
+    assert_eq!(parsed.total.code, 3);
+    let labels: Vec<&str> = parsed.items.iter().map(|i| i.label.as_str()).collect();
+    assert_eq!(labels, vec!["crate-a/src/lib.rs"]);
+}
+
+/// The whole workspace is still what an unscoped count reports, so the fix
+/// narrows the path's meaning without shrinking the default.
+#[test]
+fn count_of_the_workspace_root_still_reports_every_member() {
+    let dir = member_workspace();
+    let parsed: CountQuerySet =
+        serde_json::from_str(&stdout(&[&path_of(&dir), "--by-file", "--output", "json"]))
+            .expect("count response");
+
+    assert_eq!(parsed.total.code, 4);
+    assert_eq!(parsed.items.len(), 2);
+}
+
+#[test]
+fn count_of_a_member_manifest_matches_its_directory_and_intersects_crate_selection() {
+    let dir = member_workspace();
+    let member = dir.path().join("crate-a");
+    for path in [&member, &member.join("Cargo.toml")] {
+        for (name, count) in [("crate-a", 3), ("crate-b", 0)] {
+            let parsed: CountQuerySet = serde_json::from_str(&stdout(&[
+                "count",
+                path.to_str().unwrap(),
+                "-c",
+                name,
+                "--output",
+                "json",
+            ]))
+            .expect("count response");
+            assert_eq!(parsed.total.code, count);
+        }
+    }
+}
+
+#[test]
+fn count_of_nested_directories_and_files_is_bounded_to_the_requested_path() {
+    let dir = member_workspace();
+    for relative in ["crate-a/src", "crate-a/src/lib.rs"] {
+        let nested = dir.path().join(relative);
+        let parsed: CountQuerySet = serde_json::from_str(&stdout(&[
+            "count",
+            nested.to_str().unwrap(),
+            "--by-file",
+            "--output",
+            "json",
+        ]))
+        .expect("count response");
+        assert_eq!(parsed.total.code, 3);
+        assert_eq!(parsed.file_count, 1);
+    }
 }
 
 // ---------------------------------------------------------------------------

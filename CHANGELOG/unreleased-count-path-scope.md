@@ -1,0 +1,1 @@
+- Fix `rustloc count <member-path>` counting unrelated Cargo workspace members. Member directories, member manifests, and running from a member directory now select that member while preserving workspace test classification and row labels. Crate filters narrow the selection further; counting the workspace root still includes every member (#168).
