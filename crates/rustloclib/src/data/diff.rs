@@ -14,7 +14,8 @@
 //!
 //! Added and deleted files count every classified source line. Modified files
 //! classify both versions of the file, but only record lines that the textual
-//! diff marks as changed; unchanged context lines do not create LOC churn.
+//! diff marks as changed. A package role change also records unchanged lines
+//! whose classification moves between code and tests.
 //!
 //! ## Design Principle
 //!
@@ -411,30 +412,32 @@ pub fn diff_workdir(
         .index()
         .map_err(|e| RustlocError::GitError(format!("Failed to read index: {}", e)))?;
 
-    // Collect changes based on mode
-    let (changes, non_rust_added, non_rust_removed) = match mode {
-        WorkdirDiffMode::Staged => {
-            collect_staged_changes(&repo, &head_tree, &index, &options.file_filter)?
-        }
-        WorkdirDiffMode::All => {
-            collect_workdir_changes(&repo, &head_tree, &repo_root, &options.file_filter)?
-        }
-    };
-
-    // Try to discover workspace info for crate grouping
-    let workspace = WorkspaceInfo::discover(&repo_root).ok();
-
-    // Module reachability differs between the two sides, so each side is
-    // classified against the snapshot its content came from: the old side
-    // from HEAD's exported tree, and the new side from the working tree in
-    // `All` mode or from the exported index in `Staged` mode. Loading the new
-    // side from disk under `Staged` would read unstaged `mod` declarations,
-    // `#[cfg]` attributes and manifests that the staged content does not have.
     let committed_project = classify_tree(&repo, &head_tree);
     let new_project = match mode {
         WorkdirDiffMode::All => ProjectClassification::load(&repo_root),
         WorkdirDiffMode::Staged => classify_index(&repo, &index),
     };
+
+    let (changes, non_rust_added, non_rust_removed) = match mode {
+        WorkdirDiffMode::Staged => collect_staged_changes(
+            &repo,
+            &head_tree,
+            &index,
+            &options.file_filter,
+            &committed_project,
+            &new_project,
+        )?,
+        WorkdirDiffMode::All => collect_workdir_changes(
+            &repo,
+            &head_tree,
+            &repo_root,
+            &options.file_filter,
+            &committed_project,
+            &new_project,
+        )?,
+    };
+
+    let workspace = WorkspaceInfo::discover(&repo_root).ok();
 
     // Apply crate filter if specified
     let filtered_workspace = workspace.as_ref().map(|ws| {
@@ -483,6 +486,9 @@ pub fn diff_workdir(
         // Compute file diff
         let file_diff =
             compute_workdir_file_diff(&change, &path, &committed_project, &new_project)?;
+        if change.old_content == change.new_content && file_diff.diff == LocsDiff::new() {
+            continue;
+        }
 
         // Aggregate into total
         total += file_diff.diff;
@@ -551,6 +557,8 @@ fn collect_staged_changes(
     head_tree: &gix::Tree<'_>,
     index: &gix::worktree::Index,
     filter: &FilterConfig,
+    old_project: &ProjectClassification,
+    new_project: &ProjectClassification,
 ) -> Result<(Vec<WorkdirFileChange>, u64, u64)> {
     use std::collections::HashSet;
 
@@ -588,7 +596,7 @@ fn collect_staged_changes(
         let index_oid = entry.id;
 
         if let Some(&head_oid) = head_entries.get(&path) {
-            if head_oid != index_oid {
+            if head_oid != index_oid || old_project.role_reclassifies(new_project, &path) {
                 let old_content = read_blob(repo, head_oid)?;
                 let new_content = read_blob(repo, index_oid)?;
                 changes.push(WorkdirFileChange {
@@ -637,6 +645,8 @@ fn collect_workdir_changes(
     head_tree: &gix::Tree<'_>,
     repo_root: &Path,
     filter: &FilterConfig,
+    old_project: &ProjectClassification,
+    new_project: &ProjectClassification,
 ) -> Result<(Vec<WorkdirFileChange>, u64, u64)> {
     use std::collections::HashSet;
 
@@ -712,7 +722,9 @@ fn collect_workdir_changes(
 
         if let Some(&head_oid) = head_entries.get(&rel_path) {
             let head_content = read_blob(repo, head_oid)?;
-            if head_content != workdir_content {
+            if head_content != workdir_content
+                || old_project.role_reclassifies(new_project, &rel_path)
+            {
                 changes.push(WorkdirFileChange {
                     path: rel_path,
                     change_type: FileChangeType::Modified,
@@ -946,14 +958,13 @@ pub fn diff_revspec(
         ))
     })?;
 
-    // Compute the diff between trees
-    let changes = compute_tree_diff(&from_tree, &to_tree)?;
-
     // A `mod` declaration can move between revisions, so each endpoint is
     // classified against its own complete tree rather than against the
     // checkout the command happens to run in.
     let from_project = classify_tree(&repo, &from_tree);
     let to_project = classify_tree(&repo, &to_tree);
+    let changes =
+        compute_classified_tree_diff(&repo, &from_tree, &to_tree, &from_project, &to_project)?;
 
     // Try to discover workspace info
     let workspace = WorkspaceInfo::discover(&repo_root).ok();
@@ -1016,6 +1027,9 @@ pub fn diff_revspec(
         }
 
         let file_diff = compute_file_diff(&repo, &change, &path, &from_project, &to_project)?;
+        if change.old_oid == change.new_oid && file_diff.diff == LocsDiff::new() {
+            continue;
+        }
 
         total += file_diff.diff;
         file_count += 1;
@@ -1195,7 +1209,9 @@ pub fn diff_by_commit(
         let to_project = classify_cached(&repo, &to_tree);
 
         let mut commit_diff = LocsDiff::new();
-        for change in compute_tree_diff(&from_tree, &to_tree)? {
+        for change in
+            compute_classified_tree_diff(&repo, &from_tree, &to_tree, &from_project, &to_project)?
+        {
             let path = change.path.clone();
 
             // Track source lines outside the command's active language set.
@@ -1225,6 +1241,9 @@ pub fn diff_by_commit(
             }
 
             let file_diff = compute_file_diff(&repo, &change, &path, &from_project, &to_project)?;
+            if change.old_oid == change.new_oid && file_diff.diff == LocsDiff::new() {
+                continue;
+            }
             commit_diff += file_diff.diff;
             touched.insert(path);
         }
@@ -1559,6 +1578,38 @@ fn short_hex(oid: &gix::ObjectId) -> String {
     s.chars().take(8).collect()
 }
 
+/// Include unchanged blobs whose package role changes their classification.
+fn compute_classified_tree_diff(
+    repo: &gix::Repository,
+    from_tree: &gix::Tree<'_>,
+    to_tree: &gix::Tree<'_>,
+    old_project: &ProjectClassification,
+    new_project: &ProjectClassification,
+) -> Result<Vec<FileChange>> {
+    let mut changes = compute_tree_diff(from_tree, to_tree)?;
+    if old_project.has_same_roles(new_project) {
+        return Ok(changes);
+    }
+    let mut old_entries = HashMap::new();
+    let mut new_entries = HashMap::new();
+    collect_tree_entries(repo, from_tree, PathBuf::new(), &mut old_entries)?;
+    collect_tree_entries(repo, to_tree, PathBuf::new(), &mut new_entries)?;
+    for (path, old_oid) in old_entries {
+        if new_entries.get(&path) == Some(&old_oid)
+            && old_project.role_reclassifies(new_project, &path)
+        {
+            changes.push(FileChange {
+                path,
+                change_type: FileChangeType::Modified,
+                old_oid: Some(old_oid),
+                new_oid: Some(old_oid),
+            });
+        }
+    }
+    changes.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(changes)
+}
+
 /// Compute the diff between two trees
 fn compute_tree_diff(
     from_tree: &gix::Tree<'_>,
@@ -1722,11 +1773,23 @@ fn compute_modified_locs_diff(
     let new_analysis = analyze_content(path, new, new_project)?;
     let mut line_diff = LocsDiff::new();
 
+    let reclassifies = old_project.role_reclassifies(new_project, path);
+    let mut old_end = 0;
+    let mut new_end = 0;
     let input = InternedInput::new(old, new);
     diff(
         Algorithm::Histogram,
         &input,
         |old_range: Range<u32>, new_range: Range<u32>| {
+            if reclassifies {
+                record_reclassified_context(
+                    &old_analysis.line_classes[old_end..old_range.start as usize],
+                    &new_analysis.line_classes[new_end..new_range.start as usize],
+                    &mut line_diff,
+                );
+            }
+            old_end = old_range.end as usize;
+            new_end = new_range.end as usize;
             record_changed_classes(
                 &old_analysis.line_classes,
                 old_range,
@@ -1735,8 +1798,25 @@ fn compute_modified_locs_diff(
             record_changed_classes(&new_analysis.line_classes, new_range, &mut line_diff.added);
         },
     );
+    if reclassifies {
+        record_reclassified_context(
+            &old_analysis.line_classes[old_end..],
+            &new_analysis.line_classes[new_end..],
+            &mut line_diff,
+        );
+    }
 
     Ok(line_diff)
+}
+
+/// Equal text contributes churn only when its line classification changes.
+fn record_reclassified_context(old: &[LineClass], new: &[LineClass], delta: &mut LocsDiff) {
+    for (old_class, new_class) in old.iter().zip(new) {
+        if old_class != new_class {
+            old_class.record(&mut delta.removed);
+            new_class.record(&mut delta.added);
+        }
+    }
 }
 
 fn record_changed_classes(classes: &[LineClass], range: Range<u32>, stats: &mut Locs) {

@@ -31,7 +31,8 @@
 //! role = "tests"
 //! ```
 //!
-//! and every analyzed file under that crate's directory is then test-only.
+//! Files belonging to that package are then test-only. Nested workspace
+//! member packages keep their own roles.
 //! `role = "tests"` is the only value that reclassifies; `role = "code"` is
 //! the default a crate can state explicitly, and any other value — or a
 //! `role` that is not a string — is ignored, leaving the crate's files with
@@ -42,12 +43,11 @@
 //! over paths, and nothing else in rustloclib links a file to its crate graph.
 //!
 //! Loading never executes build scripts or proc macros, and never fails a
-//! command: any error — no Cargo, no rustc, an unparseable manifest — yields
-//! an empty classification, which leaves the file-local result untouched. The
-//! two questions fail independently, so a project whose module graph will not
-//! load still honours the roles its manifests declare.
+//! command. Module reachability and package roles load independently; a failed
+//! load leaves that source of classification empty. If both fail, callers keep
+//! their file-local results.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use cargo_metadata::{MetadataCommand, Package};
@@ -69,7 +69,7 @@ use ra_ap_vfs::{FileId, Vfs};
 pub struct ProjectClassification {
     root: PathBuf,
     test_only: HashSet<PathBuf>,
-    test_role_crates: Vec<PathBuf>,
+    crate_roles: HashMap<PathBuf, bool>,
 }
 
 impl ProjectClassification {
@@ -95,12 +95,12 @@ impl ProjectClassification {
         let Ok(root) = std::fs::canonicalize(root.as_ref()) else {
             return Self::empty();
         };
-        let test_role_crates = test_role_crates(&root);
+        let crate_roles = crate_roles(&root);
         let test_only = test_build_only_files(&root).unwrap_or_default();
         Self {
             root,
             test_only,
-            test_role_crates,
+            crate_roles,
         }
     }
 
@@ -120,20 +120,28 @@ impl ProjectClassification {
         }
     }
 
-    /// Whether this classification knows about any test-only file.
+    /// Whether neither module reachability nor package roles mark anything as test-only.
     pub fn is_empty(&self) -> bool {
-        self.test_only.is_empty() && self.test_role_crates.is_empty()
+        self.test_only.is_empty() && !self.crate_roles.values().any(|is_tests| *is_tests)
     }
 
-    /// Whether `relative` lives under a crate that declares `role = "tests"`.
-    ///
-    /// Comparison is by path component, so `crates/harness` never claims
-    /// `crates/harness-extra`. A root package that declares the role has an
-    /// empty directory, which every path in the project is under.
+    /// The innermost member package owns the role, including an absent role.
     fn in_test_role_crate(&self, relative: &Path) -> bool {
-        self.test_role_crates
+        self.crate_roles
             .iter()
-            .any(|crate_dir| relative.starts_with(crate_dir))
+            .filter(|(directory, _)| relative.starts_with(directory))
+            .max_by_key(|(directory, _)| directory.components().count())
+            .is_some_and(|(_, is_tests)| *is_tests)
+    }
+
+    /// Whether a manifest role change alters this path's project classification.
+    pub(crate) fn role_reclassifies(&self, other: &Self, path: &Path) -> bool {
+        self.in_test_role_crate(path) != other.in_test_role_crate(path)
+            && self.is_test_only(path) != other.is_test_only(path)
+    }
+
+    pub(crate) fn has_same_roles(&self, other: &Self) -> bool {
+        self.crate_roles == other.crate_roles
     }
 
     /// Rewrite `path` into the project-root-relative form the map is keyed by.
@@ -173,31 +181,32 @@ fn test_build_only_files(root: &Path) -> Option<HashSet<PathBuf>> {
     )
 }
 
-/// Directories, relative to `root`, of the member crates that declare
-/// `[package.metadata.rustloc] role = "tests"`.
+/// Member package directories and whether each declares `role = "tests"`.
 ///
 /// `cargo metadata --no-deps` answers this: it reads the workspace's own
 /// manifests without resolving or downloading dependencies, so it works on a
 /// tree exported from a git object with no lock file and no network. A
 /// project that will not load this way declares no roles, which leaves every
 /// crate classified by its files alone.
-fn test_role_crates(root: &Path) -> Vec<PathBuf> {
+fn crate_roles(root: &Path) -> HashMap<PathBuf, bool> {
     let manifest = root.join("Cargo.toml");
     if !manifest.is_file() {
-        return Vec::new();
+        return HashMap::new();
     }
     let Ok(metadata) = MetadataCommand::new()
         .manifest_path(&manifest)
         .no_deps()
         .exec()
     else {
-        return Vec::new();
+        return HashMap::new();
     };
     metadata
         .packages
         .iter()
-        .filter(|package| declares_test_role(package))
-        .filter_map(|package| package_dir_relative_to(package, root))
+        .filter_map(|package| {
+            package_dir_relative_to(package, root)
+                .map(|directory| (directory, declares_test_role(package)))
+        })
         .collect()
 }
 

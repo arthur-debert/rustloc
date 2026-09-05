@@ -232,7 +232,7 @@ A crate that exists to test other crates — a published test harness, a shared 
 role = "tests"
 ```
 
-Every analyzed file under that crate's directory then has its production logic lines counted as tests. Docs, comments, blanks, examples, and lines already classified as tests are unchanged, and so is each file's line total. The role shows up wherever the crate's lines do: `count`, `diff`, `--by-crate`, and `--by-file`.
+Analyzed files belonging to that package have their production logic lines counted as tests. Nested workspace member packages keep their own roles. Docs, comments, blanks, examples, and lines already classified as tests are unchanged, and so is each file's line total. The role shows up wherever the crate's lines do: `count`, `diff`, `--by-crate`, and `--by-file`.
 
 `role = "tests"` is the only value that reclassifies. `role = "code"` is the default written out, and any other value — a misspelling, a non-string — is ignored, leaving the crate classified by its files alone.
 

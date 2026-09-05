@@ -50,8 +50,8 @@ role in its own manifest:
 role = "tests"
 ```
 
-Every analyzed file under that crate's directory then counts its production
-logic as tests. `role = "tests"` is the only value that reclassifies;
+Analyzed files belonging to that package count their production logic as
+tests. Nested workspace member packages keep their own roles. `role = "tests"` is the only value that reclassifies;
 `role = "code"` is the default stated explicitly, and any other value is
 ignored. Diffs read the declaration from each revision they compare, so a
 commit that adds the role shows the crate's lines leaving code and entering

@@ -719,9 +719,9 @@ fn each_revision_is_diffed_with_the_roles_that_revision_declared() {
         .find(|file| file.path.ends_with("harness/src/lib.rs"))
         .expect("the harness library should appear in the diff");
 
-    assert_eq!(harness.diff.removed.code, 1);
+    assert_eq!(harness.diff.removed.code, 3);
     assert_eq!(harness.diff.removed.tests, 0);
-    assert_eq!(harness.diff.added.tests, 1);
+    assert_eq!(harness.diff.added.tests, 3);
     assert_eq!(harness.diff.added.code, 0);
 }
 
@@ -790,7 +790,107 @@ fn a_working_tree_diff_reads_the_role_the_working_manifest_declares() {
         .find(|file| file.path.ends_with("harness/src/lib.rs"))
         .expect("the harness library should appear in the diff");
 
-    assert_eq!(harness.diff.removed.code, 1);
-    assert_eq!(harness.diff.added.tests, 1);
+    assert_eq!(harness.diff.removed.code, 3);
+    assert_eq!(harness.diff.added.tests, 3);
     assert_eq!(harness.diff.added.code, 0);
+}
+
+#[test]
+fn a_root_test_role_does_not_reclassify_nested_member_packages() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    write(
+        root,
+        "Cargo.toml",
+        &format!(
+            "{}{}\n[workspace]\nmembers = [\"crates/app\"]\n",
+            manifest("harness"),
+            role_metadata("tests")
+        ),
+    );
+    write(root, "src/lib.rs", HARNESS_LIB);
+    write(root, "crates/app/Cargo.toml", &manifest("app"));
+    write(root, "crates/app/src/lib.rs", "pub fn run() {}\n");
+    let result = count_by_file(root);
+    assert_eq!(result.total.tests, 3);
+    assert_eq!(result.total.code, 1);
+    assert_eq!(file_stats(&result, "crates/app/src/lib.rs").code, 1);
+    assert_eq!(file_stats(&result, "crates/app/src/lib.rs").tests, 0);
+}
+
+#[test]
+fn role_only_changes_reclassify_unchanged_sources_in_every_diff_mode() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    init_repo(root);
+    app_and_harness(root, "");
+    write(root, "crates/harness/examples/demo.rs", "fn main() {}\n");
+    write(
+        root,
+        "crates/harness/src/docs.rs",
+        "//! Only documentation.\n",
+    );
+    write(
+        root,
+        "crates/harness/tests/check.rs",
+        "#[test]\nfn check() {}\n",
+    );
+    let before = commit(root, "ordinary harness");
+    write(
+        root,
+        "crates/harness/Cargo.toml",
+        &format!("{}{}", manifest("harness"), role_metadata("tests")),
+    );
+
+    let assert_reclassified = |delta: rustloclib::LocsDiff| {
+        assert_eq!(delta.removed.code, 3);
+        assert_eq!(delta.added.tests, 3);
+        assert_eq!(delta.added.code, 0);
+        assert_eq!(delta.removed.tests, 0);
+        assert_eq!(delta.net_total(), 0);
+        assert_eq!(delta.added.examples + delta.removed.examples, 0);
+        assert_eq!(delta.added.docs + delta.removed.docs, 0);
+        assert_eq!(delta.added.comments + delta.removed.comments, 0);
+        assert_eq!(delta.added.blanks + delta.removed.blanks, 0);
+    };
+    assert_reclassified(
+        diff_workdir(root, WorkdirDiffMode::All, diff_by_file())
+            .unwrap()
+            .total,
+    );
+    git(root, &["add", "crates/harness/Cargo.toml"]);
+    // Staged classification must ignore this unstaged reversal of the role.
+    write(root, "crates/harness/Cargo.toml", &manifest("harness"));
+    assert_reclassified(
+        diff_workdir(root, WorkdirDiffMode::Staged, diff_by_file())
+            .unwrap()
+            .total,
+    );
+    assert_eq!(
+        diff_workdir(root, WorkdirDiffMode::All, diff_by_file())
+            .unwrap()
+            .total
+            .net_tests(),
+        0
+    );
+    git(root, &["checkout", "--", "crates/harness/Cargo.toml"]);
+    let after = commit(root, "declare test role");
+    let range = format!("{before}..{after}");
+    let endpoint = diff_revspec(root, &range, diff_by_file()).unwrap();
+    assert_reclassified(endpoint.total);
+    assert_eq!(endpoint.file_count, 1);
+    let excluded = diff_by_file().filter(FilterConfig::new().exclude("crates/harness/**").unwrap());
+    assert_eq!(diff_revspec(root, &range, excluded).unwrap().file_count, 0);
+    assert_reclassified(
+        diff_by_commit(root, &range, diff_by_file())
+            .unwrap()
+            .commits[0]
+            .diff,
+    );
+    let reversed = diff_revspec(root, &format!("{after}..{before}"), diff_by_file())
+        .unwrap()
+        .total;
+    assert_eq!(reversed.added.code, 3);
+    assert_eq!(reversed.removed.tests, 3);
+    assert_eq!(reversed.net_total(), 0);
 }
