@@ -51,7 +51,16 @@ rustloc --lang python                # analyze Python files only
 rustloc --lang rust,python           # analyze Rust and Python files
 rustloc -i "src/**/*.rs"             # include glob
 rustloc -e "**/generated/**"         # exclude glob
+rustloc crates/my-lib                # count one path
 ```
+
+`rustloc count crates/my-lib` counts that member, as does running `rustloc`
+from its directory or passing its `Cargo.toml`. Member counts retain workspace
+context for `cfg(test)` classification and workspace-relative row labels.
+Counting the workspace root includes every member, including members outside
+its directory. Combine a member path with `-c my-lib` to count their
+intersection. Plain files and directories without a `Cargo.toml` use file-local
+classification and labels relative to the requested path.
 
 ![by-file output](https://raw.githubusercontent.com/arthur-debert/rustloc/main/assets/output-by-file.png)
 
@@ -106,6 +115,7 @@ rustloc diff v1.0.0..v2.0.0          # between two tags
 rustloc diff main feature --by-file  # two-arg form, per-file breakdown
 rustloc diff main...feature          # from the merge base of main and feature
 rustloc commit HEAD                  # changes introduced by one commit
+rustloc diff --net-only              # only the net change in each cell
 ```
 
 Revspec syntax is resolved by `git rev-parse`: tags (annotated or lightweight), branches, short hashes, `HEAD~N`, `@{-N}`, `:/regex`, ranges (`a..b`), and merge-base ranges (`a...b`) all work. A single rev is diffed against HEAD; tag objects are peeled to their target commit automatically. A revspec `diff` requires `git` on `PATH`. Working-tree diffs (`rustloc diff` / `rustloc diff --staged`) do not.
@@ -115,6 +125,8 @@ Revspec syntax is resolved by `git rev-parse`: tags (annotated or lightweight), 
 The same `--by-*`, `-o`, `--top`, `-t`, `--lang`, and filter flags work on `diff` and `commit` results — diff filters operate on the net change.
 
 Diffs use the active language selection. Files outside that selection are not analyzed semantically; their added and removed physical lines are reported separately as `Skipped changes` so branch sanity checks still show that something changed outside the counted language set.
+
+A diff table cell normally reads `+added/-removed/net`. `--net-only` prints the signed net alone, in every cell of every row, the totals row, and the `Skipped changes` summary. It narrows what a human table shows, so line-type selection, digit grouping, and the JSON, YAML, XML, and CSV shapes are unaffected. `commit` accepts it on the same terms.
 
 ![diff output](https://raw.githubusercontent.com/arthur-debert/rustloc/main/assets/output-diff.png)
 

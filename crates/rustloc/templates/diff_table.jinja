@@ -16,10 +16,16 @@
     from_commit  / to_commit
     non_rust     {added: {raw, display}, removed: {raw, display},
                   net: {raw, display}} for files the language selection skipped
+    net_only     true when `--net-only` asked for the signed net alone
 
   Everything a diff shows beyond the shared table skeleton lives here: the
   title, the `+added/-removed/net` notation, the skipped-changes summary, and
   the legend that explains the notation.
+
+  `net_only` reaches here as a bare request; the three places a reader would
+  notice it — the cell, the skipped-changes summary, and the legend — each
+  answer it below, because Rust ships every cell's added, removed, and net
+  numbers either way.
 -#}
 {%- import "table_macros" as t -%}
 
@@ -27,9 +33,19 @@
     column's sub-width so the `/` separators line up down the whole column.
 
     The padding sits *outside* the style tags on purpose: colour belongs on the
-    digits, not on the whitespace that positions them. -#}
-{%- macro diff_cell(v, sub) -%}
+    digits, not on the whitespace that positions them.
+
+    Under `net_only` the cell is the net sub-field alone, right-aligned to the
+    same sub-width the full notation would give it — so a net reads identically
+    in both modes and only its neighbours disappear. It stays untagged, exactly
+    as the net sub-field is in the full notation: `[additions]`/`[deletions]`
+    mark the `+N`/`-N` counts, and a net is neither. -#}
+{%- macro diff_cell(v, sub, net_only) -%}
+{%- if net_only -%}
+{{ " " * (sub.net - (v.net.display | length)) }}{{ v.net.display }}
+{%- else -%}
 {{ " " * (sub.added - (("+" ~ v.added.display) | length)) }}[additions]+{{ v.added.display }}[/additions]/{{ " " * (sub.removed - (("-" ~ v.removed.display) | length)) }}[deletions]-{{ v.removed.display }}[/deletions]/{{ " " * (sub.net - (v.net.display | length)) }}{{ v.net.display }}
+{%- endif -%}
 {%- endmacro -%}
 
 {#- Per column: the header word, the three sub-widths, and the column width.
@@ -40,7 +56,10 @@
     align vertically.
 
     The column is as wide as its header word or as the notation needs
-    (`+added` + `/` + `-removed` + `/` + `net`), whichever is greater. -#}
+    (`+added` + `/` + `-removed` + `/` + `net`), whichever is greater — and
+    under `net_only`, as wide as its header word or the net sub-field alone, so
+    dropping the two counts narrows the table rather than leaving their space
+    blank. -#}
 {%- set ns = namespace(headers=[], widths=[], subs=[]) -%}
 {%- for key in columns -%}
   {%- set i = loop.index0 -%}
@@ -54,7 +73,8 @@
   {%- endfor -%}
   {%- set ns.subs = (ns.subs + [{"added": s.added, "removed": s.removed, "net": s.net}]) | list -%}
   {%- set ns.headers = (ns.headers + [header]) | list -%}
-  {%- set ns.widths = (ns.widths + [[header | length, s.added + s.removed + s.net + 2] | max]) | list -%}
+  {%- set value_width = s.net if net_only else (s.added + s.removed + s.net + 2) -%}
+  {%- set ns.widths = (ns.widths + [[header | length, value_width] | max]) | list -%}
 {%- endfor -%}
 
 {#- Render every cell against its column's sub-widths. -#}
@@ -62,12 +82,12 @@
 {%- for row in rows -%}
   {%- set cells = namespace(list=[]) -%}
   {%- for v in row.values -%}
-    {%- set cells.list = (cells.list + [{"display": diff_cell(v, ns.subs[loop.index0])}]) | list -%}
+    {%- set cells.list = (cells.list + [{"display": diff_cell(v, ns.subs[loop.index0], net_only)}]) | list -%}
   {%- endfor -%}
   {%- set body.rows = (body.rows + [{"label": row.label, "change_type": row.change_type, "values": cells.list}]) | list -%}
 {%- endfor -%}
 {%- for v in total -%}
-  {%- set body.total = (body.total + [{"display": diff_cell(v, ns.subs[loop.index0])}]) | list -%}
+  {%- set body.total = (body.total + [{"display": diff_cell(v, ns.subs[loop.index0], net_only)}]) | list -%}
 {%- endfor -%}
 {# Output starts below. Every tag above trims its own whitespace away, so the
    newline after this comment is the first thing emitted — it is the blank line
@@ -77,9 +97,9 @@ Diff: {{ from_commit }} → {{ to_commit }}
 {{ t.table(aggregation, ns.headers, body.rows, body.total, footer, ns.widths) }}
 {% if non_rust.added.raw > 0 or non_rust.removed.raw > 0 %}
 
-Skipped changes: [additions]+{{ non_rust.added.display }}[/additions] / [deletions]-{{ non_rust.removed.display }}[/deletions] / {{ non_rust.net.display }} net
+Skipped changes: {% if net_only %}{{ non_rust.net.display }} net{% else %}[additions]+{{ non_rust.added.display }}[/additions] / [deletions]-{{ non_rust.removed.display }}[/deletions] / {{ non_rust.net.display }} net{% endif %}
 {% endif %}
-[muted](+added / -removed / net)[/muted]
+[muted]({% if net_only %}net{% else %}+added / -removed / net{% endif %})[/muted]
 {# The legend must end in a newline, and MiniJinja strips a single trailing
    newline at end of template — so this comment, not the legend, is what sits at
    EOF and absorbs the strip. Deleting it silently un-terminates the last line. #}

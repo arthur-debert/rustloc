@@ -79,7 +79,10 @@ pub fn parse_ordering(s: &str) -> Result<Ordering, String> {
 /// point by matching a variant instead of re-running filesystem probes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CountPath {
-    /// A Cargo workspace: a directory holding `Cargo.toml`, or the manifest itself.
+    /// A Cargo workspace: a directory holding `Cargo.toml`, or the manifest
+    /// itself. A workspace *member* lands here too, and the library scopes
+    /// the count to it: the whole workspace loads for `cfg(test)`
+    /// classification, but only files under this path are reported.
     Workspace(PathBuf),
     /// A single source file.
     File(PathBuf),
