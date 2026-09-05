@@ -29,38 +29,15 @@ use crate::data::{BackendRegistry, LanguageSelection};
 use crate::error::RustlocError;
 use crate::Result;
 
-/// A compiled glob paired with the text the user typed.
-///
-/// The source text is kept so a warning can quote the pattern back exactly as
-/// written; `Pattern`'s own `Display` is a reconstruction, not the input.
-#[derive(Debug, Clone)]
-struct GlobPattern {
-    source: String,
-    pattern: Pattern,
-}
-
-impl GlobPattern {
-    fn new(source: &str) -> Result<Self> {
-        let pattern = Pattern::new(source).map_err(|e| RustlocError::InvalidGlob {
-            pattern: source.to_string(),
-            message: e.to_string(),
-        })?;
-        Ok(Self {
-            source: source.to_string(),
-            pattern,
-        })
-    }
-}
-
 /// Configuration for file filtering.
 #[derive(Debug, Clone, Default)]
 pub struct FilterConfig {
     /// Glob patterns to include (if empty, include all supported source files)
-    include: Vec<GlobPattern>,
+    pub include: Vec<Pattern>,
     /// Glob patterns to exclude
-    exclude: Vec<GlobPattern>,
+    pub exclude: Vec<Pattern>,
     /// Language backend groups to analyze.
-    languages: LanguageSelection,
+    pub languages: LanguageSelection,
     /// Root the globs are written relative to; see the module docs.
     root: Option<PathBuf>,
 }
@@ -73,13 +50,23 @@ impl FilterConfig {
 
     /// Add an include pattern.
     pub fn include(mut self, pattern: &str) -> Result<Self> {
-        self.include.push(GlobPattern::new(pattern)?);
+        self.include.push(
+            Pattern::new(pattern).map_err(|e| RustlocError::InvalidGlob {
+                pattern: pattern.to_string(),
+                message: e.to_string(),
+            })?,
+        );
         Ok(self)
     }
 
     /// Add an exclude pattern.
     pub fn exclude(mut self, pattern: &str) -> Result<Self> {
-        self.exclude.push(GlobPattern::new(pattern)?);
+        self.exclude.push(
+            Pattern::new(pattern).map_err(|e| RustlocError::InvalidGlob {
+                pattern: pattern.to_string(),
+                message: e.to_string(),
+            })?,
+        );
         Ok(self)
     }
 
@@ -143,7 +130,7 @@ impl FilterConfig {
         let candidate = candidate.to_string_lossy();
 
         // Check excludes first
-        if self.exclude.iter().any(|p| p.pattern.matches(&candidate)) {
+        if self.exclude.iter().any(|p| p.matches(&candidate)) {
             return false;
         }
 
@@ -153,7 +140,7 @@ impl FilterConfig {
         }
 
         // Must match at least one include pattern
-        self.include.iter().any(|p| p.pattern.matches(&candidate))
+        self.include.iter().any(|p| p.matches(&candidate))
     }
 
     /// The globs, as the user wrote them, that none of `candidates` matched.
@@ -163,12 +150,12 @@ impl FilterConfig {
     /// narrowed it. A glob absent from every candidate did not filter, it
     /// missed: usually a path form the run does not use (an absolute path, or
     /// a directory the walk never entered). Include and exclude globs are
-    /// reported together and in the order they were configured.
+    /// reported includes first, then excludes, in insertion order within each group.
     pub fn unmatched_globs<'a>(
         &self,
         candidates: impl IntoIterator<Item = &'a Path>,
     ) -> Vec<String> {
-        let globs: Vec<&GlobPattern> = self.include.iter().chain(self.exclude.iter()).collect();
+        let globs: Vec<&Pattern> = self.include.iter().chain(self.exclude.iter()).collect();
         if globs.is_empty() {
             return Vec::new();
         }
@@ -178,7 +165,7 @@ impl FilterConfig {
             let candidate = self.glob_target(path);
             let candidate = candidate.to_string_lossy();
             for (glob, hit) in globs.iter().zip(hit.iter_mut()) {
-                *hit = *hit || glob.pattern.matches(&candidate);
+                *hit = *hit || glob.matches(&candidate);
             }
             // Every glob has proved itself; the rest of the walk cannot
             // change the answer.
@@ -191,7 +178,7 @@ impl FilterConfig {
             .iter()
             .zip(hit)
             .filter(|(_, hit)| !*hit)
-            .map(|(glob, _)| glob.source.clone())
+            .map(|(glob, _)| glob.as_str().to_string())
             .collect()
     }
 
@@ -209,6 +196,20 @@ impl FilterConfig {
 fn should_skip_dir(name: &str) -> bool {
     // Skip hidden directories and target/
     name.starts_with('.') || name == "target"
+}
+
+/// Discover supported source files and apply the configured globs.
+pub fn discover_files(root: impl AsRef<Path>, filter: &FilterConfig) -> Result<Vec<PathBuf>> {
+    let mut files = discover_candidates(root, filter)?;
+    files.retain(|path| filter.matches(path));
+    Ok(files)
+}
+
+/// Discover matching source files across several directories, deduplicated and sorted.
+pub fn discover_files_in_dirs(dirs: &[&Path], filter: &FilterConfig) -> Result<Vec<PathBuf>> {
+    let mut files = discover_candidates_in_dirs(dirs, filter)?;
+    files.retain(|path| filter.matches(path));
+    Ok(files)
 }
 
 /// Discover the files a filter could analyze under `root`, before its globs.
@@ -309,8 +310,11 @@ mod tests {
 
     /// The candidate set a filter's globs get judged against.
     fn discovered(root: &Path, filter: &FilterConfig) -> Vec<PathBuf> {
-        let mut files = discover_candidates(root, filter).unwrap();
-        files.retain(|path| filter.matches(path));
+        let files = discover_files(root, filter).unwrap();
+        assert_eq!(
+            files,
+            discover_files_in_dirs(&[root, root], filter).unwrap()
+        );
         files
     }
 
@@ -465,6 +469,19 @@ mod tests {
         assert!(filter
             .unmatched_globs([Path::new("src/main.rs")])
             .is_empty());
+    }
+
+    #[test]
+    fn empty_candidates_leave_every_configured_glob_unmatched() {
+        let filter = FilterConfig::new()
+            .include("src/**")
+            .unwrap()
+            .exclude("generated/**")
+            .unwrap();
+        assert_eq!(
+            filter.unmatched_globs(std::iter::empty()),
+            ["src/**", "generated/**"]
+        );
     }
 
     #[test]

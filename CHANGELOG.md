@@ -6,8 +6,9 @@
 
 - Fix `rustloc count <member-path>` counting unrelated Cargo workspace members. Member directories, member manifests, and running from a member directory now select that member while preserving workspace test classification and row labels. Crate filters narrow the selection further; counting the workspace root still includes every member (#168).
 - Add `--net-only` to `rustloc diff` and `rustloc commit`. Each human-table cell then shows its signed net change alone instead of the `+added/-removed/net` triple, in data rows, `--by-commit` rows, the totals row, and the `Skipped changes` summary. Line-type selection, digit grouping, and the JSON, YAML, XML, and CSV shapes are unchanged, and the default output is unchanged.
-- Fix `rustloc count -i/-e` matching globs against absolute paths, which made a repo-relative glob a silent no-op. Count and diff now both match globs against the path relative to the analyzed root — the Cargo workspace root, the counted directory or file's directory, or the repository root — which is the path a `--by-file` row already shows. A glob that matches no file is reported beside the table and as `unmatched_globs` in JSON, YAML, and XML (#167).
-- Report a glob-excluded single file as excluded by `-i`/`-e` rather than as an unsupported source file, so the message names the request that rejected it (#167).
+- Match count include/exclude globs relative to the workspace, directory, or file's parent, so patterns such as `crates/docs/**` work in both count and diff. Report unmatched patterns beside human tables and in JSON, YAML, and XML (#167).
+- Explain when include/exclude globs reject a single file instead of reporting it as unsupported (#167).
+- Test harness and fixture crates can declare `[package.metadata.rustloc] role = "tests"` in `Cargo.toml` to count their production logic as tests. Other line types and totals stay unchanged, and nested workspace members keep their own roles. Count and diff reports honour the declaration; historical, staged, and working-tree diffs use each side's metadata and report reclassification even when source text is unchanged.
 
 ## 0.26.0 - 2026-08-31
 

@@ -1285,7 +1285,7 @@ fn a_glob_that_rejects_the_only_counted_file_names_the_glob_as_the_cause() {
 
     match run(&[file, "-i", "src/**"]) {
         RunResult::Error(msg) => assert!(
-            msg.contains("excluded by the include/exclude globs"),
+            msg.contains("filtered out by the include/exclude globs"),
             "unexpected message: {msg}"
         ),
         other => panic!("expected an Error, got {other:?}"),
@@ -1303,22 +1303,38 @@ fn a_glob_that_rejects_the_only_counted_file_names_the_glob_as_the_cause() {
 #[test]
 fn a_diff_glob_that_matches_nothing_warns_beside_the_table() {
     let dir = commit_repo();
-    let out = stdout(&[
-        "diff",
-        "-p",
-        &path_of(&dir),
-        "HEAD~1..HEAD",
-        "-e",
-        "crate-z/**",
-        "--output",
-        "text",
-    ]);
-
-    assert!(
-        out.contains("warning: no changed file matched 'crate-z/**'")
-            && out.contains("relative to the repository root"),
-        "missing diff glob warning in:\n{out}"
-    );
+    let path = path_of(&dir);
+    for route in [
+        vec!["diff", "HEAD~1..HEAD"],
+        vec!["diff", "HEAD~1..HEAD", "--by-commit"],
+        vec!["commit", "HEAD"],
+    ] {
+        let args = [
+            route.as_slice(),
+            &[
+                "-p",
+                &path,
+                "-e",
+                "crate-z/**",
+                "-e",
+                "missing/**",
+                "--output",
+                "text",
+            ],
+        ]
+        .concat();
+        let out = stdout(&args);
+        assert!(
+            out.contains("\nwarning: no changed file matched 'crate-z/**'"),
+            "{out}"
+        );
+        assert!(
+            out.contains("\nwarning: no changed file matched 'missing/**'"),
+            "{out}"
+        );
+        assert!(out.contains("relative to the repository root"), "{out}");
+        assert!(out.ends_with('\n'), "{out:?}");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2021,6 +2037,76 @@ fn structured_output_matches_the_approved_fixtures() {
             &diff_path,
         );
     }
+}
+
+/// A workspace whose `harness` member declares itself a test crate.
+///
+/// `harness/src/lib.rs` is plain library code — no `#[test]`, no `cfg(test)`,
+/// not under a `tests/` path — so only the manifest's
+/// `[package.metadata.rustloc] role = "tests"` can move its three logic lines
+/// into the Tests column.
+fn workspace_with_a_test_role_crate() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    std::fs::write(
+        p.join("Cargo.toml"),
+        "[workspace]\nresolver = \"2\"\nmembers = [\"crates/app\", \"crates/harness\"]\n",
+    )
+    .unwrap();
+
+    let manifest = |name: &str| {
+        format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
+    };
+
+    std::fs::create_dir_all(p.join("crates/app/src")).unwrap();
+    std::fs::write(p.join("crates/app/Cargo.toml"), manifest("app")).unwrap();
+    std::fs::write(
+        p.join("crates/app/src/lib.rs"),
+        "pub fn run() -> u32 {\n    1\n}\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(p.join("crates/harness/src")).unwrap();
+    std::fs::write(
+        p.join("crates/harness/Cargo.toml"),
+        format!(
+            "{}\n[package.metadata.rustloc]\nrole = \"tests\"\n",
+            manifest("harness")
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        p.join("crates/harness/src/lib.rs"),
+        "pub fn assert_output(actual: &str) {\n    assert_eq!(actual, \"ok\");\n}\n",
+    )
+    .unwrap();
+
+    dir
+}
+
+/// A declared crate role reaches the CLI's own response, not just the
+/// library: the per-crate rows a consumer parses put the harness crate's
+/// lines under `tests` and leave the application crate under `code`.
+#[test]
+fn a_declared_test_role_reaches_the_per_crate_response() {
+    let dir = workspace_with_a_test_role_crate();
+    let out = stdout(&[&path_of(&dir), "--by-crate", "--output", "json"]);
+    let parsed: CountQuerySet = serde_json::from_str(&out).expect("count response");
+
+    let row = |name: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.label == name)
+            .unwrap_or_else(|| panic!("no row for {name} in {out}"))
+            .stats
+    };
+
+    assert_eq!(row("harness").tests, 3);
+    assert_eq!(row("harness").code, 0);
+    assert_eq!(row("app").code, 3);
+    assert_eq!(parsed.total.code, 3);
+    assert_eq!(parsed.total.tests, 3);
 }
 
 /// A two-crate workspace with deliberately lopsided magnitudes.
@@ -3171,5 +3257,63 @@ fn by_commit_net_only_table_matches_the_approved_fixture() {
                 mode,
             ]),
         );
+    }
+}
+
+#[test]
+fn single_file_counts_report_only_unmatched_patterns() {
+    let dir = workspace();
+    let file = dir.path().join("src/lib.rs");
+    let file = file.to_str().unwrap();
+    let args = [file, "-i", "lib.rs", "-i", "missing.rs", "-e", "other.rs"];
+    let out = stdout(&[args.as_slice(), &["--output", "json"]].concat());
+    let parsed: CountQuerySet = serde_json::from_str(&out).unwrap();
+    assert_eq!(parsed.file_count, 1);
+    assert_eq!(parsed.unmatched_globs, ["missing.rs", "other.rs"]);
+    let out = stdout(&[args.as_slice(), &["--output", "text"]].concat());
+    assert_eq!(
+        out.lines()
+            .filter(|line| line.starts_with("warning: no file matched '"))
+            .count(),
+        2
+    );
+    assert!(out.contains("\nwarning: no file matched 'missing.rs'"));
+    assert!(out.contains("\nwarning: no file matched 'other.rs'"));
+    assert!(!out.contains("warning: no file matched 'lib.rs'"));
+}
+
+#[test]
+fn unmatched_globs_render_as_literal_text_and_round_trip_in_structured_modes() {
+    let dir = member_workspace();
+    let pattern = "[[]warning[]]missing[[]/warning[]]";
+    let args = [path_of(&dir), "-e".into(), pattern.into()];
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let text = stdout(&[args.as_slice(), &["--output", "text"]].concat());
+    assert!(text.contains(pattern), "{text}");
+    for mode in ["json", "yaml", "xml"] {
+        let out = stdout(&[args.as_slice(), &["--output", mode]].concat());
+        assert!(!out.contains("warning: no file matched"), "{out}");
+        assert!(out.contains(pattern), "{mode}: {out}");
+        match mode {
+            "json" => {
+                let parsed: CountQuerySet = serde_json::from_str(&out).unwrap();
+                assert_eq!(parsed.unmatched_globs, [pattern]);
+            }
+            "yaml" => {
+                let parsed: CountQuerySet = serde_yaml::from_str(&out).unwrap();
+                assert_eq!(parsed.unmatched_globs, [pattern]);
+            }
+            "xml" => {
+                let mut reader = quick_xml::Reader::from_str(&out);
+                loop {
+                    if reader.read_event().expect("well-formed XML")
+                        == quick_xml::events::Event::Eof
+                    {
+                        break;
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
     }
 }

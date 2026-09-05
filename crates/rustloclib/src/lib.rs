@@ -44,7 +44,8 @@
 //!   [`FilterConfig::relative_to`] so a glob names files the way a report
 //!   labels its rows
 //! - [`ProjectClassification`]: Ask the Cargo module graph which Rust files
-//!   only a `cfg(test)` build reaches
+//!   only a `cfg(test)` build reaches, and the manifests which crates declare
+//!   `[package.metadata.rustloc] role = "tests"`
 //!
 //! ### Stage 2: Data Collection ([`data`])
 //!

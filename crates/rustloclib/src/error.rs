@@ -39,7 +39,7 @@ pub enum RustlocError {
     /// reader to different places: one means the language is not analyzed,
     /// the other means the request's own globs excluded the file.
     #[error(
-        "'{0}' is excluded by the include/exclude globs; globs match the path relative to the analyzed root"
+        "'{0}' was filtered out by the include/exclude globs; globs match the path relative to the analyzed root"
     )]
     FilteredSourceFile(PathBuf),
 

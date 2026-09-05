@@ -26,6 +26,9 @@ pub mod filter;
 pub mod project;
 pub mod workspace;
 
-pub use filter::{discover_candidates, discover_candidates_in_dirs, FilterConfig};
+pub use filter::{
+    discover_candidates, discover_candidates_in_dirs, discover_files, discover_files_in_dirs,
+    FilterConfig,
+};
 pub use project::ProjectClassification;
 pub use workspace::{CrateInfo, WorkspaceInfo};

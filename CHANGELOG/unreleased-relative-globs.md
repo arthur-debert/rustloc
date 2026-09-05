@@ -1,2 +1,2 @@
-- Fix `rustloc count -i/-e` matching globs against absolute paths, which made a repo-relative glob a silent no-op. Count and diff now both match globs against the path relative to the analyzed root — the Cargo workspace root, the counted directory or file's directory, or the repository root — which is the path a `--by-file` row already shows. A glob that matches no file is reported beside the table and as `unmatched_globs` in JSON, YAML, and XML (#167).
-- Report a glob-excluded single file as excluded by `-i`/`-e` rather than as an unsupported source file, so the message names the request that rejected it (#167).
+- Match count include/exclude globs relative to the workspace, directory, or file's parent, so patterns such as `crates/docs/**` work in both count and diff. Report unmatched patterns beside human tables and in JSON, YAML, and XML (#167).
+- Explain when include/exclude globs reject a single file instead of reporting it as unsupported (#167).

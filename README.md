@@ -11,6 +11,7 @@ A language-aware lines-of-code counter with deep Rust, Python, and TypeScript cl
 ## Features
 
 - **Line types:** code, tests, examples, docs, comments, blanks
+- **Crate roles:** a test-harness or fixture crate declares `role = "tests"` in its own manifest and counts as tests
 - **Language backends:** Rust by default; opt into Python, TypeScript, or generic source counting with `--lang`
 - **Grouping:** by crate, module, or file
 - **Sorting and slicing:** sort by any column, take the top N
@@ -240,6 +241,22 @@ The Rust backend parses source with `ra_ap_syntax` and uses the resulting token 
 The Rust backend classifies source-written items only; it does not expand macros or report parser diagnostics in the current result types.
 
 The Python backend uses Ruff's parser and syntax ranges to classify pytest functions, unittest classes, docstrings, comments, blanks, and path-level test/example files. The TypeScript backend uses Oxc parser comment spans for JSDoc and regular comments, with path-level test/example classification. The generic backend provides file-level classification for common source extensions when selected.
+
+### Test-harness and fixture crates
+
+A crate that exists to test other crates — a published test harness, a shared fixture crate, an unpublished tooling crate — compiles as an ordinary library. Nothing in its sources or in the Cargo module graph says it is test code, so its `src/` lands in the Code column. Such a crate declares its role in its own manifest:
+
+```toml
+# crates/my-test-harness/Cargo.toml
+[package.metadata.rustloc]
+role = "tests"
+```
+
+Analyzed files belonging to that package have their production logic lines counted as tests. Nested workspace member packages keep their own roles. Docs, comments, blanks, examples, and lines already classified as tests are unchanged, and so is each file's line total. The role shows up wherever the crate's lines do: `count`, `diff`, `--by-crate`, and `--by-file`.
+
+`role = "tests"` is the only value that reclassifies. `role = "code"` is the default written out, and any other value — a misspelling, a non-string — is ignored, leaving the crate classified by its files alone.
+
+Diffs read the declaration from the revision each side's content comes from, so the commit that adds the role reports the crate's lines as code removed and tests added, and commits before it keep the numbers they had.
 
 ## License
 
