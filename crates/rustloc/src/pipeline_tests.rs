@@ -1864,6 +1864,76 @@ fn structured_output_matches_the_approved_fixtures() {
     }
 }
 
+/// A workspace whose `harness` member declares itself a test crate.
+///
+/// `harness/src/lib.rs` is plain library code — no `#[test]`, no `cfg(test)`,
+/// not under a `tests/` path — so only the manifest's
+/// `[package.metadata.rustloc] role = "tests"` can move its three logic lines
+/// into the Tests column.
+fn workspace_with_a_test_role_crate() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    std::fs::write(
+        p.join("Cargo.toml"),
+        "[workspace]\nresolver = \"2\"\nmembers = [\"crates/app\", \"crates/harness\"]\n",
+    )
+    .unwrap();
+
+    let manifest = |name: &str| {
+        format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
+    };
+
+    std::fs::create_dir_all(p.join("crates/app/src")).unwrap();
+    std::fs::write(p.join("crates/app/Cargo.toml"), manifest("app")).unwrap();
+    std::fs::write(
+        p.join("crates/app/src/lib.rs"),
+        "pub fn run() -> u32 {\n    1\n}\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(p.join("crates/harness/src")).unwrap();
+    std::fs::write(
+        p.join("crates/harness/Cargo.toml"),
+        format!(
+            "{}\n[package.metadata.rustloc]\nrole = \"tests\"\n",
+            manifest("harness")
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        p.join("crates/harness/src/lib.rs"),
+        "pub fn assert_output(actual: &str) {\n    assert_eq!(actual, \"ok\");\n}\n",
+    )
+    .unwrap();
+
+    dir
+}
+
+/// A declared crate role reaches the CLI's own response, not just the
+/// library: the per-crate rows a consumer parses put the harness crate's
+/// lines under `tests` and leave the application crate under `code`.
+#[test]
+fn a_declared_test_role_reaches_the_per_crate_response() {
+    let dir = workspace_with_a_test_role_crate();
+    let out = stdout(&[&path_of(&dir), "--by-crate", "--output", "json"]);
+    let parsed: CountQuerySet = serde_json::from_str(&out).expect("count response");
+
+    let row = |name: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.label == name)
+            .unwrap_or_else(|| panic!("no row for {name} in {out}"))
+            .stats
+    };
+
+    assert_eq!(row("harness").tests, 3);
+    assert_eq!(row("harness").code, 0);
+    assert_eq!(row("app").code, 3);
+    assert_eq!(parsed.total.code, 3);
+    assert_eq!(parsed.total.tests, 3);
+}
+
 /// A two-crate workspace with deliberately lopsided magnitudes.
 ///
 /// `alpha` is three digits of code and carries every line type (docs, comments,

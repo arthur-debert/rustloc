@@ -20,17 +20,37 @@
 //! `cfg(test)`, or reachable only as (or from) a Cargo test target, is
 //! test-only.
 //!
+//! The module graph cannot see one further case: a whole crate whose purpose
+//! is testing other crates. A published test harness, a shared fixture crate
+//! and an unpublished tooling crate all compile as ordinary libraries, so
+//! every line of their `src/` reaches the production configuration. Such a
+//! crate says so in its own manifest:
+//!
+//! ```toml
+//! [package.metadata.rustloc]
+//! role = "tests"
+//! ```
+//!
+//! Files belonging to that package are then test-only. Nested workspace
+//! member packages keep their own roles.
+//! `role = "tests"` is the only value that reclassifies; `role = "code"` is
+//! the default a crate can state explicitly, and any other value — or a
+//! `role` that is not a string — is ignored, leaving the crate's files with
+//! the classification the module graph and their own syntax give them.
+//!
 //! Cargo and rust-analyzer types stay behind this boundary:
 //! [`ProjectClassification`] hands callers a single `is_test_only` predicate
 //! over paths, and nothing else in rustloclib links a file to its crate graph.
 //!
 //! Loading never executes build scripts or proc macros, and never fails a
-//! command: any error — no Cargo, no rustc, an unparseable manifest — yields
-//! an empty classification, which leaves the file-local result untouched.
+//! command. Module reachability and package roles load independently; a failed
+//! load leaves that source of classification empty. If both fail, callers keep
+//! their file-local results.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use cargo_metadata::{MetadataCommand, Package};
 use ra_ap_hir::Crate;
 use ra_ap_ide_db::base_db::CrateOrigin;
 use ra_ap_load_cargo::{load_workspace, LoadCargoConfig, ProcMacroServerChoice};
@@ -49,6 +69,7 @@ use ra_ap_vfs::{FileId, Vfs};
 pub struct ProjectClassification {
     root: PathBuf,
     test_only: HashSet<PathBuf>,
+    crate_roles: HashMap<PathBuf, bool>,
 }
 
 impl ProjectClassification {
@@ -63,30 +84,64 @@ impl ProjectClassification {
     /// Load the Cargo project rooted at `root`, or an empty classification.
     ///
     /// `root` must contain the `Cargo.toml` to load; no parent directory is
-    /// searched. Every failure mode — a missing manifest, no `cargo` or
-    /// `rustc` on `PATH`, a manifest cargo rejects — returns
-    /// [`ProjectClassification::empty`] rather than an error, so a command
-    /// that worked before project classification existed still works.
+    /// searched. Two independent questions are asked of it: which files only
+    /// the `cfg(test)` module graph reaches, and which member crates declare
+    /// `[package.metadata.rustloc] role = "tests"`. Every failure mode — a
+    /// missing manifest, no `cargo` or `rustc` on `PATH`, a manifest cargo
+    /// rejects — leaves the corresponding answer empty rather than returning
+    /// an error, so a command that worked before project classification
+    /// existed still works.
     pub fn load(root: impl AsRef<Path>) -> Self {
-        Self::try_load(root.as_ref()).unwrap_or_else(Self::empty)
+        let Ok(root) = std::fs::canonicalize(root.as_ref()) else {
+            return Self::empty();
+        };
+        let crate_roles = crate_roles(&root);
+        let test_only = test_build_only_files(&root).unwrap_or_default();
+        Self {
+            root,
+            test_only,
+            crate_roles,
+        }
     }
 
-    /// Whether `path` belongs to a module only the test build can reach.
+    /// Whether `path` belongs to a module only the test build can reach, or
+    /// to a crate whose manifest declares `role = "tests"`.
     ///
     /// `path` may be absolute (under the project root) or relative to it.
     pub fn is_test_only(&self, path: &Path) -> bool {
-        if self.test_only.is_empty() {
+        if self.is_empty() {
             return false;
         }
         match self.relative(path) {
-            Some(relative) => self.test_only.contains(&relative),
+            Some(relative) => {
+                self.test_only.contains(&relative) || self.in_test_role_crate(&relative)
+            }
             None => false,
         }
     }
 
-    /// Whether this classification knows about any test-only file.
+    /// Whether neither module reachability nor package roles mark anything as test-only.
     pub fn is_empty(&self) -> bool {
-        self.test_only.is_empty()
+        self.test_only.is_empty() && !self.crate_roles.values().any(|is_tests| *is_tests)
+    }
+
+    /// The innermost member package owns the role, including an absent role.
+    fn in_test_role_crate(&self, relative: &Path) -> bool {
+        self.crate_roles
+            .iter()
+            .filter(|(directory, _)| relative.starts_with(directory))
+            .max_by_key(|(directory, _)| directory.components().count())
+            .is_some_and(|(_, is_tests)| *is_tests)
+    }
+
+    /// Whether a manifest role change alters this path's project classification.
+    pub(crate) fn role_reclassifies(&self, other: &Self, path: &Path) -> bool {
+        self.in_test_role_crate(path) != other.in_test_role_crate(path)
+            && self.is_test_only(path) != other.is_test_only(path)
+    }
+
+    pub(crate) fn has_same_roles(&self, other: &Self) -> bool {
+        self.crate_roles == other.crate_roles
     }
 
     /// Rewrite `path` into the project-root-relative form the map is keyed by.
@@ -107,20 +162,75 @@ impl ProjectClassification {
             .ok()
             .map(Path::to_path_buf)
     }
+}
 
-    fn try_load(root: &Path) -> Option<Self> {
-        let root = std::fs::canonicalize(root).ok()?;
-        let normal = Reachability::load(&root, false)?;
-        let with_test_cfg = Reachability::load(&root, true)?;
+/// Files the `cfg(test)` configuration of the project at `root` reaches and
+/// the production configuration does not.
+///
+/// `root` is already canonical. `None` means the project did not load at all.
+fn test_build_only_files(root: &Path) -> Option<HashSet<PathBuf>> {
+    let normal = Reachability::load(root, false)?;
+    let with_test_cfg = Reachability::load(root, true)?;
 
-        let test_only = with_test_cfg
+    Some(
+        with_test_cfg
             .reachable
             .difference(&normal.production)
             .cloned()
-            .collect();
+            .collect(),
+    )
+}
 
-        Some(Self { root, test_only })
+/// Member package directories and whether each declares `role = "tests"`.
+///
+/// `cargo metadata --no-deps` answers this: it reads the workspace's own
+/// manifests without resolving or downloading dependencies, so it works on a
+/// tree exported from a git object with no lock file and no network. A
+/// project that will not load this way declares no roles, which leaves every
+/// crate classified by its files alone.
+fn crate_roles(root: &Path) -> HashMap<PathBuf, bool> {
+    let manifest = root.join("Cargo.toml");
+    if !manifest.is_file() {
+        return HashMap::new();
     }
+    let Ok(metadata) = MetadataCommand::new()
+        .manifest_path(&manifest)
+        .no_deps()
+        .exec()
+    else {
+        return HashMap::new();
+    };
+    metadata
+        .packages
+        .iter()
+        .filter_map(|package| {
+            package_dir_relative_to(package, root)
+                .map(|directory| (directory, declares_test_role(package)))
+        })
+        .collect()
+}
+
+/// Whether `package`'s manifest declares the rustloc test role.
+///
+/// Only the exact string `"tests"` counts. Anything else — the explicit
+/// default `"code"`, a misspelling, a non-string value, no `role` key, no
+/// `[package.metadata.rustloc]` table — leaves the crate alone.
+fn declares_test_role(package: &Package) -> bool {
+    package
+        .metadata
+        .get("rustloc")
+        .and_then(|rustloc| rustloc.get("role"))
+        .and_then(|role| role.as_str())
+        == Some("tests")
+}
+
+/// `package`'s directory expressed relative to the project root, if it is
+/// inside that root.
+fn package_dir_relative_to(package: &Package, root: &Path) -> Option<PathBuf> {
+    let manifest: &Path = package.manifest_path.as_std_path();
+    let directory = manifest.parent()?;
+    let canonical = std::fs::canonicalize(directory).unwrap_or_else(|_| directory.to_path_buf());
+    canonical.strip_prefix(root).ok().map(Path::to_path_buf)
 }
 
 /// The source files one `cfg` configuration of a project reaches.
@@ -345,6 +455,119 @@ mod tests {
 
         assert!(project.is_empty());
         assert!(!project.is_test_only(Path::new("src/cases.rs")));
+    }
+
+    /// A workspace whose `harness` member declares `role = role_value` and
+    /// whose `app` member declares nothing.
+    fn workspace_with_role(root: &Path, role_value: &str) {
+        write(
+            root,
+            "Cargo.toml",
+            "[workspace]\nresolver = \"2\"\nmembers = [\"crates/app\", \"crates/harness\"]\n",
+        );
+        write(
+            root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write(root, "crates/app/src/lib.rs", "pub fn run() {}\n");
+        write(
+            root,
+            "crates/harness/Cargo.toml",
+            &format!(
+                "[package]\nname = \"harness\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+                 [package.metadata.rustloc]\nrole = \"{role_value}\"\n"
+            ),
+        );
+        write(root, "crates/harness/src/lib.rs", "pub fn assert_it() {}\n");
+    }
+
+    #[test]
+    fn a_crate_declaring_the_tests_role_is_test_only_throughout() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        workspace_with_role(root, "tests");
+
+        let project = ProjectClassification::load(root);
+
+        assert!(project.is_test_only(Path::new("crates/harness/src/lib.rs")));
+        assert!(!project.is_test_only(Path::new("crates/app/src/lib.rs")));
+    }
+
+    #[test]
+    fn a_crate_declaring_the_code_role_keeps_its_file_local_classification() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        workspace_with_role(root, "code");
+
+        let project = ProjectClassification::load(root);
+
+        assert!(!project.is_test_only(Path::new("crates/harness/src/lib.rs")));
+    }
+
+    #[test]
+    fn a_role_value_rustloc_does_not_define_is_ignored() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        workspace_with_role(root, "test");
+
+        let project = ProjectClassification::load(root);
+
+        assert!(!project.is_test_only(Path::new("crates/harness/src/lib.rs")));
+    }
+
+    /// A sibling whose directory name merely starts with a test-role crate's
+    /// own name must not inherit the role.
+    #[test]
+    fn the_role_covers_whole_path_components_only() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        write(
+            root,
+            "Cargo.toml",
+            "[workspace]\nresolver = \"2\"\nmembers = [\"crates/harness\", \"crates/harness-extra\"]\n",
+        );
+        write(
+            root,
+            "crates/harness/Cargo.toml",
+            "[package]\nname = \"harness\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+             [package.metadata.rustloc]\nrole = \"tests\"\n",
+        );
+        write(root, "crates/harness/src/lib.rs", "pub fn assert_it() {}\n");
+        write(
+            root,
+            "crates/harness-extra/Cargo.toml",
+            "[package]\nname = \"harness-extra\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write(
+            root,
+            "crates/harness-extra/src/lib.rs",
+            "pub fn extra() {}\n",
+        );
+
+        let project = ProjectClassification::load(root);
+
+        assert!(project.is_test_only(Path::new("crates/harness/src/lib.rs")));
+        assert!(!project.is_test_only(Path::new("crates/harness-extra/src/lib.rs")));
+    }
+
+    /// A single-package project can call itself a test crate; its package
+    /// directory is the project root, so every file is covered.
+    #[test]
+    fn a_root_package_declaring_the_tests_role_covers_the_whole_project() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+        write(
+            root,
+            "Cargo.toml",
+            "[package]\nname = \"harness\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+             [package.metadata.rustloc]\nrole = \"tests\"\n",
+        );
+        write(root, "src/lib.rs", "pub fn assert_it() {}\n");
+
+        let project = ProjectClassification::load(root);
+
+        assert!(project.is_test_only(Path::new("src/lib.rs")));
     }
 
     #[test]

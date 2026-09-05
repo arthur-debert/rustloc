@@ -6,6 +6,7 @@
 
 - Fix `rustloc count <member-path>` counting unrelated Cargo workspace members. Member directories, member manifests, and running from a member directory now select that member while preserving workspace test classification and row labels. Crate filters narrow the selection further; counting the workspace root still includes every member (#168).
 - Add `--net-only` to `rustloc diff` and `rustloc commit`. Each human-table cell then shows its signed net change alone instead of the `+added/-removed/net` triple, in data rows, `--by-commit` rows, the totals row, and the `Skipped changes` summary. Line-type selection, digit grouping, and the JSON, YAML, XML, and CSV shapes are unchanged, and the default output is unchanged.
+- Test harness and fixture crates can declare `[package.metadata.rustloc] role = "tests"` in `Cargo.toml` to count their production logic as tests. Other line types and totals stay unchanged, and nested workspace members keep their own roles. Count and diff reports honour the declaration; historical, staged, and working-tree diffs use each side's metadata and report reclassification even when source text is unchanged.
 
 ## 0.26.0 - 2026-08-31
 
