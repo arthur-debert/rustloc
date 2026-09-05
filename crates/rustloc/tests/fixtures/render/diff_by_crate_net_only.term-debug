@@ -1,0 +1,14 @@
+
+Diff: HEAD → working tree
+
+[header]                 Crate                   Code Tests Docs Total[/header]
+──────────────────────────────────────────────────────────────
+alpha                                     -50   -44  -50  -254
+[table_row_odd]beta                                        2     0    0     2[/table_row_odd]
+──────────────────────────────────────────────────────────────
+Total (2 crates)                          -48   -44  -50  -252
+
+
+Skipped changes: 2 net
+
+[muted](net)[/muted]
