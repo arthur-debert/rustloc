@@ -33,12 +33,12 @@
     font-weight: bold;
 }
 
-/* Diff additions — the `+added` half of the notation. */
+/* Added counts and positive nets under `--net-only`. */
 .additions {
     color: green;
 }
 
-/* Diff deletions — the `-removed` half. */
+/* Removed counts and negative nets under `--net-only`. */
 .deletions {
     color: red;
 }

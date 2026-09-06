@@ -1643,8 +1643,8 @@ fn number_fmt_does_not_change_diff_structured_output() {
 // ---------------------------------------------------------------------------
 //
 // `--net-only` replaces each human-table cell's `+added/-removed/net` triple
-// with its signed net alone. [`wide_repo`] is the fixture these use because one
-// run of it produces all three signs at once: `alpha` is rewritten smaller so
+// with its signed net alone, coloured by sign. [`wide_repo`] produces all three
+// signs at once: `alpha` is rewritten smaller so
 // its nets go negative, `beta` grows so its code net goes positive, and
 // `beta`'s untouched line types net zero.
 //
@@ -1742,6 +1742,145 @@ fn net_only_narrows_the_skipped_changes_summary() {
     assert_eq!(
         line_starting(&stdout(&default), "Skipped changes:"),
         "Skipped changes: +2 / -0 / 2 net"
+    );
+}
+
+/// Net-only cells and summaries tag gains and losses while leaving zero neutral.
+#[test]
+fn net_only_tags_each_net_by_its_sign() {
+    let dir = wide_repo();
+    let out = stdout(&[
+        "diff",
+        "-p",
+        dir.path().to_str().unwrap(),
+        "--by-crate",
+        "--net-only",
+        "--output",
+        "term-debug",
+    ]);
+
+    // alpha lost lines in every type, so every one of its cells reads as a
+    // loss and none of them may claim an addition.
+    let alpha = line_containing(&out, "alpha");
+    assert!(
+        alpha.contains("[deletions]-50[/deletions]")
+            && alpha.contains("[deletions]-254[/deletions]"),
+        "negative nets should carry the deletions tag in:\n{out}"
+    );
+    assert!(
+        !alpha.contains("[additions]"),
+        "a row of losses should carry no additions tag in:\n{out}"
+    );
+
+    // beta grew its code and left its other line types alone, so one row holds
+    // a positive net and a zero at once.
+    let beta = line_containing(&out, "beta");
+    assert!(
+        beta.contains("[additions]2[/additions]"),
+        "a positive net should carry the additions tag in:\n{out}"
+    );
+    assert!(
+        !beta.contains("[additions]0") && !beta.contains("[deletions]0"),
+        "a zero net should carry neither tag in:\n{out}"
+    );
+
+    // The totals row is a cell like any other, not a summary that opts out.
+    assert!(
+        line_starting(&out, "Total (").contains("[deletions]-252[/deletions]"),
+        "the totals row should colour its nets in:\n{out}"
+    );
+
+    // The skipped-changes summary is the same net written as prose.
+    assert_eq!(
+        line_starting(&out, "Skipped changes:"),
+        "Skipped changes: [additions]2[/additions] net"
+    );
+}
+
+/// The default triple tags added/removed counts and leaves the net untagged.
+#[test]
+fn the_default_triple_leaves_its_net_untagged() {
+    let dir = wide_repo();
+    let out = stdout(&[
+        "diff",
+        "-p",
+        dir.path().to_str().unwrap(),
+        "--by-crate",
+        "--output",
+        "term-debug",
+    ]);
+    assert!(
+        line_containing(&out, "alpha")
+            .contains("[additions]+0[/additions]/[deletions]-50[/deletions]/-50"),
+        "the default cell should tag its counts and leave its net plain in:\n{out}"
+    );
+    assert_eq!(
+        line_starting(&out, "Skipped changes:"),
+        "Skipped changes: [additions]+2[/additions] / [deletions]-0[/deletions] / 2 net"
+    );
+}
+
+/// Number grouping preserves the style chosen from the raw net.
+#[test]
+fn net_only_reads_the_sign_from_the_raw_number_not_its_display_text() {
+    let dir = large_diff_repo();
+    let format = crate::number_format::NumberFormat::active();
+
+    let out = stdout(&[
+        "diff",
+        "-p",
+        dir.path().to_str().unwrap(),
+        "--by-file",
+        "--type",
+        "code",
+        "--net-only",
+        "--number-fmt",
+        "--output",
+        "term-debug",
+    ]);
+
+    assert!(
+        line_containing(&out, "src/new.rs")
+            .contains(&format!("[additions]{}[/additions]", format.i64(3805))),
+        "a grouped positive net should still read as an addition in:\n{out}"
+    );
+    assert!(
+        line_containing(&out, "src/old.rs")
+            .contains(&format!("[deletions]{}[/deletions]", format.i64(-1200))),
+        "a grouped negative net should still read as a deletion in:\n{out}"
+    );
+}
+
+/// The commit command applies net-only styles to rows, totals, and skipped changes.
+#[test]
+fn net_only_colours_nets_for_the_commit_command() {
+    let dir = commit_repo();
+    let out = stdout(&[
+        "commit",
+        "-p",
+        &path_of(&dir),
+        "HEAD",
+        "--by-file",
+        "--net-only",
+        "--output",
+        "term-debug",
+    ]);
+
+    assert!(
+        line_containing(&out, "src/extra.rs").contains("[additions]2[/additions]"),
+        "an added file's net should read as an addition in:\n{out}"
+    );
+    assert!(
+        line_containing(&out, "src/gone.rs").contains("[deletions]-1[/deletions]"),
+        "a deleted file's net should read as a deletion in:\n{out}"
+    );
+    assert!(
+        line_starting(&out, "Total (").contains("[additions]6[/additions]"),
+        "the totals row should colour its nets in:\n{out}"
+    );
+    assert_eq!(
+        line_starting(&out, "Skipped changes:"),
+        "Skipped changes: [additions]1[/additions] net"
     );
 }
 
@@ -2398,10 +2537,7 @@ fn diff_by_crate_term_debug_matches_the_approved_fixture() {
     );
 }
 
-/// The same table under `--net-only`, in both stable human modes. The text
-/// fixture pins the narrowed columns and the summary and legend wording; the
-/// term-debug fixture pins that a net cell carries no `[additions]` /
-/// `[deletions]` tag, which is the half text mode strips and cannot show.
+/// Net-only fixtures cover plain layout and sign tags on digits, excluding padding.
 #[test]
 fn diff_by_crate_net_only_tables_match_the_approved_fixtures() {
     let dir = wide_repo();

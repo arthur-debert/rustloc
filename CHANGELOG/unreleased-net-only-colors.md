@@ -1,0 +1,1 @@
+- Colour `--net-only` values in `rustloc diff` and `rustloc commit`: positive nets are green, negative nets red, and zero keeps the normal text colour. Applies to rows, totals, and skipped changes (#175).
