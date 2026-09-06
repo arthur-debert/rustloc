@@ -1,2 +1,0 @@
-- Match count include/exclude globs relative to the workspace, directory, or file's parent, so patterns such as `crates/docs/**` work in both count and diff. Report unmatched patterns beside human tables and in JSON, YAML, and XML (#167).
-- Explain when include/exclude globs reject a single file instead of reporting it as unsupported (#167).

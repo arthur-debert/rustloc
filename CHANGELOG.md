@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## 0.27.0 - 2026-09-06
+
 - Fix `rustloc count <member-path>` counting unrelated Cargo workspace members. Member directories, member manifests, and running from a member directory now select that member while preserving workspace test classification and row labels. Crate filters narrow the selection further; counting the workspace root still includes every member (#168).
 - Add `--net-only` to `rustloc diff` and `rustloc commit`. Each human-table cell then shows its signed net change alone instead of the `+added/-removed/net` triple, in data rows, `--by-commit` rows, the totals row, and the `Skipped changes` summary. Line-type selection, digit grouping, and the JSON, YAML, XML, and CSV shapes are unchanged, and the default output is unchanged.
 - Match count include/exclude globs relative to the workspace, directory, or file's parent, so patterns such as `crates/docs/**` work in both count and diff. Report unmatched patterns beside human tables and in JSON, YAML, and XML (#167).
