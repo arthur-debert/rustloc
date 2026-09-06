@@ -134,7 +134,7 @@ The same `--by-*`, `-o`, `--top`, `-t`, `--lang`, and filter flags work on `diff
 
 Diffs use the active language selection. Files outside that selection are not analyzed semantically; their added and removed physical lines are reported separately as `Skipped changes` so branch sanity checks still show that something changed outside the counted language set.
 
-A diff table cell normally reads `+added/-removed/net`. `--net-only` prints the signed net alone, in every cell of every row, the totals row, and the `Skipped changes` summary. Each net is then coloured by its sign — green for a gain, red for a loss, and the surrounding text colour for zero — since it is the only number left in the cell to read. It narrows what a human table shows, so line-type selection, digit grouping, and the JSON, YAML, XML, and CSV shapes are unaffected. `commit` accepts it on the same terms.
+A diff table cell normally reads `+added/-removed/net`. `--net-only` prints the signed net alone, in every cell of every row, the totals row, and the `Skipped changes` summary. Positive nets are green, negative nets red, and zero keeps the surrounding text colour. It narrows what a human table shows, so line-type selection, digit grouping, and the JSON, YAML, XML, and CSV shapes are unaffected. `commit` accepts it on the same terms.
 
 ![diff output](https://raw.githubusercontent.com/arthur-debert/rustloc/main/assets/output-diff.png)
 

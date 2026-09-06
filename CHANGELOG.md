@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-- Colour `--net-only` values by their sign in `rustloc diff` and `rustloc commit`: a positive net takes the green additions colour, a negative net the red deletions colour, and a zero net the surrounding text colour. This covers data rows, `--by-commit` rows, the totals row, and the `Skipped changes` summary. Plain-text and structured output keep their values and formatting, and the default `+added/-removed/net` colouring is unchanged (#175).
+- Colour `--net-only` values in `rustloc diff` and `rustloc commit`: positive nets are green, negative nets red, and zero keeps the normal text colour. Applies to rows, totals, and skipped changes (#175).
 
 ## 0.27.0 - 2026-09-06
 

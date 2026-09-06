@@ -30,16 +30,8 @@
 -#}
 {%- import "table_macros" as t -%}
 
-{#- A net change, coloured by its sign: the additions tag for a gain, the
-    deletions tag for a loss, and no tag at all for zero — which leaves it the
-    surrounding text colour, so an unchanged row reads as neutral rather than as
-    a very small edit.
-
-    The `raw` number decides, not `display`: digit grouping and the minus sign a
-    reader sees are formatting, and a `-0` or a grouped `-1,000` must not talk
-    the tag out of matching the arithmetic. Only `net_only` cells and the
-    skipped-changes net use this; the full `+added/-removed/net` notation tags
-    its two counts instead. -#}
+{#- Select the net-only style from the raw sign; zero inherits surrounding text
+    styling. Keep display formatting independent of the style choice. -#}
 {%- macro signed_net(net) -%}
 {%- if net.raw > 0 -%}[additions]{{ net.display }}[/additions]
 {%- elif net.raw < 0 -%}[deletions]{{ net.display }}[/deletions]
@@ -53,12 +45,8 @@
     The padding sits *outside* the style tags on purpose: colour belongs on the
     digits, not on the whitespace that positions them.
 
-    Under `net_only` the cell is the net sub-field alone, right-aligned to the
-    same sub-width the full notation would give it — so a net reads identically
-    in both modes and only its neighbours disappear. There it is also the only
-    number in the cell, so `signed_net` colours it by its sign; in the full
-    notation the net stays untagged, because `[additions]`/`[deletions]` already
-    mark the `+N`/`-N` counts beside it. -#}
+    Under `net_only`, keep the net sub-field's alignment and colour it by sign.
+    The full notation leaves the net untagged. -#}
 {%- macro diff_cell(v, sub, net_only) -%}
 {%- if net_only -%}
 {{ " " * (sub.net - (v.net.display | length)) }}{{ signed_net(v.net) }}

@@ -33,14 +33,12 @@
     font-weight: bold;
 }
 
-/* Diff additions — the `+added` half of the notation, and a positive net under
- * `--net-only`, where the net is the cell's only number. */
+/* Added counts and positive nets under `--net-only`. */
 .additions {
     color: green;
 }
 
-/* Diff deletions — the `-removed` half, and a negative net under
- * `--net-only`. A zero net takes neither tag. */
+/* Removed counts and negative nets under `--net-only`. */
 .deletions {
     color: red;
 }

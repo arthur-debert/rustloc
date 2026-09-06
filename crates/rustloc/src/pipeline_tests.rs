@@ -1643,8 +1643,8 @@ fn number_fmt_does_not_change_diff_structured_output() {
 // ---------------------------------------------------------------------------
 //
 // `--net-only` replaces each human-table cell's `+added/-removed/net` triple
-// with its signed net alone, and colours that net by its sign. [`wide_repo`] is
-// the fixture these use because one run of it produces all three signs at once: `alpha` is rewritten smaller so
+// with its signed net alone, coloured by sign. [`wide_repo`] produces all three
+// signs at once: `alpha` is rewritten smaller so
 // its nets go negative, `beta` grows so its code net goes positive, and
 // `beta`'s untouched line types net zero.
 //
@@ -1745,14 +1745,7 @@ fn net_only_narrows_the_skipped_changes_summary() {
     );
 }
 
-/// Under `--net-only` a cell holds one number, so its sign is the only thing a
-/// reader has left to tell a gain from a loss: a positive net takes
-/// `[additions]`, a negative net `[deletions]`, and a zero takes neither, which
-/// leaves it the surrounding text colour rather than dressing "nothing changed"
-/// up as a very small edit.
-///
-/// term-debug is the only mode that can observe this — `text` strips every tag,
-/// which is why the sibling assertions above cannot see it.
+/// Net-only cells and summaries tag gains and losses while leaving zero neutral.
 #[test]
 fn net_only_tags_each_net_by_its_sign() {
     let dir = wide_repo();
@@ -1804,9 +1797,7 @@ fn net_only_tags_each_net_by_its_sign() {
     );
 }
 
-/// The default `+added/-removed/net` triple keeps its existing styling: the two
-/// counts carry the colour and the net beside them stays plain. Colouring it
-/// there would state the same sign twice in one cell.
+/// The default triple tags added/removed counts and leaves the net untagged.
 #[test]
 fn the_default_triple_leaves_its_net_untagged() {
     let dir = wide_repo();
@@ -1829,9 +1820,7 @@ fn the_default_triple_leaves_its_net_untagged() {
     );
 }
 
-/// The sign that picks the tag is the raw number's. Under `--number-fmt` a net
-/// is punctuated and its minus is display text, and neither may talk a cell out
-/// of the tag its arithmetic earns.
+/// Number grouping preserves the style chosen from the raw net.
 #[test]
 fn net_only_reads_the_sign_from_the_raw_number_not_its_display_text() {
     let dir = large_diff_repo();
@@ -1862,10 +1851,7 @@ fn net_only_reads_the_sign_from_the_raw_number_not_its_display_text() {
     );
 }
 
-/// `commit` renders the same diff table by a different route, so it is the
-/// command that could silently miss the colouring. The `--by-commit` rows are
-/// pinned instead by `by_commit_net_only_table_matches_the_approved_fixture`,
-/// whose labels leave no character a cell can be recognised by here.
+/// The commit command applies net-only styles to rows, totals, and skipped changes.
 #[test]
 fn net_only_colours_nets_for_the_commit_command() {
     let dir = commit_repo();
@@ -2551,11 +2537,7 @@ fn diff_by_crate_term_debug_matches_the_approved_fixture() {
     );
 }
 
-/// The same table under `--net-only`, in both stable human modes. The text
-/// fixture pins the narrowed columns and the summary and legend wording; the
-/// term-debug fixture pins which `[additions]` / `[deletions]` tag each net
-/// carries, and that the tags sit on the digits rather than on the padding —
-/// the half text mode strips and cannot show.
+/// Net-only fixtures cover plain layout and sign tags on digits, excluding padding.
 #[test]
 fn diff_by_crate_net_only_tables_match_the_approved_fixtures() {
     let dir = wide_repo();
