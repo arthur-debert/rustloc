@@ -5,13 +5,20 @@
 //!
 //! Member workspace requests count the selected member while retaining the
 //! whole workspace for project classification.
+//!
+//! Every entry point roots its filter before discovering files, so `-i`/`-e`
+//! globs name files the way the result labels them: relative to the workspace
+//! root, the counted directory, or the counted file's directory. Discovery
+//! hands back the supported files it found *before* the globs narrowed them,
+//! which is what lets [`CountResult::unmatched_globs`] name a glob that
+//! matched nothing instead of leaving it a silent no-op.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::error::RustlocError;
 use crate::query::options::{Aggregation, LineTypes};
-use crate::source::filter::{discover_files, discover_files_in_dirs, FilterConfig};
+use crate::source::filter::{discover_candidates, discover_candidates_in_dirs, FilterConfig};
 use crate::source::project::ProjectClassification;
 use crate::source::workspace::{CrateInfo, WorkspaceInfo};
 use crate::Result;
@@ -89,6 +96,10 @@ pub struct CountResult {
     pub files: Vec<FileStats>,
     /// Per-module statistics (if requested)
     pub modules: Vec<ModuleStats>,
+    /// Include/exclude globs, as written, that matched none of the files this
+    /// count considered. Empty when every glob found something.
+    #[serde(default)]
+    pub unmatched_globs: Vec<String>,
 }
 
 impl CountResult {
@@ -106,6 +117,7 @@ impl CountResult {
             crates: self.crates.iter().map(|c| c.filter(types)).collect(),
             files: self.files.iter().map(|f| f.filter(types)).collect(),
             modules: self.modules.iter().map(|m| m.filter(types)).collect(),
+            unmatched_globs: self.unmatched_globs.clone(),
         }
     }
 }
@@ -151,6 +163,14 @@ pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<
     let workspace = WorkspaceInfo::discover(path)?;
     let scope = report_scope(path, &workspace.root);
 
+    // Globs are written against the workspace root — the same root the report
+    // labels rows against — no matter which member the request selected or
+    // which directory the caller ran from.
+    let options = CountOptions {
+        file_filter: options.file_filter.relative_to(&workspace.root),
+        ..options
+    };
+
     // Filter crates if specified
     let crates: Vec<&CrateInfo> = if options.crate_filter.is_empty() {
         workspace.crates.iter().collect()
@@ -179,13 +199,20 @@ pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<
         Aggregation::ByCrate | Aggregation::ByModule | Aggregation::ByFile
     );
 
+    // Every file the count considered, across all members. A glob is only
+    // silent if it matched nothing here, so the audit spans the whole
+    // workspace rather than one member at a time.
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
     for crate_info in &crates {
         let files_under = match CrateScope::resolve(&crate_info.root, scope.as_deref()) {
             CrateScope::Outside => continue,
             CrateScope::Whole => None,
             CrateScope::Part(under) => Some(under),
         };
-        let crate_stats = count_crate(crate_info, &options, &project, files_under)?;
+        let (crate_stats, crate_candidates) =
+            count_crate(crate_info, &options, &project, files_under)?;
+        candidates.extend(crate_candidates);
         if files_under.is_some() && crate_stats.files.is_empty() {
             continue;
         }
@@ -211,6 +238,10 @@ pub fn count_workspace(path: impl AsRef<Path>, options: CountOptions) -> Result<
     if include_modules {
         result.modules.sort_by(|a, b| a.name.cmp(&b.name));
     }
+
+    result.unmatched_globs = options
+        .file_filter
+        .unmatched_globs(candidates.iter().map(PathBuf::as_path));
 
     // Apply line type filter
     Ok(result.filter(options.line_types))
@@ -370,33 +401,36 @@ impl<'a> CrateScope<'a> {
     }
 }
 
-/// Count LOC in a single crate.
+/// Count LOC in a single crate, and report the files it considered.
 ///
 /// `files_under` bounds the count to one path inside the crate; `None`
 /// counts every discovered file.
+///
+/// The returned candidates are the in-scope source files an enabled backend
+/// supports, before the include/exclude globs narrowed them — the evidence
+/// [`FilterConfig::unmatched_globs`] weighs a glob against.
 fn count_crate(
     crate_info: &CrateInfo,
     options: &CountOptions,
     project: &ProjectClassification,
     files_under: Option<&Path>,
-) -> Result<CrateStats> {
+) -> Result<(CrateStats, Vec<PathBuf>)> {
     let dirs: Vec<&Path> = crate_info.all_dirs();
-    let files = discover_files_in_dirs(&dirs, &options.file_filter)?;
+    let mut candidates = discover_candidates_in_dirs(&dirs, &options.file_filter)?;
+    candidates
+        .retain(|path| files_under.is_none_or(|under| canonical_path(path).starts_with(under)));
     let registry = BackendRegistry::new();
 
     let mut crate_stats = CrateStats::new(crate_info.name.clone(), crate_info.root.clone());
 
-    for file_path in files {
-        if files_under.is_some_and(|under| !canonical_path(&file_path).starts_with(under)) {
-            continue;
-        }
-        if let Some(stats) = analyze_file_stats(&registry, &file_path, project)? {
-            let file_stats = FileStats::new(file_path, stats);
+    for file_path in candidates.iter().filter(|p| options.file_filter.matches(p)) {
+        if let Some(stats) = analyze_file_stats(&registry, file_path, project)? {
+            let file_stats = FileStats::new(file_path.clone(), stats);
             crate_stats.add_file(file_stats);
         }
     }
 
-    Ok(crate_stats)
+    Ok((crate_stats, candidates))
 }
 
 /// Count LOC in a directory (non-workspace mode).
@@ -442,11 +476,20 @@ pub fn count_directory_with_options(
         return Err(RustlocError::PathNotFound(path.to_path_buf()));
     }
 
-    let files = discover_files(path, &options.file_filter)?;
+    // A directory count labels its rows relative to the requested directory,
+    // so that is the root its globs are written against.
+    let options = CountOptions {
+        file_filter: options.file_filter.relative_to(path),
+        ..options
+    };
+    let candidates = discover_candidates(path, &options.file_filter)?;
     let registry = BackendRegistry::new();
 
     let mut result = CountResult::new();
     result.root = path.to_path_buf();
+    result.unmatched_globs = options
+        .file_filter
+        .unmatched_globs(candidates.iter().map(PathBuf::as_path));
     let include_files = matches!(
         options.aggregation,
         Aggregation::ByFile | Aggregation::ByModule
@@ -456,7 +499,10 @@ pub fn count_directory_with_options(
     // directories for a Cargo manifest, so it has no module graph to consult.
     let project = ProjectClassification::empty();
 
-    for file_path in files {
+    for file_path in candidates
+        .into_iter()
+        .filter(|p| options.file_filter.matches(p))
+    {
         if let Some(stats) = analyze_file_stats(&registry, &file_path, &project)? {
             result.total += stats;
             result.file_count += 1;
@@ -495,11 +541,23 @@ pub fn count_file(path: impl AsRef<Path>) -> Result<Locs> {
 }
 
 /// Count LOC in a single file if it matches the provided filter.
+///
+/// The file's own directory is the root its globs are written against, so
+/// `-e '*.rs'` names the file the same way it would inside a directory count.
+/// A glob that rejects the file is an error, not an empty count: one file was
+/// asked for and none was countable.
 pub fn count_file_with_filter(path: impl AsRef<Path>, filter: &FilterConfig) -> Result<Locs> {
     let registry = BackendRegistry::new();
     let path = path.as_ref();
-    if !filter.matches(path) {
+    let filter = match path.parent() {
+        Some(parent) => filter.clone().relative_to(parent),
+        None => filter.clone(),
+    };
+    if !filter.supports(path) {
         return Err(RustlocError::UnsupportedSourceFile(path.to_path_buf()));
+    }
+    if !filter.matches(path) {
+        return Err(RustlocError::FilteredSourceFile(path.to_path_buf()));
     }
     // Single-file counting is file-local for the same reason directory
     // counting is: one path names no Cargo project to load.
@@ -892,6 +950,133 @@ fn foo() {
         .unwrap();
         assert_eq!(whole.crates.len(), 3);
         assert_eq!(whole.file_count, 3);
+    }
+
+    /// The reported bug: a workspace-relative glob matched nothing, because
+    /// the filter compared it against each file's absolute path. `-e` then
+    /// excluded nothing and `-i` included nothing, in silence.
+    #[test]
+    fn test_workspace_globs_are_written_against_the_workspace_root() {
+        let temp = tempdir().unwrap();
+        create_workspace(temp.path());
+
+        let filter = FilterConfig::new().exclude("crate-a/**").unwrap();
+        let result = count_workspace(
+            temp.path(),
+            CountOptions::new()
+                .filter(filter)
+                .aggregation(Aggregation::ByFile),
+        )
+        .unwrap();
+
+        assert_eq!(result.file_count, 1);
+        assert!(result.files[0].path.ends_with("crate-b/src/lib.rs"));
+        assert!(result.unmatched_globs.is_empty());
+    }
+
+    /// Selecting a member narrows which files are counted, not the root the
+    /// globs are written against: a member count labels its rows from the
+    /// workspace root, so a glob must name them the same way.
+    #[test]
+    fn test_a_member_count_reads_globs_against_the_workspace_root() {
+        let temp = tempdir().unwrap();
+        create_workspace(temp.path());
+
+        let filter = FilterConfig::new().include("crate-a/**").unwrap();
+        let result = count_workspace(
+            temp.path().join("crate-a"),
+            CountOptions::new()
+                .filter(filter)
+                .aggregation(Aggregation::ByFile),
+        )
+        .unwrap();
+
+        assert_eq!(result.file_count, 1);
+        assert!(result.files[0].path.ends_with("crate-a/src/lib.rs"));
+    }
+
+    /// A glob that matched nothing leaves the counts exactly as they were, so
+    /// the result has to say so itself.
+    #[test]
+    fn test_a_workspace_glob_that_matches_nothing_is_reported() {
+        let temp = tempdir().unwrap();
+        create_workspace(temp.path());
+
+        let filter = FilterConfig::new().exclude("crate-z/**").unwrap();
+        let result = count_workspace(temp.path(), CountOptions::new().filter(filter)).unwrap();
+
+        assert_eq!(result.unmatched_globs, vec!["crate-z/**".to_string()]);
+        assert_eq!(result.file_count, 2);
+    }
+
+    /// The audit spans the whole workspace: a glob that names one member has
+    /// matched, even though every other member found nothing for it.
+    #[test]
+    fn test_a_glob_matching_one_member_is_not_reported() {
+        let temp = tempdir().unwrap();
+        create_workspace(temp.path());
+
+        let filter = FilterConfig::new().exclude("crate-b/**").unwrap();
+        let result = count_workspace(temp.path(), CountOptions::new().filter(filter)).unwrap();
+
+        assert!(result.unmatched_globs.is_empty());
+        assert_eq!(result.file_count, 1);
+    }
+
+    /// A directory count labels its rows relative to the requested directory,
+    /// and its globs read the same way.
+    #[test]
+    fn test_directory_globs_are_written_against_the_counted_directory() {
+        let temp = tempdir().unwrap();
+        create_rust_file(&temp.path().join("sub/inner.rs"), "pub fn inner() {}\n");
+        create_rust_file(&temp.path().join("outer.rs"), "pub fn outer() {}\n");
+
+        let filter = FilterConfig::new().include("sub/**").unwrap();
+        let result = count_directory(temp.path(), &filter).unwrap();
+
+        assert_eq!(result.files.len(), 1);
+        assert!(result.files[0].path.ends_with("sub/inner.rs"));
+        assert!(result.unmatched_globs.is_empty());
+    }
+
+    #[test]
+    fn test_a_directory_glob_that_matches_nothing_is_reported() {
+        let temp = tempdir().unwrap();
+        create_rust_file(&temp.path().join("outer.rs"), "pub fn outer() {}\n");
+
+        let filter = FilterConfig::new().exclude("sub/**").unwrap();
+        let result = count_directory(temp.path(), &filter).unwrap();
+
+        assert_eq!(result.unmatched_globs, vec!["sub/**".to_string()]);
+        assert_eq!(result.files.len(), 1);
+    }
+
+    /// A single file has one directory to be named from, and a glob that
+    /// rejects it is an error rather than an empty count: the request named
+    /// exactly one file and the filter refused it.
+    #[test]
+    fn test_a_single_file_reads_globs_against_its_own_directory() {
+        let temp = tempdir().unwrap();
+        let file = temp.path().join("main.rs");
+        create_rust_file(&file, "fn main() {}\n");
+
+        let kept = FilterConfig::new().include("main.rs").unwrap();
+        assert_eq!(count_file_with_filter(&file, &kept).unwrap().code, 1);
+
+        // The file is a Rust file; the request's own glob is what refused
+        // it, and the error has to say which of the two happened.
+        let rejected = FilterConfig::new().exclude("*.rs").unwrap();
+        assert!(matches!(
+            count_file_with_filter(&file, &rejected),
+            Err(RustlocError::FilteredSourceFile(_))
+        ));
+
+        let unsupported = temp.path().join("README.md");
+        fs::write(&unsupported, "# hi\n").unwrap();
+        assert!(matches!(
+            count_file_with_filter(&unsupported, &FilterConfig::new()),
+            Err(RustlocError::UnsupportedSourceFile(_))
+        ));
     }
 
     #[test]

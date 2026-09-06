@@ -292,6 +292,30 @@ fn scoped_counts_preserve_classification_and_support_members_outside_the_root() 
     )
     .unwrap();
     assert_eq!(external_only.file_count, 2);
+    // An outside member's displayed label remains usable as a glob.
+    let report = rustloclib::CountQuerySet::from_result(
+        &whole,
+        Aggregation::ByFile,
+        LineTypes::everything(),
+        rustloclib::Ordering::default(),
+    );
+    let external_path = &report
+        .items
+        .iter()
+        .find(|item| item.label.contains("outside/src/helpers.rs"))
+        .unwrap()
+        .label;
+    let selected = count_workspace(
+        &root,
+        CountOptions::new().filter(FilterConfig::new().include(external_path).unwrap()),
+    )
+    .unwrap();
+    assert_eq!(selected.file_count, 1);
+    assert_eq!(
+        selected.total,
+        file_stats(&whole, "outside/src/helpers.rs").filter(LineTypes::default())
+    );
+    assert!(selected.unmatched_globs.is_empty());
 }
 
 #[test]
@@ -966,4 +990,55 @@ fn role_only_changes_reclassify_unchanged_sources_in_every_diff_mode() {
     assert_eq!(reversed.added.code, 3);
     assert_eq!(reversed.removed.tests, 3);
     assert_eq!(reversed.net_total(), 0);
+}
+
+#[test]
+fn relative_globs_preserve_role_only_changes_and_diagnostics() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    init_repo(root);
+    app_and_harness(root, "");
+    let before = commit(root, "ordinary harness");
+    write(
+        root,
+        "crates/harness/Cargo.toml",
+        &format!("{}{}", manifest("harness"), role_metadata("tests")),
+    );
+    let filter = || {
+        FilterConfig::new()
+            .include("crates/harness/**")
+            .unwrap()
+            .exclude("missing/**")
+            .unwrap()
+    };
+    let options = || diff_by_file().filter(filter());
+    let counted = count_workspace(
+        root.join("crates/harness"),
+        CountOptions::new().filter(filter()),
+    )
+    .unwrap();
+    assert_eq!(counted.total.code, 0);
+    assert_eq!(counted.total.tests, 3);
+    assert_eq!(counted.unmatched_globs, ["missing/**"]);
+    let assert_delta = |result: rustloclib::DiffResult| {
+        assert_eq!(result.total.removed.code, 3);
+        assert_eq!(result.total.added.tests, 3);
+        assert_eq!(result.file_count, 1);
+        assert_eq!(result.unmatched_globs, ["missing/**"]);
+    };
+    assert_delta(diff_workdir(root, WorkdirDiffMode::All, options()).unwrap());
+    git(root, &["add", "crates/harness/Cargo.toml"]);
+    assert_delta(diff_workdir(root, WorkdirDiffMode::Staged, options()).unwrap());
+    let after = commit(root, "declare test role");
+    let range = format!("{before}..{after}");
+    assert_delta(diff_revspec(root, &range, options()).unwrap());
+    assert_delta(diff_by_commit(root, &range, options()).unwrap());
+    let excluded = diff_revspec(
+        root,
+        &range,
+        diff_by_file().filter(FilterConfig::new().exclude("crates/harness/**").unwrap()),
+    )
+    .unwrap();
+    assert_eq!(excluded.file_count, 0);
+    assert!(excluded.unmatched_globs.is_empty());
 }

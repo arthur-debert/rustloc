@@ -68,6 +68,11 @@ pub fn count(request: &CountRequest) -> Result<CountQuerySet, anyhow::Error> {
             result.root = path.clone();
             result.file_count = 1;
             result.total = count_file_with_filter(path, &query.filter)?;
+            result.unmatched_globs = query
+                .filter
+                .clone()
+                .relative_to(path.parent().unwrap_or(path))
+                .unmatched_globs([path.as_path()]);
             result
         }
     };

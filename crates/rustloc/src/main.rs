@@ -200,6 +200,25 @@ and labels relative to the requested path.")]
     shows_ratio: bool,
 }
 
+/// What `-i` and `-e` match against, for both flags and both commands.
+///
+/// One text because the rule is one rule: a glob is written the way the report
+/// prints paths. Splitting it per flag invites the two halves to drift.
+const GLOB_LONG_HELP: &str = "\
+Include or exclude files by glob.
+
+Globs match the path relative to the root of what is analyzed — the Cargo
+workspace root, the counted directory or file's directory, and the repository
+root for `diff` and `commit`. That is the same path a --by-file row shows, so
+a row's label is a glob that selects it:
+
+  -e \"crates/my-lib/**\"   Skip one workspace member
+  -i \"crates/my-lib/**\"   Count only that member
+  -e \"**/generated/**\"    Skip generated code anywhere in the tree
+
+A glob that matches no file is reported: it changed nothing, and a silent
+no-op reads like an empty project.";
+
 /// Query and human-display arguments shared by `count`, `diff`, and `commit`.
 ///
 /// These are top-level global args so each flag has one parser declaration and
@@ -233,12 +252,14 @@ Available: rust, python, typescript, generic
   -l all               Analyze all available backend groups")]
     languages: Vec<String>,
 
-    /// Only include files matching a glob [-i "src/**/*.rs"]
+    /// Only include files matching a glob [-i "crates/my-lib/**"]
     #[arg(short = 'i', long = "include", action = clap::ArgAction::Append, global = true)]
+    #[arg(long_help = GLOB_LONG_HELP)]
     include: Vec<String>,
 
-    /// Exclude files matching a glob [-e "**/generated/**"]
+    /// Exclude files matching a glob [-e "crates/my-lib/**"]
     #[arg(short = 'e', long = "exclude", action = clap::ArgAction::Append, global = true)]
+    #[arg(long_help = GLOB_LONG_HELP)]
     exclude: Vec<String>,
 
     /// Line types to show (comma-separated)

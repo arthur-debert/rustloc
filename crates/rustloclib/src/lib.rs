@@ -39,7 +39,10 @@
 //!
 //! Find what files to analyze:
 //! - [`WorkspaceInfo`]: Discover Cargo workspace structure
-//! - [`FilterConfig`]: Include/exclude files with glob patterns
+//! - [`FilterConfig`]: Include/exclude files with glob patterns, matched
+//!   against the path relative to the analyzed root — set it with
+//!   [`FilterConfig::relative_to`] so a glob names files the way a report
+//!   labels its rows
 //! - [`ProjectClassification`]: Ask the Cargo module graph which Rust files
 //!   only a `cfg(test)` build reaches, and the manifests which crates declare
 //!   `[package.metadata.rustloc] role = "tests"`

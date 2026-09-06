@@ -52,6 +52,14 @@
 //! set, not the post-filter/post-top slice — that lets the footer render
 //! "top X of Y" honestly.
 //!
+//! ## The response also carries what the request failed to do
+//!
+//! `unmatched_globs` lists the `-i`/`-e` globs that matched none of the files
+//! the command considered. It rides the response rather than a log line
+//! because the numbers alone cannot show it — an unmatched glob filters
+//! nothing — and because every caller, human or machine, needs the same fact.
+//! It is omitted from serialized output when empty.
+//!
 //! The data pipeline is:
 //! 1. Raw Data (CountResult, DiffResult)
 //! 2. QuerySet (filtered, aggregated, sorted, optionally truncated) — the
@@ -119,6 +127,12 @@ pub struct ReportQuerySet<T, M = CountReportMetadata> {
     /// "X of Y" appropriately.
     #[serde(default)]
     pub top_applied: bool,
+    /// Include/exclude globs, as written, that matched none of the files the
+    /// command considered — a fact about the request rather than a row, and
+    /// the response's one warning. Absent from serialized output when every
+    /// glob matched, so a clean run's machine schema is unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unmatched_globs: Vec<String>,
 }
 
 /// No extra metadata is needed for count query sets.
@@ -211,6 +225,7 @@ impl ReportQuerySet<Locs, CountReportMetadata> {
             metadata: CountReportMetadata::default(),
             total_items,
             top_applied: false,
+            unmatched_globs: result.unmatched_globs.clone(),
         }
     }
 
@@ -336,6 +351,7 @@ impl ReportQuerySet<LocsDiff, DiffReportMetadata> {
             },
             total_items,
             top_applied: false,
+            unmatched_globs: result.unmatched_globs.clone(),
         }
     }
 
@@ -618,6 +634,7 @@ mod tests {
             ],
             files: vec![],
             modules: vec![],
+            unmatched_globs: Vec::new(),
         }
     }
 
@@ -780,6 +797,7 @@ mod tests {
             ],
             files: vec![],
             modules: vec![],
+            unmatched_globs: Vec::new(),
         }
     }
 
@@ -998,6 +1016,7 @@ mod tests {
                 ),
             ],
             modules: vec![],
+            unmatched_globs: Vec::new(),
         };
 
         let qs = CountQuerySet::from_result(
@@ -1090,6 +1109,7 @@ mod tests {
             commits: vec![],
             non_rust_added: 0,
             non_rust_removed: 0,
+            unmatched_globs: Vec::new(),
         }
     }
 
@@ -1189,6 +1209,7 @@ mod tests {
             commits: vec![],
             non_rust_added: 0,
             non_rust_removed: 0,
+            unmatched_globs: Vec::new(),
         }
     }
 
@@ -1304,6 +1325,7 @@ mod tests {
             commits: vec![newest, middle, oldest],
             non_rust_added: 4,
             non_rust_removed: 1,
+            unmatched_globs: Vec::new(),
         }
     }
 

@@ -934,6 +934,7 @@ const SEMANTIC_TAGS: &[&str] = &[
     "file_added",
     "file_removed",
     "muted",
+    "warning",
     "table_row_odd",
 ];
 
@@ -1160,6 +1161,180 @@ fn long_help_keeps_both_the_examples_and_the_grid_doc() {
         help.contains("rustloc --by-crate") && help.contains("--<category>-<op>"),
         "expected both blocks in:\n{help}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Include/exclude globs
+// ---------------------------------------------------------------------------
+//
+// A glob is written against the root the report labels rows from — the
+// workspace root for a count, the repository root for a diff — so one written
+// glob means the same thing in both commands. Before #167 a count matched
+// globs against absolute paths, and `-e crate-a/**` excluded nothing while
+// `-i crate-a/**` included nothing, both in silence.
+
+/// An exclude glob written the way the table labels its rows drops those rows.
+#[test]
+fn an_exclude_glob_reads_the_workspace_relative_path() {
+    let dir = member_workspace();
+    let out = stdout(&[&path_of(&dir), "-e", "crate-a/**", "--output", "json"]);
+    let parsed: CountQuerySet = serde_json::from_str(&out).unwrap();
+
+    assert_eq!(parsed.file_count, 1, "crate-a's file must be excluded");
+    assert_eq!(parsed.total.code, 1, "only crate-b's line survives");
+    assert!(parsed.unmatched_globs.is_empty());
+}
+
+/// ...and an include glob in the same form keeps exactly those rows.
+#[test]
+fn an_include_glob_reads_the_workspace_relative_path() {
+    let dir = member_workspace();
+    let out = stdout(&[&path_of(&dir), "-i", "crate-a/**", "--output", "json"]);
+    let parsed: CountQuerySet = serde_json::from_str(&out).unwrap();
+
+    assert_eq!(parsed.file_count, 1);
+    assert_eq!(parsed.total.code, 3, "crate-a is the three-line member");
+}
+
+/// The glob a report labels its rows with is the glob that filters them: the
+/// same string names the same file in both places.
+#[test]
+fn a_glob_names_a_row_the_way_the_table_labels_it() {
+    let dir = member_workspace();
+    let out = stdout(&[&path_of(&dir), "--by-file", "--output", "json"]);
+    let parsed: CountQuerySet = serde_json::from_str(&out).unwrap();
+    let label = parsed.items[0].label.clone();
+
+    let filtered = stdout(&[&path_of(&dir), "-i", &label, "--output", "json"]);
+    let parsed: CountQuerySet = serde_json::from_str(&filtered).unwrap();
+
+    assert_eq!(
+        parsed.file_count, 1,
+        "the label {label:?} must select itself"
+    );
+}
+
+/// A glob that matched nothing changes no number, so the human table has to
+/// say so beside the numbers rather than leave the reader to infer it.
+#[test]
+fn a_count_glob_that_matches_nothing_warns_beside_the_table() {
+    let dir = member_workspace();
+    let out = stdout(&[&path_of(&dir), "-e", "crate-z/**", "--output", "text"]);
+
+    assert!(
+        out.contains("warning: no file matched 'crate-z/**'"),
+        "missing glob warning in:\n{out}"
+    );
+    assert!(
+        out.contains("relative to the project root"),
+        "the warning must name the path form globs are read against:\n{out}"
+    );
+    assert!(
+        out.contains("Total (2 files)"),
+        "the count is unchanged:\n{out}"
+    );
+}
+
+/// The same fact reaches machine consumers as a field, not as a line of prose
+/// mixed into their data — and a run whose globs all matched carries no such
+/// field at all, so a clean response's schema is untouched.
+#[test]
+fn an_unmatched_glob_is_a_field_in_structured_output() {
+    let dir = member_workspace();
+
+    let out = stdout(&[&path_of(&dir), "-e", "crate-z/**", "--output", "json"]);
+    let parsed: CountQuerySet = serde_json::from_str(&out).unwrap();
+    assert_eq!(parsed.unmatched_globs, vec!["crate-z/**".to_string()]);
+
+    let raw: serde_json::Value =
+        serde_json::from_str(&stdout(&[&path_of(&dir), "--output", "json"])).unwrap();
+    assert!(
+        raw.get("unmatched_globs").is_none(),
+        "a clean run must not grow a field: {raw}"
+    );
+}
+
+/// CSV is a row-per-item projection with fixed columns; a warning is not a
+/// row, so it must not appear there.
+#[test]
+fn unmatched_globs_stay_out_of_the_csv_rows() {
+    let dir = member_workspace();
+    let out = stdout(&[
+        &path_of(&dir),
+        "--by-file",
+        "-e",
+        "crate-z/**",
+        "--output",
+        "csv",
+    ]);
+
+    assert!(
+        !out.contains("crate-z"),
+        "the warning leaked into the CSV rows:\n{out}"
+    );
+}
+
+/// Counting one file has no rows to warn beside: the glob either keeps the
+/// file or leaves nothing to count, and the message has to say which of
+/// "not a source file" and "your glob excluded it" happened.
+#[test]
+fn a_glob_that_rejects_the_only_counted_file_names_the_glob_as_the_cause() {
+    let dir = workspace();
+    let file = dir.path().join("src/lib.rs");
+    let file = file.to_str().unwrap();
+
+    match run(&[file, "-i", "src/**"]) {
+        RunResult::Error(msg) => assert!(
+            msg.contains("filtered out by the include/exclude globs"),
+            "unexpected message: {msg}"
+        ),
+        other => panic!("expected an Error, got {other:?}"),
+    }
+
+    // ...and the same file with a glob written against its own directory is
+    // counted, which is what makes the message above about the glob's form.
+    let out = stdout(&[file, "-i", "lib.rs", "--output", "json"]);
+    let parsed: CountQuerySet = serde_json::from_str(&out).unwrap();
+    assert_eq!(parsed.total.code, 3);
+}
+
+/// A diff warns the same way, naming the repository root because that is the
+/// form git reports its paths in.
+#[test]
+fn a_diff_glob_that_matches_nothing_warns_beside_the_table() {
+    let dir = commit_repo();
+    let path = path_of(&dir);
+    for route in [
+        vec!["diff", "HEAD~1..HEAD"],
+        vec!["diff", "HEAD~1..HEAD", "--by-commit"],
+        vec!["commit", "HEAD"],
+    ] {
+        let args = [
+            route.as_slice(),
+            &[
+                "-p",
+                &path,
+                "-e",
+                "crate-z/**",
+                "-e",
+                "missing/**",
+                "--output",
+                "text",
+            ],
+        ]
+        .concat();
+        let out = stdout(&args);
+        assert!(
+            out.contains("\nwarning: no changed file matched 'crate-z/**'"),
+            "{out}"
+        );
+        assert!(
+            out.contains("\nwarning: no changed file matched 'missing/**'"),
+            "{out}"
+        );
+        assert!(out.contains("relative to the repository root"), "{out}");
+        assert!(out.ends_with('\n'), "{out:?}");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3082,5 +3257,63 @@ fn by_commit_net_only_table_matches_the_approved_fixture() {
                 mode,
             ]),
         );
+    }
+}
+
+#[test]
+fn single_file_counts_report_only_unmatched_patterns() {
+    let dir = workspace();
+    let file = dir.path().join("src/lib.rs");
+    let file = file.to_str().unwrap();
+    let args = [file, "-i", "lib.rs", "-i", "missing.rs", "-e", "other.rs"];
+    let out = stdout(&[args.as_slice(), &["--output", "json"]].concat());
+    let parsed: CountQuerySet = serde_json::from_str(&out).unwrap();
+    assert_eq!(parsed.file_count, 1);
+    assert_eq!(parsed.unmatched_globs, ["missing.rs", "other.rs"]);
+    let out = stdout(&[args.as_slice(), &["--output", "text"]].concat());
+    assert_eq!(
+        out.lines()
+            .filter(|line| line.starts_with("warning: no file matched '"))
+            .count(),
+        2
+    );
+    assert!(out.contains("\nwarning: no file matched 'missing.rs'"));
+    assert!(out.contains("\nwarning: no file matched 'other.rs'"));
+    assert!(!out.contains("warning: no file matched 'lib.rs'"));
+}
+
+#[test]
+fn unmatched_globs_render_as_literal_text_and_round_trip_in_structured_modes() {
+    let dir = member_workspace();
+    let pattern = "[[]warning[]]missing[[]/warning[]]";
+    let args = [path_of(&dir), "-e".into(), pattern.into()];
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let text = stdout(&[args.as_slice(), &["--output", "text"]].concat());
+    assert!(text.contains(pattern), "{text}");
+    for mode in ["json", "yaml", "xml"] {
+        let out = stdout(&[args.as_slice(), &["--output", mode]].concat());
+        assert!(!out.contains("warning: no file matched"), "{out}");
+        assert!(out.contains(pattern), "{mode}: {out}");
+        match mode {
+            "json" => {
+                let parsed: CountQuerySet = serde_json::from_str(&out).unwrap();
+                assert_eq!(parsed.unmatched_globs, [pattern]);
+            }
+            "yaml" => {
+                let parsed: CountQuerySet = serde_yaml::from_str(&out).unwrap();
+                assert_eq!(parsed.unmatched_globs, [pattern]);
+            }
+            "xml" => {
+                let mut reader = quick_xml::Reader::from_str(&out);
+                loop {
+                    if reader.read_event().expect("well-formed XML")
+                        == quick_xml::events::Event::Eof
+                    {
+                        break;
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
     }
 }

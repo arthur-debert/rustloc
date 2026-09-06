@@ -10,6 +10,7 @@
                   total_items_display, file_count, file_count_display,
                   top_applied}
     ratios       optional [{whole, tenth}, ...]
+    unmatched_globs  the `-i`/`-e` globs, as written, that matched no file
 
   Count cell display strings may be plain or locale-grouped. When ratios are
   enabled, the `%` suffix takes one display column, so the value columns reserve
@@ -42,7 +43,7 @@
   {%- set ns.headers = (ns.headers + [header]) | list -%}
   {%- set ns.widths = (ns.widths + [w.max]) | list -%}
 {%- endfor -%}
-{{ t.table(aggregation, ns.headers, rows, total, footer, ns.widths, ratios) }}
+{{ t.table(aggregation, ns.headers, rows, total, footer, ns.widths, ratios) }}{{ t.glob_warnings(unmatched_globs, "file", "project root") }}
 {# The table must end in a newline, and MiniJinja strips a single trailing
    newline at end of template — so this comment, not the table, is what sits at
    EOF and absorbs the strip. Deleting it silently un-terminates the last line. #}
