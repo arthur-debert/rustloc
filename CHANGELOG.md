@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- Colour `--net-only` values by their sign in `rustloc diff` and `rustloc commit`: a positive net takes the green additions colour, a negative net the red deletions colour, and a zero net the surrounding text colour. This covers data rows, `--by-commit` rows, the totals row, and the `Skipped changes` summary. Plain-text and structured output keep their values and formatting, and the default `+added/-removed/net` colouring is unchanged (#175).
+
 ## 0.27.0 - 2026-09-06
 
 - Fix `rustloc count <member-path>` counting unrelated Cargo workspace members. Member directories, member manifests, and running from a member directory now select that member while preserving workspace test classification and row labels. Crate filters narrow the selection further; counting the workspace root still includes every member (#168).

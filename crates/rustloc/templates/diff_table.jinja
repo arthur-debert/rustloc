@@ -30,6 +30,23 @@
 -#}
 {%- import "table_macros" as t -%}
 
+{#- A net change, coloured by its sign: the additions tag for a gain, the
+    deletions tag for a loss, and no tag at all for zero — which leaves it the
+    surrounding text colour, so an unchanged row reads as neutral rather than as
+    a very small edit.
+
+    The `raw` number decides, not `display`: digit grouping and the minus sign a
+    reader sees are formatting, and a `-0` or a grouped `-1,000` must not talk
+    the tag out of matching the arithmetic. Only `net_only` cells and the
+    skipped-changes net use this; the full `+added/-removed/net` notation tags
+    its two counts instead. -#}
+{%- macro signed_net(net) -%}
+{%- if net.raw > 0 -%}[additions]{{ net.display }}[/additions]
+{%- elif net.raw < 0 -%}[deletions]{{ net.display }}[/deletions]
+{%- else -%}{{ net.display }}
+{%- endif -%}
+{%- endmacro -%}
+
 {#- One diff cell: `+added/-removed/net`, each sub-field right-aligned to its
     column's sub-width so the `/` separators line up down the whole column.
 
@@ -38,12 +55,13 @@
 
     Under `net_only` the cell is the net sub-field alone, right-aligned to the
     same sub-width the full notation would give it — so a net reads identically
-    in both modes and only its neighbours disappear. It stays untagged, exactly
-    as the net sub-field is in the full notation: `[additions]`/`[deletions]`
-    mark the `+N`/`-N` counts, and a net is neither. -#}
+    in both modes and only its neighbours disappear. There it is also the only
+    number in the cell, so `signed_net` colours it by its sign; in the full
+    notation the net stays untagged, because `[additions]`/`[deletions]` already
+    mark the `+N`/`-N` counts beside it. -#}
 {%- macro diff_cell(v, sub, net_only) -%}
 {%- if net_only -%}
-{{ " " * (sub.net - (v.net.display | length)) }}{{ v.net.display }}
+{{ " " * (sub.net - (v.net.display | length)) }}{{ signed_net(v.net) }}
 {%- else -%}
 {{ " " * (sub.added - (("+" ~ v.added.display) | length)) }}[additions]+{{ v.added.display }}[/additions]/{{ " " * (sub.removed - (("-" ~ v.removed.display) | length)) }}[deletions]-{{ v.removed.display }}[/deletions]/{{ " " * (sub.net - (v.net.display | length)) }}{{ v.net.display }}
 {%- endif -%}
@@ -98,7 +116,7 @@ Diff: {{ from_commit }} → {{ to_commit }}
 {{ t.table(aggregation, ns.headers, body.rows, body.total, footer, ns.widths) }}
 {% if non_rust.added.raw > 0 or non_rust.removed.raw > 0 %}
 
-Skipped changes: {% if net_only %}{{ non_rust.net.display }} net{% else %}[additions]+{{ non_rust.added.display }}[/additions] / [deletions]-{{ non_rust.removed.display }}[/deletions] / {{ non_rust.net.display }} net{% endif %}
+Skipped changes: {% if net_only %}{{ signed_net(non_rust.net) }} net{% else %}[additions]+{{ non_rust.added.display }}[/additions] / [deletions]-{{ non_rust.removed.display }}[/deletions] / {{ non_rust.net.display }} net{% endif %}
 {% endif %}
 [muted]({% if net_only %}net{% else %}+added / -removed / net{% endif %})[/muted]{{ t.glob_warnings(unmatched_globs, "changed file", "repository root") }}
 {# The legend must end in a newline, and MiniJinja strips a single trailing
