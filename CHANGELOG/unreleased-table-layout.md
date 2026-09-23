@@ -1,0 +1,1 @@
+- Make human count and diff tables easier to scan: column headers are centred over their values, columns are separated by two spaces instead of one, and the header and totals rules break at each column boundary (#177).

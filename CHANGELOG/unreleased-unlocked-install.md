@@ -1,0 +1,1 @@
+- Fix `cargo install rustloc` without `--locked` failing to compile after upstream releases of `unicode-ident` and `salsa` broke rust-analyzer's crates; rustloc now constrains those dependencies to compatible versions (#178).
