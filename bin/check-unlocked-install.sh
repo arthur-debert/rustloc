@@ -11,6 +11,14 @@
 # #154). crates/rustloclib/Cargo.toml now pins `get-size2 = "=0.10.1"`; this
 # check is what notices if that pin stops working or is removed.
 #
+# The same manifest caps `unicode-ident` and `unicode-properties` to releases
+# on one Unicode version: `ra-ap-rustc_lexer` refuses to compile when they
+# differ, and unicode-ident 1.0.25 moved to Unicode 18 ahead of
+# unicode-properties. It also pins `salsa` and `salsa-macro-rules` to 0.28.2,
+# the last release the `ra_ap_*` crates compile against. The install step
+# below is what fails if those constraints stop working; the resolved versions
+# are printed on success.
+#
 # The check builds in the debug profile: it is the resolution and the trait
 # lookup that can fail here, and neither depends on optimisation level, so the
 # cheaper profile buys the same verdict for a CI lane that runs on every push.
@@ -69,4 +77,4 @@ case "$reported" in
 	;;
 esac
 
-echo "OK: unlocked install builds and reports '$reported' (get-size2 $get_size2_versions)."
+echo "OK: unlocked install builds and reports '$reported' (get-size2 $get_size2_versions, unicode-ident $(locked_versions unicode-ident), unicode-properties $(locked_versions unicode-properties), salsa $(locked_versions salsa))."
