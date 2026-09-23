@@ -510,7 +510,8 @@ fn text_mode_renders_the_count_table_template() {
 
 /// The template's line structure has regressed before (a stray Jinja trim
 /// marker ate the newline after the header rule, shipping in v0.17.1). A
-/// separator line must contain nothing but `─`.
+/// separator line must contain nothing but `─` runs and the blank gaps that
+/// break the rule at each column boundary.
 #[test]
 fn template_keeps_separators_on_their_own_lines() {
     let dir = workspace();
@@ -520,7 +521,9 @@ fn template_keeps_separators_on_their_own_lines() {
     assert!(!separators.is_empty(), "expected rules in:\n{out}");
     for line in separators {
         assert!(
-            line.trim().chars().all(|c| c == '─'),
+            line.starts_with('─')
+                && line.ends_with('─')
+                && line.chars().all(|c| c == '─' || c == ' '),
             "separator line carried content: {line:?}\n{out}"
         );
     }

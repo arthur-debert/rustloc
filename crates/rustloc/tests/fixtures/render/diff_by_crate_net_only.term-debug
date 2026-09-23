@@ -1,12 +1,12 @@
 
 Diff: HEAD → working tree
 
-[header]                 Crate                   Code Tests Docs Total[/header]
-──────────────────────────────────────────────────────────────
-alpha                                     [deletions]-50[/deletions]   [deletions]-44[/deletions]  [deletions]-50[/deletions]  [deletions]-254[/deletions]
-[table_row_odd]beta                                        [additions]2[/additions]     0    0     [additions]2[/additions][/table_row_odd]
-──────────────────────────────────────────────────────────────
-Total (2 crates)                          [deletions]-48[/deletions]   [deletions]-44[/deletions]  [deletions]-50[/deletions]  [deletions]-252[/deletions]
+[header]                 Crate                    Code  Tests  Docs  Total[/header]
+────────────────────────────────────────  ────  ─────  ────  ─────
+alpha                                      [deletions]-50[/deletions]    [deletions]-44[/deletions]   [deletions]-50[/deletions]   [deletions]-254[/deletions]
+[table_row_odd]beta                                         [additions]2[/additions]      0     0      [additions]2[/additions][/table_row_odd]
+────────────────────────────────────────  ────  ─────  ────  ─────
+Total (2 crates)                           [deletions]-48[/deletions]    [deletions]-44[/deletions]   [deletions]-50[/deletions]   [deletions]-252[/deletions]
 
 
 Skipped changes: [additions]2[/additions] net

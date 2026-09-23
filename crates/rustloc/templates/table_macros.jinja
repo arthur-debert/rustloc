@@ -31,6 +31,13 @@
 {#- The label column's fixed display width. -#}
 {%- set LABEL_WIDTH = 40 -%}
 
+{#- The blank display columns between two adjacent columns — the label column
+    and the first value column, and every pair of value columns. Every line of
+    the table (header, rules, data rows, totals, ratios) places `GAP` at each
+    column boundary, so the columns stay aligned. -#}
+{%- set COLUMN_GAP = 2 -%}
+{%- set GAP = " " * COLUMN_GAP -%}
+
 {#- Column key (a *data* name, as Rust ships it, matching the `Locs` field and
     the JSON/CSV schemas) -> the header word a human reads. This mapping is the
     reason Rust never needs to know a display word. -#}
@@ -93,10 +100,11 @@
 {%- endfor -%}
 {%- endmacro -%}
 
-{#- The horizontal rule, spanning the label column plus every value column and
-    the single space that separates each. -#}
+{#- The horizontal rule: one run of `─` under the label column and one under
+    each value column, broken by `GAP` at every column boundary so the rule
+    shows where each column starts and ends. -#}
 {%- macro rule(value_widths) -%}
-{{ "─" * (LABEL_WIDTH + (value_widths | sum) + (value_widths | length)) }}
+{{ "─" * LABEL_WIDTH }}{% for w in value_widths %}{{ GAP }}{{ "─" * w }}{% endfor %}
 {%- endmacro -%}
 
 {#- The footer's label.
@@ -185,7 +193,7 @@ Total ({{ footer.displayed_display }} of {{ footer.total_items_display }} {{ UNI
 
 {%- macro data_row(row, value_widths, index, reserve_suffix, aggregation) -%}
 {%- set line -%}
-{{ label_cell(row, aggregation) }}{% for v in row.values %} {{ count_value(v, value_widths[loop.index0], reserve_suffix) }}{% endfor %}
+{{ label_cell(row, aggregation) }}{% for v in row.values %}{{ GAP }}{{ count_value(v, value_widths[loop.index0], reserve_suffix) }}{% endfor %}
 {%- endset -%}
 {%- if index is even -%}
 [table_row_odd]{{ line }}[/table_row_odd]
@@ -195,10 +203,13 @@ Total ({{ footer.displayed_display }} of {{ footer.total_items_display }} {{ UNI
 {%- endmacro -%}
 
 {%- macro ratio_row(ratios, value_widths) -%}
-{{ "Ratio" | col(LABEL_WIDTH) }}{% for ratio in ratios %} {{ ratio_value(ratio, value_widths[loop.index0]) }}{% endfor %}
+{{ "Ratio" | col(LABEL_WIDTH) }}{% for ratio in ratios %}{{ GAP }}{{ ratio_value(ratio, value_widths[loop.index0]) }}{% endfor %}
 {%- endmacro -%}
 
 {#- The table proper: header, rule, rows, rule, footer.
+
+    Every header word, the label header included, is centred over its column;
+    the cells beneath stay right-aligned so digits line up.
 
     `rows` and `total` carry cells that are already in their final display form
     — plain numbers for count, `+added/-removed/net` notation for diff — so this
@@ -210,7 +221,7 @@ Total ({{ footer.displayed_display }} of {{ footer.total_items_display }} {{ UNI
     Returns without a trailing newline; the caller places it. -#}
 {%- macro table(aggregation, headers, rows, total, footer, value_widths, ratios=false) -%}
 {%- set reserve_suffix = ratios and (ratios | length > 0) -%}
-[header]{{ LABEL_HEADERS[aggregation] | col(LABEL_WIDTH, align='center') }}{% for h in headers %} {{ h | col(value_widths[loop.index0], align='right') }}{% endfor %}[/header]
+[header]{{ LABEL_HEADERS[aggregation] | col(LABEL_WIDTH, align='center') }}{% for h in headers %}{{ GAP }}{{ h | col(value_widths[loop.index0], align='center') }}{% endfor %}[/header]
 {{ rule(value_widths) }}
 {% for row in rows -%}
 {{ data_row(row, value_widths, loop.index, reserve_suffix, aggregation) }}
@@ -218,7 +229,7 @@ Total ({{ footer.displayed_display }} of {{ footer.total_items_display }} {{ UNI
 {%- if rows | length > 0 -%}
 {{ rule(value_widths) }}
 {% endif -%}
-{{ footer_label(aggregation, footer) | col(LABEL_WIDTH) }}{% for v in total %} {{ count_value(v, value_widths[loop.index0], reserve_suffix) }}{% endfor %}
+{{ footer_label(aggregation, footer) | col(LABEL_WIDTH) }}{% for v in total %}{{ GAP }}{{ count_value(v, value_widths[loop.index0], reserve_suffix) }}{% endfor %}
 {%- if reserve_suffix %}
 {{ ratio_row(ratios, value_widths) }}
 {%- endif -%}
