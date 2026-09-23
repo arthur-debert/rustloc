@@ -4164,9 +4164,13 @@ dependencies = [
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
+ "salsa",
+ "salsa-macro-rules",
  "serde",
  "tempfile",
  "thiserror 1.0.69",
+ "unicode-ident",
+ "unicode-properties",
  "walkdir",
 ]
 

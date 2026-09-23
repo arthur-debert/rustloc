@@ -39,6 +39,35 @@ ruff_text_size = "0.0.3"
 # requirements that agree on one `compact_str`; `bin/check-unlocked-install.sh`
 # fails if it is dropped early.
 get-size2 = "=0.10.1"
+# rustloclib never uses unicode-ident or unicode-properties directly; these
+# lines keep both on the same Unicode version. `ra-ap-rustc_lexer` (pulled in
+# by the `ra_ap_*` crates below) asks for `unicode-ident = "1.0.22"` and
+# `unicode-properties = "0.1.4"`, and a const assertion in it refuses to
+# compile unless the two crates report the same `UNICODE_VERSION`.
+# unicode-ident 1.0.25 moved to Unicode 18 while unicode-properties 0.1.4 (the
+# newest release) is still on Unicode 17, so a fresh, unlocked
+# `cargo install rustloc` picks a pair that fails with "unicode-properties and
+# unicode-ident must use the same Unicode version". Both are capped to their
+# Unicode 17 releases: capping only unicode-ident would break again the day
+# unicode-properties ships Unicode 18. Drop both lines once unicode-properties
+# publishes a Unicode 18 release, so the newest versions of the two agree
+# again; `bin/check-unlocked-install.sh` shows whether a fresh resolution builds.
+unicode-ident = ">=1.0.22, <1.0.25"
+unicode-properties = { version = "=0.1.4", default-features = false }
+# rustloclib never uses salsa directly; this line exists only to keep it at
+# 0.28.2. Every `ra_ap_*` 0.0.349 crate asks for `salsa = "0.28.2"`, and
+# `ra_ap_span` implements `salsa::plumbing::HashEqLike::hash` by hand. salsa
+# 0.28.3 removed `hash` from that trait, so a fresh, unlocked
+# `cargo install rustloc` that picks 0.28.3 or later fails in `ra_ap_span`
+# with "method `hash` is not a member of trait `zalsa_::HashEqLike`". The
+# newest `ra_ap_*` release (0.0.352) still has that impl, so upgrading them
+# does not help. salsa-macro-rules needs the same exact pin: salsa 0.28.2 asks
+# only for `salsa-macro-rules = "0.28.2"`, and the 0.28.3+ macros generate
+# `intern` calls with a different argument count than salsa 0.28.2 accepts.
+# Drop both pins once an `ra_ap_*` release builds against the newest salsa
+# and rustloclib moves to it.
+salsa = { version = "=0.28.2", default-features = false }
+salsa-macro-rules = "=0.28.2"
 oxc_allocator.workspace = true
 oxc_parser.workspace = true
 oxc_span.workspace = true
