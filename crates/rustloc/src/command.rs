@@ -358,8 +358,9 @@ fn aggregation_from_matches(matches: &ArgMatches) -> Aggregation {
     }
 }
 
-/// Absent `--type` means "show everything" ([`LineTypes::default`]); otherwise
-/// only the named types are displayed.
+/// Absent `--type` means the default selection ([`LineTypes::default`]: code,
+/// tests, docs, comments, and total); otherwise only the named types are
+/// displayed.
 fn line_types_from_matches(matches: &ArgMatches) -> LineTypes {
     let types: Vec<&str> = matches
         .get_many::<String>("line_types")

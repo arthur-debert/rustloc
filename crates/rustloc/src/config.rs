@@ -16,8 +16,11 @@ pub struct RustlocConfig {
     #[clapfig(default = false)]
     pub shows_ratios: bool,
     /// Group integer digits in count, diff, and commit tables.
-    #[clapfig(default = false)]
-    pub number_fmt: bool,
+    ///
+    /// `None` when rustloc.toml does not set it: grouping is then on unless
+    /// `--number-fmt=false` turns it off. An explicit `number_fmt = false`
+    /// turns grouping off unless `--number-fmt[=true]` turns it back on.
+    pub number_fmt: Option<bool>,
 }
 
 impl RustlocConfig {
@@ -55,7 +58,7 @@ mod tests {
         let config = RustlocConfig::load_from_dirs([dir.path().to_path_buf()]).unwrap();
 
         assert!(!config.shows_ratios);
-        assert!(!config.number_fmt);
+        assert_eq!(config.number_fmt, None);
     }
 
     #[test]
@@ -73,6 +76,15 @@ mod tests {
         std::fs::write(dir.path().join("rustloc.toml"), "number_fmt = true\n").unwrap();
         let config = RustlocConfig::load_from_dirs([dir.path().to_path_buf()]).unwrap();
 
-        assert!(config.number_fmt);
+        assert_eq!(config.number_fmt, Some(true));
+    }
+
+    #[test]
+    fn reads_explicit_false_number_fmt_from_rustloc_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rustloc.toml"), "number_fmt = false\n").unwrap();
+        let config = RustlocConfig::load_from_dirs([dir.path().to_path_buf()]).unwrap();
+
+        assert_eq!(config.number_fmt, Some(false));
     }
 }

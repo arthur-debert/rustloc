@@ -595,30 +595,42 @@ fn rustloc_toml_enables_count_table_ratios() {
     );
 }
 
-/// Process-only contract: Clapfig's cwd-based config discovery can enable
-/// locale grouping without a CLI flag.
+/// Process-only contract: Clapfig's cwd-based config discovery can turn
+/// locale grouping off, and an explicit `--number-fmt` still overrides it.
 #[test]
-fn rustloc_toml_enables_number_formatting() {
+fn rustloc_toml_disables_number_formatting_until_the_flag_overrides_it() {
     let dir = TempDir::new().expect("config fixture");
     let mut source = String::new();
     for i in 0..3805 {
         source.push_str(&format!("pub fn f_{i}() {{}}\n"));
     }
     std::fs::write(dir.path().join("only.rs"), source).unwrap();
-    std::fs::write(dir.path().join("rustloc.toml"), "number_fmt = true\n").unwrap();
+    std::fs::write(dir.path().join("rustloc.toml"), "number_fmt = false\n").unwrap();
+    let args = [".", "--by-file", "--type", "code", "--output", "text"];
 
-    let output = rustloc(
-        &[".", "--by-file", "--type", "code", "--output", "text"],
-        dir.path(),
-        &[],
+    let plain = rustloc(&args, dir.path(), &[]);
+    let rendered = stdout(&plain);
+    assert_eq!(plain.status.code(), Some(0), "stderr: {}", stderr(&plain));
+    assert!(
+        rendered
+            .lines()
+            .any(|line| line.trim_end().ends_with(" 3805")),
+        "rustloc.toml should disable number formatting:\n{rendered}"
     );
-    let rendered = stdout(&output);
 
-    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
-    assert!(output.stderr.is_empty());
+    let mut forced = args.to_vec();
+    forced.push("--number-fmt");
+    let grouped = rustloc(&forced, dir.path(), &[]);
+    let rendered = stdout(&grouped);
+    assert_eq!(
+        grouped.status.code(),
+        Some(0),
+        "stderr: {}",
+        stderr(&grouped)
+    );
     assert!(
         rendered.contains(&active_format_u64(3805)),
-        "rustloc.toml should enable number formatting:\n{rendered}"
+        "--number-fmt should override number_fmt = false:\n{rendered}"
     );
 }
 

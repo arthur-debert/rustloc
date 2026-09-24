@@ -726,16 +726,85 @@ fn large_count_workspace() -> TempDir {
     dir
 }
 
-/// Integer grouping is opt-in for human tables. The default path keeps plain
-/// digits even when values are large enough to group.
+/// Human tables group integer digits by default. The exact separator comes
+/// from the active locale or the documented fallback, so the expectation uses
+/// the same one-shot resolver as production.
 #[test]
-fn number_fmt_is_hidden_by_default() {
+fn number_fmt_groups_digits_by_default() {
     let dir = large_count_workspace();
     let out = stdout(&[
         &path_of(&dir),
         "--by-file",
         "--type",
         "code",
+        "--output",
+        "text",
+    ]);
+    let expected = crate::number_format::NumberFormat::active().u64(3805);
+
+    assert!(
+        line_containing(&out, "lib.rs").contains(&expected),
+        "default should format the row count as {expected:?}:\n{out}"
+    );
+    assert!(
+        line_starting(&out, "Total (").contains(&expected),
+        "default should format the total count as {expected:?}:\n{out}"
+    );
+}
+
+/// A `--number-fmt` value that is not a boolean is a usage error rather than a
+/// silent fallback to the default.
+#[test]
+fn number_fmt_rejects_a_non_boolean_value() {
+    let msg = error(&["--number-fmt=maybe"]);
+    assert!(msg.contains("maybe"), "unexpected message: {msg}");
+}
+
+/// Without `--type`, tables show code, tests, docs, comments, and total;
+/// examples and blanks appear only when named.
+#[test]
+fn default_type_selection_shows_code_tests_docs_comments_and_total() {
+    let dir = workspace();
+    let out = stdout(&[&path_of(&dir), "--output", "text"]);
+    let header = out.lines().next().unwrap();
+
+    assert_eq!(
+        header.split_whitespace().skip(1).collect::<Vec<_>>(),
+        vec!["Code", "Tests", "Docs", "Comments", "Total"],
+        "unexpected default columns in:\n{out}"
+    );
+}
+
+/// An explicit `--type` replaces the default selection outright.
+#[test]
+fn explicit_type_selection_replaces_the_default() {
+    let dir = workspace();
+    let out = stdout(&[
+        &path_of(&dir),
+        "--type",
+        "examples,blanks",
+        "--output",
+        "text",
+    ]);
+    let header = out.lines().next().unwrap();
+
+    assert_eq!(
+        header.split_whitespace().skip(1).collect::<Vec<_>>(),
+        vec!["Examples", "Blanks"],
+        "unexpected explicit columns in:\n{out}"
+    );
+}
+
+/// `--number-fmt=false` turns grouping off for row and total cells.
+#[test]
+fn number_fmt_false_prints_plain_digits() {
+    let dir = large_count_workspace();
+    let out = stdout(&[
+        &path_of(&dir),
+        "--by-file",
+        "--type",
+        "code",
+        "--number-fmt=false",
         "--output",
         "text",
     ]);
@@ -746,46 +815,70 @@ fn number_fmt_is_hidden_by_default() {
     assert_eq!(total.split_whitespace().last(), Some("3805"));
 }
 
-/// Both count spellings accept `--number-fmt` and apply it to row and total
-/// cells. The exact separator comes from the active locale or the documented
-/// fallback, so the expectation uses the same one-shot resolver as production.
+/// Both count spellings accept bare `--number-fmt` and `--number-fmt=true`
+/// and apply grouping to row and total cells.
 #[test]
 fn number_fmt_flag_formats_count_rows_and_totals_on_bare_and_explicit_count() {
     let dir = large_count_workspace();
     let path = path_of(&dir);
     let expected = crate::number_format::NumberFormat::active().u64(3805);
 
-    for args in [
-        vec![
-            path.as_str(),
-            "--by-file",
-            "--type",
-            "code",
-            "--number-fmt",
-            "--output",
-            "text",
-        ],
-        vec![
-            "count",
-            path.as_str(),
-            "--by-file",
-            "--type",
-            "code",
-            "--number-fmt",
-            "--output",
-            "text",
-        ],
-    ] {
-        let out = stdout(&args);
-        assert!(
-            line_containing(&out, "lib.rs").contains(&expected),
-            "{args:?} should format the row count as {expected:?}:\n{out}"
-        );
-        assert!(
-            line_starting(&out, "Total (").contains(&expected),
-            "{args:?} should format the total count as {expected:?}:\n{out}"
-        );
+    for flag in ["--number-fmt", "--number-fmt=true"] {
+        for args in [
+            vec![
+                path.as_str(),
+                "--by-file",
+                "--type",
+                "code",
+                flag,
+                "--output",
+                "text",
+            ],
+            vec![
+                "count",
+                path.as_str(),
+                "--by-file",
+                "--type",
+                "code",
+                flag,
+                "--output",
+                "text",
+            ],
+        ] {
+            let out = stdout(&args);
+            assert!(
+                line_containing(&out, "lib.rs").contains(&expected),
+                "{args:?} should format the row count as {expected:?}:\n{out}"
+            );
+            assert!(
+                line_starting(&out, "Total (").contains(&expected),
+                "{args:?} should format the total count as {expected:?}:\n{out}"
+            );
+        }
     }
+}
+
+/// A bare `--number-fmt` takes its value only through `=`, so a following
+/// positional path stays the path rather than being parsed as a boolean.
+#[test]
+fn bare_number_fmt_leaves_the_following_path_positional() {
+    let dir = large_count_workspace();
+    let path = path_of(&dir);
+    let out = stdout(&[
+        "--by-file",
+        "--type",
+        "code",
+        "--number-fmt",
+        &path,
+        "--output",
+        "text",
+    ]);
+    let expected = crate::number_format::NumberFormat::active().u64(3805);
+
+    assert!(
+        line_containing(&out, "lib.rs").contains(&expected),
+        "the path after bare --number-fmt should be counted:\n{out}"
+    );
 }
 
 /// Percentage rendering stays independent from integer grouping: the percent
@@ -1671,11 +1764,12 @@ fn net_only_replaces_each_cell_with_its_signed_net() {
         "text",
     ]);
 
-    // alpha: `+0/-50/-50 +0/-44/-44 +0/-50/-50 +0/-254/-254` becomes the nets.
+    // alpha: `+0/-50/-50 +0/-44/-44 +0/-50/-50 +0/-60/-60 +0/-254/-254` becomes
+    // the nets.
     let alpha = line_containing(&out, "alpha");
     assert_eq!(
         values_of(alpha, "alpha"),
-        vec!["-50", "-44", "-50", "-254"],
+        vec!["-50", "-44", "-50", "-60", "-254"],
         "negative nets should render alone in:\n{out}"
     );
 
@@ -1683,14 +1777,14 @@ fn net_only_replaces_each_cell_with_its_signed_net() {
     let beta = line_containing(&out, "beta");
     assert_eq!(
         values_of(beta, "beta"),
-        vec!["2", "0", "0", "2"],
+        vec!["2", "0", "0", "0", "2"],
         "positive and zero nets should render alone in:\n{out}"
     );
 
     let total = line_starting(&out, "Total (");
     assert_eq!(
         values_of(total, "Total (2 crates)"),
-        vec!["-48", "-44", "-50", "-252"],
+        vec!["-48", "-44", "-50", "-60", "-252"],
         "the totals row should render its nets alone in:\n{out}"
     );
 }

@@ -9,8 +9,9 @@
 //! 3. [`CountView`] / [`DiffView`] — *this* module: the same numbers, narrowed
 //!    to the requested columns and paired with the facts a table needs. Count
 //!    tables may also carry ratio facts when the human table asks for them.
-//!    Human tables can also carry locale-formatted display strings beside the
-//!    raw numbers when `--number-fmt` or `number_fmt = true` asks for grouping.
+//!    Human tables carry locale-formatted display strings beside the raw
+//!    numbers unless `--number-fmt=false` or `number_fmt = false` turns digit
+//!    grouping off.
 //! 4. The rendered table — `templates/count_table.jinja`,
 //!    `templates/diff_table.jinja`, and their shared `table_macros.jinja`
 //!

@@ -67,13 +67,13 @@ pub struct LineTypes {
 
 impl Default for LineTypes {
     fn default() -> Self {
-        // Default shows code, tests, docs, and total
+        // Default shows code, tests, docs, comments, and total
         Self {
             code: true,
             tests: true,
             examples: false,
             docs: true,
-            comments: false,
+            comments: true,
             blanks: false,
             total: true,
         }
@@ -447,7 +447,7 @@ mod tests {
         assert!(lt.tests);
         assert!(!lt.examples); // Not in default
         assert!(lt.docs);
-        assert!(!lt.comments); // Not in default
+        assert!(lt.comments);
         assert!(!lt.blanks); // Not in default
         assert!(lt.total);
     }

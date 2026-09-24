@@ -268,7 +268,8 @@ Available: rust, python, typescript, generic
     #[arg(long_help = "\
 Line types to show (comma-separated).
 
-By default all types are shown. Use this to filter to specific types.
+By default code, tests, docs, comments, and total are shown. Use this to pick
+the types to show instead; examples and blanks appear only when named.
 Values: code, tests, examples, docs, comments, blanks, total
 
   -t code,tests       Show only code and test lines
@@ -336,13 +337,24 @@ The total row and file count still describe the full data set, not the
 truncated slice. No-op when no `--by-*` aggregation is in effect.")]
     top: Option<usize>,
 
-    /// Group integer digits in count, diff, and commit tables using the active locale
-    #[arg(long = "number-fmt", global = true)]
+    /// Group integer digits in count, diff, and commit tables [default: true]
+    // `require_equals` keeps a bare `--number-fmt` from consuming the next
+    // positional (`rustloc --number-fmt crates/foo`) as its value.
+    #[arg(
+        long = "number-fmt",
+        value_name = "BOOL",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true",
+        global = true
+    )]
     #[arg(long_help = "\
 Group integer digits in count, diff, and commit tables using the active system
-locale. If the locale is unavailable or unsupported, rustloc uses English-style
-grouping (1,234) instead of failing the command.")]
-    number_fmt: bool,
+locale. Grouping is on by default; `--number-fmt=false` prints raw digits and a
+bare `--number-fmt` is the same as `--number-fmt=true`. The flag overrides
+`number_fmt` in rustloc.toml. If the locale is unavailable or unsupported,
+rustloc uses English-style grouping (1,234) instead of failing the command.")]
+    number_fmt: Option<bool>,
 }
 
 /// Arguments for diff command
@@ -585,25 +597,26 @@ mod presentation {
 
     fn count_table_options(matches: &ArgMatches) -> Result<CountTableOptions, HookError> {
         let config = load_config()?;
-        let number_fmt = config.number_fmt || matches.get_flag("number_fmt");
 
         Ok(CountTableOptions {
             shows_ratios: config.shows_ratios || matches.get_flag("shows_ratio"),
-            number_format: if number_fmt {
-                NumberFormat::active()
-            } else {
-                NumberFormat::disabled()
-            },
+            number_format: number_format(&config, matches),
         })
     }
 
-    fn diff_number_format(matches: &ArgMatches) -> Result<NumberFormat, HookError> {
-        let config = load_config()?;
-        Ok(if config.number_fmt || matches.get_flag("number_fmt") {
+    fn number_format(config: &RustlocConfig, matches: &ArgMatches) -> NumberFormat {
+        let cli = matches.get_one::<bool>("number_fmt").copied();
+        if groups_digits(cli, config.number_fmt) {
             NumberFormat::active()
         } else {
             NumberFormat::disabled()
-        })
+        }
+    }
+
+    /// Digit grouping precedence: an explicit `--number-fmt[=BOOL]` wins, then
+    /// `number_fmt` in rustloc.toml, then the default of grouping on.
+    fn groups_digits(cli: Option<bool>, config: Option<bool>) -> bool {
+        cli.or(config).unwrap_or(true)
     }
 
     /// `net_only` is read unconditionally because `--net-only` is declared on
@@ -611,7 +624,7 @@ mod presentation {
     /// other.
     fn diff_table_options(matches: &ArgMatches) -> Result<DiffTableOptions, HookError> {
         Ok(DiffTableOptions {
-            number_format: diff_number_format(matches)?,
+            number_format: number_format(&load_config()?, matches),
             net_only: matches.get_flag("net_only"),
         })
     }
@@ -790,6 +803,29 @@ mod presentation {
                     options.net_only,
                 ))
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::groups_digits;
+
+        #[test]
+        fn digit_grouping_defaults_on() {
+            assert!(groups_digits(None, None));
+        }
+
+        #[test]
+        fn config_number_fmt_applies_without_a_flag() {
+            assert!(!groups_digits(None, Some(false)));
+            assert!(groups_digits(None, Some(true)));
+        }
+
+        #[test]
+        fn number_fmt_flag_overrides_config() {
+            assert!(groups_digits(Some(true), Some(false)));
+            assert!(!groups_digits(Some(false), Some(true)));
+            assert!(!groups_digits(Some(false), None));
         }
     }
 }
