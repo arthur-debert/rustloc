@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+## 0.29.0 - 2026-09-24
+
+- Show the Comments column by default: without `--type`, count and diff tables now show code, tests, docs, comments, and total. Pass `--type code,tests,docs,total` for the previous columns. JSON, YAML, and XML output report the new selection in `line_types` (#179).
+- Group digits in count, diff, and commit tables by default (for example `12,345`, following the active locale). `--number-fmt` now takes a value: `--number-fmt=false`, or `number_fmt = false` in `rustloc.toml`, prints plain digits as before; a bare `--number-fmt` or `--number-fmt=true` keeps grouping on, and the flag overrides the config file (#179).
+
 ## 0.28.0 - 2026-09-23
 
 - Colour `--net-only` values in `rustloc diff` and `rustloc commit`: positive nets are green, negative nets red, and zero keeps the normal text colour. Applies to rows, totals, and skipped changes (#175).
