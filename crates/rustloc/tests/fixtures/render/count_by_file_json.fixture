@@ -42,7 +42,7 @@
   "line_types": {
     "blanks": false,
     "code": true,
-    "comments": false,
+    "comments": true,
     "docs": true,
     "examples": false,
     "tests": true,

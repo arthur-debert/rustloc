@@ -44,6 +44,7 @@ rustloc --by-module                  # breakdown by module
 rustloc --by-file                    # breakdown by file
 rustloc -t code,tests                # only show selected line types
 rustloc --shows-ratio                # add percentage ratios below the table total
+rustloc --number-fmt=false           # print plain digits instead of 12,345
 rustloc --lang typescript            # analyze TypeScript files only
 rustloc --lang rust,typescript       # analyze Rust and TypeScript files
 rustloc -c my-lib                    # restrict to a specific crate
@@ -53,6 +54,11 @@ rustloc -i "crates/my-lib/**"        # include glob
 rustloc -e "**/generated/**"         # exclude glob
 rustloc crates/my-lib                # count one path
 ```
+
+Without `-t`, tables show code, tests, docs, comments, and total; examples and
+blanks appear only when named. Tables group digits using the active locale.
+`--number-fmt=false`, or `number_fmt = false` in `rustloc.toml`, prints plain
+digits; the flag overrides the config file.
 
 `-i` and `-e` match the path relative to the root of what is analyzed: the
 Cargo workspace root, the counted directory, the counted file's directory, or
